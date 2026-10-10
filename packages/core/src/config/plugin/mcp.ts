@@ -4,7 +4,7 @@ import { define } from "@opencode/plugin/effect/plugin"
 import { Document, type Entry } from "@opencode/schema/config"
 import type { ServerConfig } from "@opencode/schema/mcp"
 import { Effect, Stream } from "effect"
-import { Config } from "../../config.js"
+import { Config, reloadsSections } from "../../config.js"
 import { Mcp } from "../../mcp/index.js"
 
 export const Plugin = define({
@@ -15,7 +15,7 @@ export const Plugin = define({
 })
 
 export const register = Effect.fn("ConfigMCPPlugin.register")(function* (
-  events: Stream.Stream<{ readonly type: string }, unknown>,
+  events: Stream.Stream<{ readonly type: string; readonly data: unknown }, unknown>,
 ) {
   const config = yield* Config.Service
   const mcp = yield* Mcp.Service
@@ -23,10 +23,10 @@ export const register = Effect.fn("ConfigMCPPlugin.register")(function* (
 
   yield* events.pipe(
     Stream.filter((event) => event.type === "config.updated"),
-    Stream.runForEach(() =>
+    Stream.runForEach((event) =>
       config.entries().pipe(
         Effect.tap((entries) => Effect.sync(() => (loaded.entries = entries))),
-        Effect.andThen(mcp.reload()),
+        Effect.andThen(reloadsSections(event, ["mcp"]) ? mcp.reload() : Effect.void),
         Effect.catchCause((cause) => Effect.logError("failed to reload MCP config", { cause })),
       ),
     ),

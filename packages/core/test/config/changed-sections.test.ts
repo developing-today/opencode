@@ -33,3 +33,22 @@ describe("Config.changedSections", () => {
     expect(Config.changedSections([low, high], [high, low])).toEqual(["shell"])
   })
 })
+
+describe("Config.reloadsSections", () => {
+  const event = (sections: string[]) => ({ type: "config.updated", data: { sections } })
+
+  test("matches only the sections a consumer listens to", () => {
+    expect(Config.reloadsSections(event(["skills"]), ["skills"])).toBe(true)
+    expect(Config.reloadsSections(event(["providers"]), ["skills"])).toBe(false)
+    expect(Config.reloadsSections(event(["providers", "mcp"]), ["mcp"])).toBe(true)
+  })
+
+  test("the unattributed section reloads every consumer", () => {
+    expect(Config.reloadsSections(event([Config.UNATTRIBUTED_SECTION]), ["skills"])).toBe(true)
+  })
+
+  test("ignores other event types and payloads without sections", () => {
+    expect(Config.reloadsSections({ type: "agent.updated", data: { sections: ["skills"] } }, ["skills"])).toBe(false)
+    expect(Config.reloadsSections({ type: "config.updated", data: {} }, ["skills"])).toBe(false)
+  })
+})

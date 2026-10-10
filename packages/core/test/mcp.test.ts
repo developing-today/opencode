@@ -1891,7 +1891,7 @@ test("reconciles only changed MCP server config", async () => {
             id: ID.create(),
             created: 0,
             type: Event.Updated.type,
-            data: {},
+            data: { sections: ["*"] },
           } satisfies Payload<typeof Event.Updated>)
 
         yield* Effect.gen(function* () {

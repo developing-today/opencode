@@ -28,6 +28,21 @@ export function latest<K extends keyof Info>(entries: readonly Entry[], key: K):
 /** Process-internal request from the server's SIGHUP handler; not part of the public event manifest. */
 export const ReloadRequested = ephemeral({ type: "config.reload.requested", schema: {} })
 
+/** Section a reload carries when a change cannot be attributed to one top-level key. */
+export const UNATTRIBUTED_SECTION = "*"
+
+/** Whether a `config.updated` event touches any of the given top-level keys. */
+export function reloadsSections(event: { readonly type: string; readonly data: unknown }, keys: readonly string[]) {
+  if (event.type !== "config.updated" || !Schema.is(UpdatedData)(event.data)) return false
+  return event.data.sections.some((section) => section === UNATTRIBUTED_SECTION || keys.includes(section))
+}
+
+const UpdatedData = Schema.Struct({ sections: Schema.Array(Schema.String) })
+
+function directories(entries: readonly Entry[]) {
+  return entries.flatMap((entry) => (entry.type === "directory" ? [entry.path] : []))
+}
+
 /** Top-level keys whose values, in document order, differ between two entry lists. */
 export function changedSections(previous: readonly Entry[], next: readonly Entry[]) {
   const before = documents(previous)
@@ -297,10 +312,14 @@ export const layer = (options?: Options) =>
             !isDeepStrictEqual(sources.agents, discovered.agents)
           if (isDeepStrictEqual(configs, next) && !compatibilityChanged) return
           const sections = changedSections(configs, next)
+          const unattributed =
+            compatibilityChanged || !isDeepStrictEqual(directories(configs), directories(next))
           sources = discovered
           configs = next
-          yield* Effect.logInfo("configuration reloaded", { sections })
-          yield* bus.publish(Event.Updated, {})
+          yield* Effect.logInfo("configuration reloaded", { sections, unattributed })
+          yield* bus.publish(Event.Updated, {
+            sections: unattributed ? [...sections, UNATTRIBUTED_SECTION] : sections,
+          })
         },
         (effect) => reloadLock.withPermit(effect),
       )

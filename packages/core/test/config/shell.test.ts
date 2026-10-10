@@ -27,7 +27,7 @@ describe("ConfigShellPlugin.Plugin", () => {
       expect(yield* shell.resolve({ priority: "config" })).toBe(configured)
 
       yield* config.setEntries([])
-      yield* bus.publish(Event.Updated, {})
+      yield* bus.publish(Event.Updated, { sections: ["*"] })
       for (let attempt = 0; attempt < 200; attempt++) {
         if ((yield* shell.resolve({ priority: "config" })) !== configured) return
         yield* Effect.sleep("10 millis")

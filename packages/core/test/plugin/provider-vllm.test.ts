@@ -260,7 +260,7 @@ describe("VLLMPlugin", () => {
 
             const baseURL = `${configured.url.origin}/proxy/v1`
             yield* config.setEntries([configuration({ baseURL }), configuration({ apiKey: "secret" })])
-            yield* bus.publish(Event.Updated, {})
+            yield* bus.publish(Event.Updated, { sections: ["*"] })
             yield* eventually(
               modelState.get(providerID, Model.ID.make("configured-model")),
               (model) => model !== undefined,
@@ -277,7 +277,7 @@ describe("VLLMPlugin", () => {
 
             requests.splice(0)
             yield* config.setEntries([configuration({ baseURL }), configuration({ apiKey: "next-secret" })])
-            yield* bus.publish(Event.Updated, {})
+            yield* bus.publish(Event.Updated, { sections: ["*"] })
             yield* eventually(
               providers.get(providerID),
               (provider) => provider?.settings?.apiKey === "next-secret",

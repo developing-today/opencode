@@ -597,7 +597,7 @@ Use native v2 fields.`,
 
       // Published in the same fiber step as startup: the subscription must
       // already be open when the plugin effect returns.
-      yield* bus.publish(Event.Updated, {})
+      yield* bus.publish(Event.Updated, { sections: ["*"] })
       yield* advance(() => reloads >= 1)
       expect(reloads).toBe(1)
     }).pipe(Effect.provide(Config.testLayer([]))),

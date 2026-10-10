@@ -6,7 +6,7 @@ import { FSUtil } from "@opencode/util/fs-util"
 import { Global } from "@opencode/util/global"
 import path from "path"
 import { Effect, FiberMap, PubSub, Semaphore, Stream } from "effect"
-import { Config } from "../../config.js"
+import { Config, reloadsSections } from "../../config.js"
 import { Watcher } from "../../filesystem/watcher.js"
 import { Location } from "../../location.js"
 import { AbsolutePath } from "../../schema.js"
@@ -180,11 +180,14 @@ export const Plugin = define({
     })
     yield* ctx.event.subscribe().pipe(
       Stream.filter((event) => event.type === "config.updated"),
-      Stream.runForEach(() =>
+      Stream.runForEach((event) =>
         config.entries().pipe(
           Effect.tap((entries) => Effect.sync(() => (loaded.entries = entries))),
-          Effect.andThen(refresh()),
-          Effect.andThen(ctx.skill.reload()),
+          Effect.andThen(
+            reloadsSections(event, ["skills"])
+              ? refresh().pipe(Effect.andThen(ctx.skill.reload()))
+              : Effect.void,
+          ),
         ),
       ),
       Effect.forkScoped({ startImmediately: true }),

@@ -112,7 +112,7 @@ describe("ConfigPolicyPlugin.Plugin", () => {
       expect(yield* catalog.get(Provider.ID.openai)).toBeUndefined()
 
       yield* test.setEntries([document(provider("allow", "openai"))])
-      yield* bus.publish(Event.Updated, {})
+      yield* bus.publish(Event.Updated, { sections: ["*"] })
       yield* waitUntil(catalog.get(Provider.ID.openai).pipe(Effect.map((provider) => provider !== undefined)))
     }).pipe(Effect.provide(Config.testLayer([document(provider("deny", "openai"))]))),
   )

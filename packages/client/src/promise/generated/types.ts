@@ -439,6 +439,16 @@ export type ConfigWorktree = { directory: string }
 
 export type ConfigModelCapabilities = { tools?: boolean; input?: Array<string>; output?: Array<string> }
 
+export type ConfigModelRouteTarget =
+  | string
+  | { providerID: string; model: string; variant?: string }
+  | {
+      model: string | { providerID: string; model: string; variant?: string }
+      defaultVariant?: string
+      variants?: { [x: string]: string }
+      until?: number
+    }
+
 export type ConfigShellOption = { path: string; name: string; acceptable: boolean }
 
 export type SessionMessageLocationSwitched = {
@@ -1045,7 +1055,7 @@ export type ConfigUpdated = {
   metadata?: { [x: string]: any }
   type: "config.updated"
   location?: LocationRef
-  data: {}
+  data: { sections: Array<string> }
 }
 
 export type SkillUpdated = {
@@ -1697,6 +1707,36 @@ export type WorktreeList = Array<WorktreeDirectory>
 
 export type VcsInfo = { provider?: string; branch: VcsBranch }
 
+export type ConfigModelRoutes = {
+  [x: string]: {
+    name?: string
+    targets: Array<ConfigModelRouteTarget>
+    health?: {
+      firstTokenTimeoutMs?: number | false
+      maxResponseTimeMs?: number
+      minOutputTokensPerSecond?: number
+      sampleWindow?: number
+      slowThreshold?: number
+      cooldownMs?: number
+      quotaCooldownMs?: number
+    }
+    budgets?: {
+      [x: string]: {
+        requestsPerMinute?: number
+        requestsPerDay?: number
+        tokensPerMinute?: number
+        tokensPerDay?: number
+        softLimit?: number
+      }
+    }
+    hedgeAfterMs?: number
+    attempts?: number
+    autonomy?: "fixed" | "rules" | "adaptive" | "predictive" | "agent"
+    selection?: "ordered" | "round-robin" | "weighted"
+    weights?: { [x: string]: number }
+  }
+}
+
 export type SessionInboxMove = {
   id: string
   sessionID: string
@@ -2206,6 +2246,8 @@ export type ConfigEntry =
             resource: string
             effect: "allow" | "deny"
           }>
+          model_routes?: ConfigModelRoutes
+          model_route_tuning?: { enabled?: boolean; intervalMinutes?: number; windowHours?: number }
         }
       }
     }

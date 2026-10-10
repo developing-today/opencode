@@ -377,7 +377,7 @@ describe("LocationServiceMap", () => {
             )
             yield* Effect.sleep("10 millis")
 
-            yield* bus.publish(Config.Event.Updated, {}, { location: firstRef })
+            yield* bus.publish(Config.Event.Updated, { sections: ["*"] }, { location: firstRef })
             yield* Effect.sleep("10 millis")
 
             expect(received).toEqual({ first: 1, second: 0 })

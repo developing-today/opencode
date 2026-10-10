@@ -162,7 +162,7 @@ Review files`,
 
           const command = yield* Command.Service
           const bus = yield* Bus.Service
-          const update = yield* bus.publish(Event.Updated, {})
+          const update = yield* bus.publish(Event.Updated, { sections: ["*"] })
           const updates = yield* PubSub.unbounded<typeof update>()
           const prompts: { text: string; files?: readonly { readonly uri: string }[]; delivery?: string }[] = []
           yield* ConfigCommandPlugin.Plugin.effect(
@@ -350,7 +350,7 @@ Review files`,
 
       // Published in the same fiber step as startup: the subscription must
       // already be open when the plugin effect returns.
-      yield* bus.publish(Event.Updated, {})
+      yield* bus.publish(Event.Updated, { sections: ["*"] })
       yield* advance(() => reloads >= 1)
       expect(reloads).toBe(1)
     }).pipe(Effect.provide(Config.testLayer([]))),

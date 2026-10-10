@@ -3,7 +3,7 @@ import type { Entry } from "@opencode/schema/config"
 import { Duration, Effect, Option, Schedule, type Schema, Semaphore, Stream } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { shellParserWasm } from "#shell-parser-wasm"
-import { Config } from "../../config.js"
+import { Config, reloadsSections } from "../../config.js"
 import { Environment } from "../../environment/index.js"
 import { EnvironmentUnavailable } from "../../environment/unavailable.js"
 import { Location } from "../../location.js"
@@ -143,7 +143,7 @@ export function createLocalProviderPlugin<Discovered>(input: {
           yield* refresh().pipe(Effect.ignore)
         })
         yield* ctx.event.subscribe().pipe(
-          Stream.filter((event) => event.type === "config.updated"),
+          Stream.filter((event) => reloadsSections(event, ["providers"])),
           Stream.runForEach(reload),
           Effect.forkScoped({ startImmediately: true }),
         )

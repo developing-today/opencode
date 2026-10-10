@@ -44,7 +44,7 @@ describe("ConfigToolOutputPlugin.Plugin", () => {
               }),
             }),
           ])
-          yield* bus.publish(Event.Updated, {})
+          yield* bus.publish(Event.Updated, { sections: ["*"] })
           for (let attempt = 0; attempt < 200; attempt++) {
             const result = yield* output.truncate({ content: [{ type: "text", text: "one\ntwo" }] })
             if (result.metadata?.truncated === false) return

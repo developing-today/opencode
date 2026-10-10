@@ -17,7 +17,7 @@ export const registerIntegrationPolicy = Effect.fn(function* (input: {
         subscribe: () =>
           (input.events ?? Stream.never).pipe(
             Stream.filter((event) => event.type === "config.updated"),
-            Stream.map(() => ({ id: ID.create(), created: Date.now(), type: "config.updated" as const, data: {} })),
+            Stream.map(() => ({ id: ID.create(), created: Date.now(), type: "config.updated" as const, data: { sections: ["*"] } })),
           ),
       },
       provider: {

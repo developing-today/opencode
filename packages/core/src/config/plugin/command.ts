@@ -10,7 +10,7 @@ import path from "path"
 import { Effect, Option, PubSub, Schema, Stream } from "effect"
 import { ChildProcess } from "effect/process"
 import { Agent } from "../../agent.js"
-import { Config } from "../../config.js"
+import { Config, reloadsSections } from "../../config.js"
 import { Location } from "../../location.js"
 import { Session } from "../../session.js"
 import { SubagentJob } from "../../session/subagent-job.js"
@@ -58,7 +58,7 @@ export const Plugin = define({
       Effect.forkScoped({ startImmediately: true }),
     )
     yield* ctx.event.subscribe().pipe(
-      Stream.filter((event) => event.type === "config.updated"),
+      Stream.filter((event) => reloadsSections(event, ["commands"])),
       Stream.runForEach(notify),
       Effect.forkScoped({ startImmediately: true }),
     )
