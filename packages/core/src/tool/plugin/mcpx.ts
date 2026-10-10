@@ -4,7 +4,7 @@ import { ToolFailure } from "@opencode/ai"
 import type { Context } from "@opencode/plugin/effect/plugin"
 import { Effect, Schema } from "effect"
 import { execFile, spawn } from "node:child_process"
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
@@ -48,6 +48,12 @@ const runCli = (args: string[]): Promise<string> =>
         resolve(stdout || stderr)
       }
     })
+  })
+
+const cliOutput = (args: string[]) =>
+  Effect.tryPromise({
+    try: () => runCli(args),
+    catch: (error: any) => new ToolFailure({ message: error.message, error }),
   })
 
 const callDaemon = async (path: string, method = "GET", body?: any): Promise<any> => {
@@ -158,16 +164,11 @@ export const Plugin = {
         }),
         execute: (input) =>
           Effect.gen(function* () {
-            try {
-              const res = yield* Effect.tryPromise(() => callDaemon("/v1/exec", "POST", { source: input.source }))
-              const output = res.output ?? JSON.stringify(res.result ?? res, null, 2)
-              return { output: { output: String(output) } }
-            } catch {
-              const out = yield* Effect.tryPromise(() => runCli(["exec", input.source])).pipe(
-                Effect.mapError((err: any) => new ToolFailure({ message: err.message, error: err })),
-              )
-              return { output: { output: String(out) } }
-            }
+            const output = yield* Effect.tryPromise(() => callDaemon("/v1/exec", "POST", { source: input.source })).pipe(
+              Effect.map((res: any) => String(res.output ?? JSON.stringify(res.result ?? res, null, 2))),
+              Effect.catch(() => cliOutput(["exec", input.source])),
+            )
+            return { output: { output } }
           }),
       })
 
@@ -185,24 +186,23 @@ export const Plugin = {
         }),
         execute: (input) =>
           Effect.gen(function* () {
-            try {
-              if (input.namespace) {
-                const res = yield* Effect.tryPromise(() => callDaemon(`/v1/types?namespace=${encodeURIComponent(input.namespace!)}`))
-                return { output: { output: typeof res === "string" ? res : JSON.stringify(res, null, 2) } }
-              }
-              const res = yield* Effect.tryPromise(() => callDaemon("/v1/namespaces"))
-              const namespaces = Array.isArray(res) ? res : (res.namespaces ?? [])
-              const text = namespaces
-                .map((n: any) => `${n.namespace}  (${n.tools ?? 0} tools)${n.description ? "  " + n.description : ""}`)
-                .join("\n")
-              return { output: { output: text || "No MCP namespaces active." } }
-            } catch {
-              const args = input.namespace ? ["types", input.namespace] : ["ls"]
-              const out = yield* Effect.tryPromise(() => runCli(args)).pipe(
-                Effect.mapError((err: any) => new ToolFailure({ message: err.message, error: err })),
-              )
-              return { output: { output: String(out) } }
-            }
+            const namespace = input.namespace
+            const output = namespace
+              ? yield* Effect.tryPromise(() => callDaemon(`/v1/types?namespace=${encodeURIComponent(namespace)}`)).pipe(
+                  Effect.map((res: any) => (typeof res === "string" ? res : JSON.stringify(res, null, 2))),
+                  Effect.catch(() => cliOutput(["types", namespace])),
+                )
+              : yield* Effect.tryPromise(() => callDaemon("/v1/namespaces")).pipe(
+                  Effect.map((res: any) => {
+                    const namespaces = Array.isArray(res) ? res : (res.namespaces ?? [])
+                    const text = namespaces
+                      .map((n: any) => `${n.namespace}  (${n.tools ?? 0} tools)${n.description ? "  " + n.description : ""}`)
+                      .join("\n")
+                    return text || "No MCP namespaces active."
+                  }),
+                  Effect.catch(() => cliOutput(["ls"])),
+                )
+            return { output: { output } }
           }),
       })
 
@@ -223,22 +223,18 @@ export const Plugin = {
         }),
         execute: (input) =>
           Effect.gen(function* () {
-            try {
-              if (input.what === "log") {
-                const query = input.since ? `?since=${encodeURIComponent(input.since)}` : ""
-                const res = yield* Effect.tryPromise(() => callDaemon(`/v1/log${query}`))
-                return { output: { output: JSON.stringify(res.records ?? res, null, 2) } }
-              }
-              const query = input.since ? `?since=${encodeURIComponent(input.since)}` : ""
-              const res = yield* Effect.tryPromise(() => callDaemon(`/v1/stats/${input.what}${query}`))
-              return { output: { output: JSON.stringify(res, null, 2) } }
-            } catch {
-              const args = input.what === "log" ? ["log", ...(input.since ? ["--since", input.since] : [])] : ["stats", input.what, ...(input.since ? ["--since", input.since] : [])]
-              const out = yield* Effect.tryPromise(() => runCli(args)).pipe(
-                Effect.mapError((err: any) => new ToolFailure({ message: err.message, error: err })),
-              )
-              return { output: { output: String(out) } }
-            }
+            const what = input.what
+            const since = input.since
+            const query = since ? `?since=${encodeURIComponent(since)}` : ""
+            const sinceArgs = since ? ["--since", since] : []
+            const output = yield* Effect.tryPromise(() =>
+              what === "log"
+                ? callDaemon(`/v1/log${query}`).then((res) => JSON.stringify(res.records ?? res, null, 2))
+                : callDaemon(`/v1/stats/${what}${query}`).then((res) => JSON.stringify(res, null, 2)),
+            ).pipe(
+              Effect.catch(() => cliOutput(what === "log" ? ["log", ...sinceArgs] : ["stats", what, ...sinceArgs])),
+            )
+            return { output: { output } }
           }),
       })
     })
