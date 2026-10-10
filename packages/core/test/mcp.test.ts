@@ -304,6 +304,7 @@ function resourceMcpLayer(
               Config.Service,
               Config.Service.of({
                 entries: overrides.entries,
+                reload: () => Effect.void,
                 changes: () => Stream.never,
               }),
             )
