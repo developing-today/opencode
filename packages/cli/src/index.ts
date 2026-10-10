@@ -20,6 +20,14 @@ import { CpuProfile } from "./cpu-profile"
 
 ensurePluginRuntime()
 
+// A parent that exits closes the inherited pipes; a long-running server must keep running past that.
+;[process.stdout, process.stderr].forEach((stream) =>
+  stream.on("error", (error) => {
+    if ("code" in error && error.code === "EPIPE") return
+    throw error
+  }),
+)
+
 if (process.env.OPENCODE_SSH_ASKPASS_PORT) {
   const { askpass } = await import("./ssh-askpass")
   process.exit(await Effect.runPromise(askpass.pipe(Effect.provide(NodeServices.layer))))

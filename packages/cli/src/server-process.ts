@@ -194,11 +194,12 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
       const url = HttpServer.formatAddress(server.address)
       console.log(options.mode === "stdio" ? JSON.stringify({ url }) : `server listening on ${url}`)
       if (foreground && !environmentPassword) console.log(`server password ${password}`)
-      return yield* options.mode === "service"
-        ? server.shutdown
-        : options.mode === "stdio"
-          ? waitForStdinClose()
-          : Effect.never
+      if (options.mode === "stdio") return yield* waitForStdinClose()
+      yield* Effect.forkScoped(onHangup(server.reload()))
+      const grace = shutdownGrace()
+      return yield* (options.mode === "service" ? server.shutdown : Effect.never).pipe(
+        Effect.onExit(() => server.drain(grace)),
+      )
     }).pipe(Effect.annotateLogs({ role: "server" })),
   )
 })
@@ -215,6 +216,21 @@ function addressInUse(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false
   if ("code" in error && error.code === "EADDRINUSE") return true
   return "cause" in error && addressInUse(error.cause)
+}
+
+function shutdownGrace() {
+  const value = Number(process.env.OPENCODE_SHUTDOWN_GRACE_MS)
+  return Number.isFinite(value) && value >= 0 ? value : 30_000
+}
+
+function onHangup(reload: Effect.Effect<void>) {
+  return Effect.callback<never>(() => {
+    const handler = () => {
+      Effect.runFork(reload)
+    }
+    process.on("SIGHUP", handler)
+    return Effect.sync(() => process.off("SIGHUP", handler))
+  })
 }
 
 function waitForStdinClose() {
