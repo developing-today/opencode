@@ -126,7 +126,7 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
         bus.publish(InstallationEvent.UpdateAvailable, { version }).pipe(Effect.asVoid),
       updated: (version: string) => bus.publish(InstallationEvent.Updated, { version }).pipe(Effect.asVoid),
       reload: () => bus.publish(Config.ReloadRequested, {}).pipe(Effect.asVoid),
-      drain: (grace: Duration.Input) =>
+      drain: (grace: Duration.Input, cutNow: Effect.Effect<void>) =>
         Effect.gen(function* () {
           yield* status.beginStopping
           yield* Effect.sync(() => {
@@ -135,11 +135,12 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
           const sessions = yield* runningSessions
           if (sessions.length === 0) return
           yield* Effect.logInfo("draining running sessions", { sessions, grace })
-          // The finalizer runs uninterruptibly; the wait must stay interruptible for its timeout to fire.
-          const drained = yield* Effect.interruptible(untilIdle.pipe(Effect.timeoutOption(grace)))
-          if (Option.isNone(drained))
-            yield* Effect.logWarning("shutdown grace elapsed; interrupting running sessions", {
-              sessions: yield* runningSessions,
+          // The interrupt that started this drain must not cancel the wait.
+          yield* untilIdle.pipe(Effect.timeoutOption(grace), Effect.raceFirst(cutNow), Effect.uninterruptible)
+          const remaining = yield* runningSessions
+          if (remaining.length > 0)
+            yield* Effect.logWarning("shutdown ended with sessions still running; interrupting them", {
+              sessions: remaining,
             })
         }),
     }

@@ -198,7 +198,7 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
       yield* Effect.forkScoped(onHangup(server.reload()))
       const grace = shutdownGrace()
       return yield* (options.mode === "service" ? server.shutdown : Effect.never).pipe(
-        Effect.onExit(() => server.drain(grace)),
+        Effect.onExit(() => server.drain(grace, secondTerm())),
       )
     }).pipe(Effect.annotateLogs({ role: "server" })),
   )
@@ -221,6 +221,15 @@ function addressInUse(error: unknown): boolean {
 function shutdownGrace() {
   const value = Number(process.env.OPENCODE_SHUTDOWN_GRACE_MS)
   return Number.isFinite(value) && value >= 0 ? value : 30_000
+}
+
+// The first SIGTERM is the shutdown being drained; a second one ends the drain wait at once.
+function secondTerm() {
+  return Effect.callback<void>((resume) => {
+    const handler = () => resume(Effect.void)
+    process.once("SIGTERM", handler)
+    return Effect.sync(() => process.off("SIGTERM", handler))
+  })
 }
 
 function onHangup(reload: Effect.Effect<void>) {
