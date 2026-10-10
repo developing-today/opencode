@@ -338,12 +338,6 @@ export const layer = (options?: Options) =>
         ),
         Effect.forkScoped({ startImmediately: true }),
       )
-      yield* bus.subscribe(ReloadRequested).pipe(
-        Stream.runForEach(() =>
-          reload().pipe(Effect.catchCause((cause) => Effect.logError("failed to reload config", { cause }))),
-        ),
-        Effect.forkScoped({ startImmediately: true }),
-      )
       yield* Effect.sleep("10 minutes").pipe(
         Effect.andThen(
           Effect.suspend(() => {
