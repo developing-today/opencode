@@ -2,13 +2,15 @@ export * as ServerProcess from "./process"
 
 import { NodeHttpServer } from "@effect/platform-node"
 import { Bus } from "@opencode/core/bus"
+import { SessionExecution } from "@opencode/core/session/execution"
 import { SessionRestart } from "@opencode/core/session/execution/restart"
+import { Config } from "@opencode/core/config"
 import { InstallationEvent } from "@opencode/schema/installation-event"
 import { hasPtyConnectTicketURL } from "@opencode/protocol/groups/pty"
 import { hasPersistentPtyConnectTicketURL } from "@opencode/protocol/groups/persistent-pty"
 import { isPairingConnectURL } from "@opencode/protocol/groups/server"
 import { Global } from "@opencode/util/global"
-import { Cause, Context, Effect, Exit, Latch, Layer, Option, Ref, Scope } from "effect"
+import { Cause, Context, Duration, Effect, Exit, Latch, Layer, Option, Ref, Scope } from "effect"
 import { HttpMiddleware, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { NetAddress } from "effect/net"
 import { createServer } from "node:http"
@@ -112,12 +114,34 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
     yield* Ref.set(application, Option.some(Context.get(context, HttpRouter.HttpRouter).asHttpEffect()))
     yield* status.ready
     const bus = Context.get(context, Bus.Service)
+    const execution = Context.get(context, SessionExecution.Service)
+    const runningSessions = execution.active.pipe(Effect.map((sessions) => Array.from(sessions)))
+    const untilIdle = Effect.gen(function* () {
+      while ((yield* runningSessions).length > 0) yield* Effect.sleep("250 millis")
+    })
     return {
       address: bound.http.address,
       shutdown: shutdown.await,
       updateAvailable: (version: string) =>
         bus.publish(InstallationEvent.UpdateAvailable, { version }).pipe(Effect.asVoid),
       updated: (version: string) => bus.publish(InstallationEvent.Updated, { version }).pipe(Effect.asVoid),
+      reload: () => bus.publish(Config.ReloadRequested, {}).pipe(Effect.asVoid),
+      drain: (grace: Duration.Input) =>
+        Effect.gen(function* () {
+          yield* status.beginStopping
+          yield* Effect.sync(() => {
+            bound.server.close()
+          })
+          const sessions = yield* runningSessions
+          if (sessions.length === 0) return
+          yield* Effect.logInfo("draining running sessions", { sessions, grace })
+          // The finalizer runs uninterruptibly; the wait must stay interruptible for its timeout to fire.
+          const drained = yield* Effect.interruptible(untilIdle.pipe(Effect.timeoutOption(grace)))
+          if (Option.isNone(drained))
+            yield* Effect.logWarning("shutdown grace elapsed; interrupting running sessions", {
+              sessions: yield* runningSessions,
+            })
+        }),
     }
   }).pipe(
     Effect.catchCause((cause) => {
