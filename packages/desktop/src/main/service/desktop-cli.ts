@@ -1,6 +1,6 @@
 export * as DesktopCli from "./desktop-cli"
 
-import { execFile, spawn } from "node:child_process"
+import { execFile } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { promisify } from "node:util"
 import { app } from "electron"
@@ -10,6 +10,7 @@ import { DesktopPaths } from "../paths"
 import { BUNDLED_CLI_VERSION_KEY } from "../storage/keys"
 import { getStore } from "../storage/store"
 import { parseCliVersion } from "./cli-version"
+import { runScript } from "./run-script"
 
 const execFileAsync = promisify(execFile)
 
@@ -187,21 +188,12 @@ const run = Effect.fn("DesktopCli.run")(function* (binary: string, args: string[
 const runInstaller = Effect.fn("DesktopCli.installForUser")(function* (binary: string, home: string) {
   yield* Effect.tryPromise({
     try: () =>
-      new Promise<void>((resolve, reject) => {
-        const child = spawn("/bin/bash", ["-s", "--", "--binary", binary], {
-          env: { ...process.env, HOME: home },
-          stdio: ["pipe", "ignore", "pipe"],
-        })
-
-        let stderr = ""
-        child.stderr.on("data", (chunk) => (stderr += chunk))
-        child.on("error", reject)
-        child.on("close", (code) => {
-          if (code === 0) return resolve()
-          reject(new Error(stderr.trim() || `CLI installer exited with code ${code}`))
-        })
-        child.stdin.end(installer)
-      }),
+      runScript("/bin/bash", ["-s", "--", "--binary", binary], installer, { ...process.env, HOME: home }).then(
+        ({ code, stderr }) => {
+          if (code === 0) return
+          throw new Error(stderr.trim() || `CLI installer exited with code ${code}`)
+        },
+      ),
     catch: (error) => (error instanceof Error ? error : new Error(String(error))),
   })
 })

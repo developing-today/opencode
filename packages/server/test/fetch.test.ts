@@ -115,6 +115,27 @@ function occupy(port: number, cancel = false) {
   })
 }
 
+// Two free loopback ports, handed to the OpenAI callback for this test only. The real 1455/1457 are shared by every
+// process on the machine, so a concurrent run could hold them and the cancel probe could reach into its listener.
+const callbackPorts = Effect.gen(function* () {
+  const probes = [createServer(), createServer()]
+  const ports = yield* Effect.forEach(probes, (probe) =>
+    Effect.callback<number, Error>((resume) => {
+      probe.once("error", (error) => resume(Effect.fail(error)))
+      probe.listen(0, "localhost", () => resume(Effect.succeed((probe.address() as { port: number }).port)))
+    }),
+  )
+  yield* Effect.forEach(probes, (probe) =>
+    Effect.callback<void>((resume) => {
+      probe.close(() => resume(Effect.void))
+    }),
+  )
+  const [primary, fallback] = ports as [number, number]
+  process.env.OPENCODE_TEST_OPENAI_CALLBACK_PORTS = `${primary},${fallback}`
+  yield* Effect.addFinalizer(() => Effect.sync(() => delete process.env.OPENCODE_TEST_OPENAI_CALLBACK_PORTS))
+  return { primary, fallback }
+})
+
 const connectOpenAI = (handler: Handler) =>
   Effect.gen(function* () {
     // Catalog endpoints no longer wait for plugin initialization.
@@ -132,7 +153,8 @@ const connectOpenAI = (handler: Handler) =>
     }).pipe(
       Effect.filterOrFail((ready) => ready),
       Effect.retry(Schedule.spaced("10 millis")),
-      Effect.timeout("10 seconds"),
+      // Plugin startup on the first request can exceed 10 s on a loaded machine.
+      Effect.timeout("30 seconds"),
     )
     return yield* Effect.promise(() =>
       handler(
@@ -360,52 +382,61 @@ it.live("returns 404 when a previously readable file is deleted", () =>
   ).pipe(Effect.scoped),
 )
 
-it.live("cancels a stale OpenAI OAuth callback server before falling back", () =>
-  Effect.gen(function* () {
-    const requests = yield* occupy(1455, true)
-    const handler = yield* ServerFetch.make(options)
-    const response = yield* connectOpenAI(handler)
+it.live(
+  "cancels a stale OpenAI OAuth callback server before falling back",
+  () =>
+    Effect.gen(function* () {
+      const { primary } = yield* callbackPorts
+      const requests = yield* occupy(primary, true)
+      const handler = yield* ServerFetch.make(options)
+      const response = yield* connectOpenAI(handler)
 
-    expect(response.status).toBe(200)
-    expect(requests).toContain("/cancel")
-    const body = (yield* Effect.promise(() => response.json())) as { data: { url: string } }
-    expect(new URL(body.data.url).searchParams.get("redirect_uri")).toBe("http://localhost:1455/auth/callback")
-  }),
+      expect(response.status).toBe(200)
+      expect(requests).toContain("/cancel")
+      const body = (yield* Effect.promise(() => response.json())) as { data: { url: string } }
+      expect(new URL(body.data.url).searchParams.get("redirect_uri")).toBe(`http://localhost:${primary}/auth/callback`)
+    }),
+  // The first request in a file pays for handler and plugin startup, which can exceed bun's 5 s default.
+  { timeout: 60_000 },
 )
 
-it.live("falls back to port 1457 when OpenAI OAuth port 1455 remains busy", () =>
-  Effect.gen(function* () {
-    const requests = yield* occupy(1455)
-    const handler = yield* ServerFetch.make(options)
-    const response = yield* connectOpenAI(handler)
+it.live(
+  "falls back to port 1457 when OpenAI OAuth port 1455 remains busy",
+  () =>
+    Effect.gen(function* () {
+      const { primary, fallback } = yield* callbackPorts
+      const requests = yield* occupy(primary)
+      const handler = yield* ServerFetch.make(options)
+      const response = yield* connectOpenAI(handler)
 
-    expect(response.status).toBe(200)
-    expect(requests).toContain("/cancel")
-    const body = (yield* Effect.promise(() => response.json())) as { data: { url: string } }
-    expect(new URL(body.data.url).searchParams.get("redirect_uri")).toBe("http://localhost:1457/auth/callback")
-  }),
+      expect(response.status).toBe(200)
+      expect(requests).toContain("/cancel")
+      const body = (yield* Effect.promise(() => response.json())) as { data: { url: string } }
+      expect(new URL(body.data.url).searchParams.get("redirect_uri")).toBe(`http://localhost:${fallback}/auth/callback`)
+    }),
+  { timeout: 60_000 },
 )
 
 it.live(
   "explains how to recover when both OpenAI OAuth callback ports are busy",
   () =>
     Effect.gen(function* () {
-      yield* occupy(1455)
-      yield* occupy(1457)
+      const { primary, fallback } = yield* callbackPorts
+      yield* occupy(primary)
+      yield* occupy(fallback)
       const handler = yield* ServerFetch.make(options)
       const response = yield* connectOpenAI(handler)
 
       expect(response.status).toBe(400)
       expect(yield* Effect.promise(() => response.json())).toEqual({
         _tag: "InvalidRequestError",
-        message:
-          "OpenAI browser login needs local port 1455 or 1457, but both are already in use. Stop the processes using those ports or choose Codex device code (legacy), then try again.",
+        message: `OpenAI browser login needs local port ${primary} or ${fallback}, but both are already in use. Stop the processes using those ports or choose Codex device code (legacy), then try again.`,
         kind: "integration_authorization",
       })
     }),
   // Busy ports: the cancel probe waits up to 2 s, then the bind retries take about 6.8 s, and startup and
-  // scoped cleanup count toward the same deadline. A loaded machine can stretch startup, so the budget is 30 s.
-  { timeout: 30_000 },
+  // scoped cleanup count toward the same deadline. A loaded machine can stretch startup, so the budget is 60 s.
+  { timeout: 60_000 },
 )
 
 it.live("serves the session view operation and missing-session error", () =>
