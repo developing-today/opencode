@@ -7,8 +7,10 @@ import { optional, PositiveInt } from "../schema.js"
 const BoundedPositiveInt = PositiveInt.check(Schema.isLessThanOrEqualTo(3_600_000))
 const SampleCount = PositiveInt.check(Schema.isLessThanOrEqualTo(50))
 const PositiveFinite = Schema.Finite.check(Schema.isGreaterThan(0))
-/** One note per line: `match: text`, with a non-empty match before the first colon and text after it. */
-const NoteLine = Schema.String.check(Schema.isPattern(/^[^:\r\n]*\S[^:\r\n]*:[^\r\n]*\S[^\r\n]*$/))
+/** One note per line: `match: text`, with a non-empty match before the first colon and non-empty text after it.
+ * The match cannot hold a colon, so the first colon is the separator. */
+export const NOTE_LINE = /^[^:\r\n]*[^\s:][^:\r\n]*:[^\r\n]*\S[^\r\n]*$/
+const NoteLine = Schema.String.check(Schema.isPattern(NOTE_LINE))
 
 /** An ordered model target: either `provider/model`, `provider/model#variant`, or an object with
  * per-target variant defaults and remaps. */

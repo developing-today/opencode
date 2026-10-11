@@ -134,6 +134,13 @@ describe("ModelRouteTuning notes", () => {
     expect(ModelRouteTuning.parseNotes(undefined)).toEqual([])
   })
 
+  test("drops the lines the schema refuses, and keeps a later colon in the text", () => {
+    expect(ModelRouteTuning.parseNotes([":x:y", "x::y", "x:", "match: text", "a: b\nc"])).toEqual([
+      { match: "x", text: ":y" },
+      { match: "match", text: "text" },
+    ])
+  })
+
   test("a note that states when the quota returns skips the target until then", () => {
     const adjustments = ModelRouteTuning.noteAdjustments(
       [{ match: "claude", text: "promo credits reset at 2026-01-04T00:00:00Z" }],

@@ -1,6 +1,7 @@
 export * as ModelRouteTuning from "./model-route-tuning.js"
 
 import { Duration, Effect, Option } from "effect"
+import { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
 import { ModelRoute } from "./model-route.js"
 import { ModelRouteLog, type ErrorBreakdown, type HourlyStat, type TargetStats } from "./model-route-log.js"
 import { ModelRouteLimits } from "./model-route-limits.js"
@@ -165,14 +166,13 @@ export interface Note {
   readonly text: string
 }
 
-/** Parses the `match: text` lines from the settings notes. */
+/** Parses the `match: text` lines from the settings notes. A line the schema refuses is dropped, so the
+ * parser reads exactly the lines the config validated. */
 export const parseNotes = (notes: readonly string[] | undefined): Note[] =>
   (notes ?? []).flatMap((line) => {
+    if (!ConfigModelRoutes.NOTE_LINE.test(line)) return []
     const separator = line.indexOf(":")
-    if (separator <= 0) return []
-    const match = line.slice(0, separator).trim()
-    const text = line.slice(separator + 1).trim()
-    return match && text ? [{ match, text }] : []
+    return [{ match: line.slice(0, separator).trim(), text: line.slice(separator + 1).trim() }]
   })
 
 /** The adjustments the notes argue for: a stated reset time skips the target until it arrives. */

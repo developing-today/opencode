@@ -705,6 +705,20 @@ describe("model route tuning and log settings", () => {
     expect(experimentalOf(result.encoded)?.model_route_tuning).toBeUndefined()
   })
 
+  test("a note with nothing before its colon makes the tuning block invalid, like a note with no colon", () => {
+    const result = ConfigNormalize.normalize({
+      experimental: { model_route_tuning: { enabled: true, notes: [":x:y"] } },
+    })
+    expect(result.type).toBe("normalized")
+    if (result.type !== "normalized") return
+    expect(result.diagnostics).toContainEqual({
+      kind: "invalid",
+      path: ["experimental", "model_route_tuning"],
+      message: "skipped malformed recognized value",
+    })
+    expect(experimentalOf(result.encoded)?.model_route_tuning).toBeUndefined()
+  })
+
   test("an unknown key under the tuning block is named in a diagnostic and the rest is kept", () => {
     const result = ConfigNormalize.normalize({
       experimental: { model_route_tuning: { enabled: true, intervalMinutes: 30, intervall: 5 } },

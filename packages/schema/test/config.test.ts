@@ -3,6 +3,7 @@ import { Schema } from "effect"
 import { Config } from "../src/config.js"
 import { ConfigAgent } from "../src/config/agent.js"
 import { ConfigMCP } from "../src/config/mcp.js"
+import { ConfigModelRoutes } from "../src/config/model-routes.js"
 import { ConfigProvider } from "../src/config/provider.js"
 import { Mcp } from "../src/mcp.js"
 import { Provider } from "../src/provider.js"
@@ -138,5 +139,15 @@ describe("Config.Entry", () => {
     expect(docs.oauth).not.toHaveProperty("client_id")
     expect(encoded.info.providers?.custom).not.toHaveProperty("headers")
     expect(encoded.info.providers?.custom).not.toHaveProperty("canonical")
+  })
+})
+
+describe("ConfigModelRoutes.Tuning notes", () => {
+  test("accepts match: text lines and refuses a line with nothing before its colon, nothing after it, or a line break", () => {
+    const decode = Schema.decodeUnknownSync(ConfigModelRoutes.Tuning)
+    expect(decode({ notes: ["match: text", "x::y"] }).notes).toEqual(["match: text", "x::y"])
+    expect(() => decode({ notes: [":x:y"] })).toThrow()
+    expect(() => decode({ notes: ["x:"] })).toThrow()
+    expect(() => decode({ notes: ["x: y\nz"] })).toThrow()
   })
 })
