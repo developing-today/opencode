@@ -5,6 +5,9 @@ import { Predicate } from "effect"
 import type { MainContext } from "../sdk/main"
 import { type WslCommandLine, type WslRuntime, shellEscape, wslArgs } from "./runtime"
 
+// EPIPE, or ERR_STREAM_DESTROYED once the stream is torn down, when the child has already exited.
+const closedPipe = (error: NodeJS.ErrnoException) => error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED"
+
 export type WslSidecar = {
   stop: () => Promise<void>
   onExit: (cb: (code: number | null, signal: NodeJS.Signals | null) => void) => void
@@ -51,8 +54,6 @@ export async function spawnWslSidecar(
     windowsHide: true,
   })
 
-  child.stdin.end(script)
-
   const recentOutput: string[] = []
 
   const emit = (line: WslCommandLine) => {
@@ -68,6 +69,12 @@ export async function spawnWslSidecar(
 
   const exit = new Promise<never>((_, reject) => {
     child.once("error", reject)
+    // A child that exits before reading its script closes stdin under the write. The exit status below is the real
+    // result, so a closed-pipe error is absorbed here rather than left unhandled; anything else still fails startup.
+    child.stdin.on("error", (error) => {
+      if (!closedPipe(error)) reject(error)
+    })
+    child.stdin.end(script)
     child.once("exit", (code, signal) =>
       reject(
         new Error(
