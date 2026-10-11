@@ -18,6 +18,7 @@ import { ServiceRegistration } from "./services/service-registration"
 import { RemoteTunnel } from "./services/remote-tunnel"
 import { WebUi } from "./services/web-ui"
 import { databasePath } from "./database-path"
+import { inheritedListenFd, notifyReady } from "./systemd"
 
 export type Mode = "default" | "service" | "stdio"
 
@@ -45,6 +46,12 @@ export const run = Effect.fnUntraced(function* (options: Options) {
 })
 
 const processEffect = Effect.fnUntraced(function* (options: Options) {
+  // A supervisor that passed us its listening socket owns the handover; drop the variables so children never see them.
+  const listenFd = inheritedListenFd(process.env, process.pid)
+  if (listenFd !== undefined) {
+    delete process.env.LISTEN_FDS
+    delete process.env.LISTEN_PID
+  }
   const inherited = process.env.OPENCODE_PTY_HANDOFF
   delete process.env.OPENCODE_PTY_HANDOFF
   const handoff =
@@ -100,6 +107,7 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
           },
           hostname,
           port,
+          inheritedListenFd: listenFd,
           cors: options.cors ?? config.cors,
           password,
           pty: { handoff },
@@ -193,6 +201,7 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
       }
       const url = HttpServer.formatAddress(server.address)
       console.log(options.mode === "stdio" ? JSON.stringify({ url }) : `server listening on ${url}`)
+      announceReady(options.mode === "stdio")
       if (foreground && !environmentPassword) console.log(`server password ${password}`)
       if (options.mode === "stdio") return yield* waitForStdinClose()
       yield* Effect.forkScoped(onHangup(server.reload()))
@@ -206,6 +215,15 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
 
 function serviceURL(hostname: string, port: number) {
   return `http://${hostname.includes(":") ? `[${hostname}]` : hostname}:${port}`
+}
+
+// Ready is reported once start() has returned: this process's own listener is bound and its application is
+// ready. No request goes over the socket, because a predecessor still draining on a shared socket could answer it.
+// stdio mode owns stdout for its JSON handshake, so its line goes to stderr.
+function announceReady(stdio: boolean) {
+  notifyReady().catch((error: unknown) => console.error(error instanceof Error ? error.message : String(error)))
+  if (stdio) console.error("opencode: ready")
+  else console.log("opencode: ready")
 }
 
 function truthy(value?: string) {
