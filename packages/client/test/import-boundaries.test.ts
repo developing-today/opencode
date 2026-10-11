@@ -39,7 +39,9 @@ describe("public import boundaries", () => {
     const effectService = await bundleInputs("@opencode/client/effect/service", "bun")
 
     expect(within(effectService.eager, effect).length).toBeGreaterThan(0)
-    // The service module no longer reaches the protocol at all, so it is excluded from the whole graph.
+    // The service module no longer imports the protocol (its ServerStatus import was removed), so the whole graph
+    // excludes it. The eager positive check this replaces could only pass through that import.
+    expect(within(effectService.all, schema)).toEqual([])
     expect(within(effectService.all, protocol)).toEqual([])
     expect(within(effectService.all, core)).toEqual([])
     expect(within(effectService.all, server)).toEqual([])

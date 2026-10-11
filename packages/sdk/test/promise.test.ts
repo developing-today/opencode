@@ -44,8 +44,10 @@ test("Promise event streams support cancellation", async () => {
     expect(await events.next()).toMatchObject({ value: { type: "server.connected" }, done: false })
     const pending = events.next()
     controller.abort()
-    // Aborting a subscriber ends its iteration cleanly, without an error (see client shared-events.test.ts).
-    expect(await pending).toEqual({ done: true, value: undefined })
+    // Aborting a subscriber ends its iteration cleanly, without an error (see client shared-events.test.ts),
+    // and later reads on that iterator stay finished.
+    expect(await pending).toStrictEqual({ done: true, value: undefined })
+    expect(await events.next()).toStrictEqual({ done: true, value: undefined })
     await events.return?.()
   }
 })
