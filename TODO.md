@@ -35,10 +35,11 @@ Implemented in `serve` (the Node build; see the runtime note below):
   `$NOTIFY_SOCKET` (sd_notify, `Type=notify`) and prints `opencode: ready` on stdout. In `--stdio`
   mode the line goes to stderr, because stdout carries the JSON handshake. The check runs in-process
   rather than over the socket: a request sent to a shared socket could be answered by a predecessor.
-- Runtime: Bun 1.4 ignores an inherited socket (`listen({ fd })` and `Bun.serve` bind a port of
-  their own), so the Bun build exits with an error when `LISTEN_FDS` is set. Only the Node build
-  (`opencode-node`) can take the handover. `READY=1` uses `sendto(2)` on Bun and `systemd-notify`
-  on Node, because neither runtime has a unix datagram socket.
+- Runtime: Bun 1.4's `node:http`, `Bun.serve` and `Bun.listen` ignore an inherited socket and bind a
+  port of their own, but `node:net` adopts it (`net.Server.listen({ fd })`). On Bun the listener is a net
+  server on fd 3, and each accepted connection is handed to the unchanged http server
+  (`packages/server/src/inherited-socket.ts`). The Node build keeps `http.listen({ fd })`. `READY=1` uses
+  `sendto(2)` on Bun and `systemd-notify` on Node, because neither runtime has a unix datagram socket.
 - Wrapper: `bin/opencode.cjs` passes fd 3 to the server it starts and rewrites `LISTEN_PID` to that
   child's pid, so the handover works through the installed launcher.
 
@@ -54,10 +55,10 @@ Handover order a supervisor must follow:
    of being refused.
 5. When the predecessor exits, the supervisor keeps its descriptor until the next handover.
 
-Verified by `packages/cli/test/serve-handover.test.ts` with real processes: a 10 ms client loop
-across a handover saw no refused connection and no failed request, while a control run without a
-supervisor's socket refused connections on every restart. The control code path is the same binary
-without `LISTEN_FDS`, so it binds the port itself as before.
+Verified by `packages/cli/test/serve-handover.test.ts` with real processes on both runtimes: a 10 ms
+client loop across a handover saw no refused connection and no failed request, while a control run
+without a supervisor's socket refused connections on every restart. The control code path is the same
+binary without `LISTEN_FDS`, so it binds the port itself as before.
 
 Still open:
 - Systemd units: `Type=notify` needs `NotifyAccess=all`, because the notifying process is the server
