@@ -2,13 +2,24 @@ export * as OpenCode from "./client.js"
 
 import { Cause, Context, Effect, Schema, Stream } from "effect"
 import { Sse } from "effect/encoding"
-import { HttpClient, HttpClientRequest } from "effect/http"
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http"
+import { InvalidRequestError, UnauthorizedError } from "@opencode/protocol/errors"
 import { OpenCodeEvent } from "@opencode/protocol/groups/event"
 import { SharedEvents } from "../shared-events.js"
 import { ClientError, OpenCode } from "./generated/index.js"
 import type { EventSubscribeInput } from "./api/api.js"
 import { RpcClientRuntime } from "./rpc.js"
 import type { RpcCallOptions } from "../promise/rpc.js"
+
+// `event.subscribe` declares no endpoint errors of its own. The API-wide middleware add these two, as the generated
+// client's `getErrorSchemas` reads them, so each declared status decodes with the one schema the contract gives it.
+// event-subscribe-errors.test.ts checks these statuses against the reflected contract.
+const declaredEventErrors = [
+  { status: 400, schema: InvalidRequestError },
+  { status: 401, schema: UnauthorizedError },
+] as const
+type DeclaredEventError = (typeof declaredEventErrors)[number]["schema"]["Type"]
+type EventFrameError = ClientError | DeclaredEventError
 
 const CurrentHeaders = Context.Reference<RpcCallOptions["headers"]>("@opencode/client/effect/rpc/headers", {
   defaultValue: () => undefined,
@@ -34,7 +45,7 @@ export const make = Effect.fn("OpenCode.make")(function* (options?: { readonly b
       : HttpClient.mapRequest(httpClient, HttpClientRequest.prependUrl(options.baseUrl.toString()))
   // Async iterators throw a squashed cause; retain the native typed failures and defects intact.
   class EventFailure {
-    constructor(readonly cause: Cause.Cause<ClientError>) {}
+    constructor(readonly cause: Cause.Cause<EventFrameError>) {}
   }
   // The cursor outlives any one subscription, so a subscribe after a failure resumes from the last event consumed.
   let lastEventID: string | undefined
@@ -94,25 +105,67 @@ function eventFrames(
   return Stream.unwrap(
     client.execute(request).pipe(
       Effect.mapError((cause) => new ClientError({ cause })),
-      Effect.map((response) => {
-        if (response.status !== 200)
-          return Stream.fail(new ClientError({ cause: { status: response.status } }))
-        if (!response.headers["content-type"]?.startsWith("text/event-stream"))
-          return Stream.fail(new ClientError({ cause: { contentType: response.headers["content-type"] } }))
-        return response.stream.pipe(
-          Stream.tap(() => Effect.sync(options.onActivity)),
-          Stream.decodeText,
-          Stream.pipeThroughChannel(Sse.decode()),
-          Stream.mapEffect((frame) =>
-            Effect.gen(function* () {
-              const event = yield* decodeEvent(frame.data)
-              if (frame.id !== undefined) options.onEventId(frame.id)
-              return event
+      Effect.flatMap((response) => {
+        if (response.status !== 200) return failStatus(response)
+        const contentType = response.headers["content-type"]
+        if (!contentType?.startsWith("text/event-stream"))
+          return Effect.fail(
+            new ClientError({
+              cause: new HttpClientError.HttpClientError({
+                reason: new HttpClientError.DecodeError({
+                  request: response.request,
+                  response,
+                  description: `Unsupported response content-type for status ${response.status}: ${
+                    contentType || "<missing>"
+                  }. Expected one of: text/event-stream`,
+                }),
+              }),
             }),
+          )
+        return Effect.succeed(
+          response.stream.pipe(
+            Stream.tap(() => Effect.sync(options.onActivity)),
+            Stream.decodeText,
+            Stream.pipeThroughChannel(Sse.decode()),
+            Stream.mapEffect((frame) =>
+              Effect.gen(function* () {
+                const event = yield* decodeEvent(frame.data)
+                if (frame.id !== undefined) options.onEventId(frame.id)
+                return event
+              }),
+            ),
+            Stream.mapError((cause) => new ClientError({ cause })),
           ),
-          Stream.mapError((cause) => new ClientError({ cause })),
         )
       }),
     ),
+  )
+}
+
+// Fails a non-200 response the way the generated client does. A declared status fails with its decoded error object,
+// and a body that does not decode fails as a status error that keeps the response. An undeclared status fails with a
+// DecodeError on the response, which carries the status and body.
+function failStatus(
+  response: HttpClientResponse.HttpClientResponse,
+): Effect.Effect<never, ClientError | DeclaredEventError> {
+  const schema = declaredEventErrors.find((declared) => declared.status === response.status)?.schema
+  if (schema === undefined)
+    return Effect.fail(
+      new ClientError({
+        cause: new HttpClientError.HttpClientError({
+          reason: new HttpClientError.DecodeError({ request: response.request, response }),
+        }),
+      }),
+    )
+  return HttpClientResponse.schemaBodyJson(schema)(response).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ClientError({
+          cause: new HttpClientError.HttpClientError({
+            reason: new HttpClientError.StatusCodeError({ request: response.request, response, cause }),
+          }),
+        }),
+    ),
+    Effect.flatMap((error) => Effect.fail(error)),
   )
 }
