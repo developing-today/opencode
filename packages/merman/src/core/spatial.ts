@@ -159,12 +159,71 @@ function inflateSpan(span: SpatialSpan, clearance: SpatialClearance): SpatialSpa
   return { y: span.y, fromX: span.fromX - clearance.x, toX: span.toX + clearance.x }
 }
 
+const noSpans: readonly SpatialSpan[] = []
+
+function spansByRow(spans: readonly SpatialSpan[]): ReadonlyMap<number, readonly SpatialSpan[]> {
+  const rows = new Map<number, SpatialSpan[]>()
+  for (const span of spans) {
+    const row = rows.get(span.y)
+    if (row) {
+      row.push(span)
+      continue
+    }
+    rows.set(span.y, [span])
+  }
+  return rows
+}
+
+function spanBounds(spans: readonly SpatialSpan[]) {
+  let minX = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  for (const span of spans) {
+    minX = Math.min(minX, span.fromX)
+    maxX = Math.max(maxX, span.toX)
+    minY = Math.min(minY, span.y)
+    maxY = Math.max(maxY, span.y)
+  }
+  return { minX, maxX, minY, maxY }
+}
+
+function indexClaims(claims: readonly SpatialClaim[]) {
+  return {
+    rows: claims.map((claim) => spansByRow(claim.spans)),
+    bounds: claims.map((claim) => spanBounds(claim.spans)),
+  }
+}
+
+// A claim's bounds, inflated by its clearance, must reach the moving bounds before any span can conflict.
+function mayReach(
+  bounds: ReturnType<typeof spanBounds>,
+  moving: ReturnType<typeof spanBounds>,
+  clearance: SpatialClearance,
+): boolean {
+  return (
+    bounds.minY <= moving.maxY + clearance.y &&
+    bounds.maxY >= moving.minY - clearance.y &&
+    bounds.minX <= moving.maxX + clearance.x &&
+    bounds.maxX >= moving.minX - clearance.x
+  )
+}
+
+function roleClearance(policy: SpatialCollisionPolicy, role: SpatialRole): SpatialClearance {
+  return normalizeClearance(
+    typeof policy.clearance === "number" || (policy.clearance && "x" in policy.clearance)
+      ? policy.clearance
+      : policy.clearance?.[role],
+  )
+}
+
 export class SpatialIndex {
   static empty(): SpatialIndex {
     return new SpatialIndex([])
   }
 
   readonly claims: readonly SpatialClaim[]
+  private claimIndex?: ReturnType<typeof indexClaims>
 
   private constructor(claims: readonly SpatialClaim[]) {
     this.claims = Object.freeze(
@@ -196,31 +255,46 @@ export class SpatialIndex {
   }
 
   conflicts(moving: SpatialClaim, policy: SpatialCollisionPolicy = {}): SpatialConflict[] {
+    return this.scanConflicts(moving, policy, false)
+  }
+
+  isFree(claim: SpatialClaim, policy: SpatialCollisionPolicy = {}): boolean {
+    return this.scanConflicts(claim, policy, true).length === 0
+  }
+
+  // Claims whose bounds cannot reach the moving bounds are skipped, and firstOnly stops at the first conflict.
+  private scanConflicts(moving: SpatialClaim, policy: SpatialCollisionPolicy, firstOnly: boolean): SpatialConflict[] {
     const contacts = policy.contacts ?? []
     const conflicts: SpatialConflict[] = []
-
+    const { rows, bounds } = (this.claimIndex ??= indexClaims(this.claims))
+    const movingBounds = spanBounds(moving.spans)
+    const clearances: Partial<Record<SpatialRole, SpatialClearance>> = {}
+    // Validate every claim's clearance before any early return, so an invalid policy throws the same way for isFree.
     for (const existing of this.claims) {
+      if (!rolesMayOverlap(moving, existing)) clearances[existing.role] ??= roleClearance(policy, existing.role)
+    }
+    let movingRows: ReadonlyMap<number, readonly SpatialSpan[]> | undefined
+
+    for (const [index, existing] of this.claims.entries()) {
       if (rolesMayOverlap(moving, existing)) continue
-      const configuredClearance =
-        typeof policy.clearance === "number" || (policy.clearance && "x" in policy.clearance)
-          ? policy.clearance
-          : policy.clearance?.[existing.role]
-      const clearance = normalizeClearance(configuredClearance)
+      const clearance = clearances[existing.role]!
+      if (!mayReach(bounds[index]!, movingBounds, clearance)) continue
+      const existingRows = rows[index]!
       for (const movingSpan of moving.spans) {
         for (let dy = -clearance.y; dy <= clearance.y; dy++) {
           const inflated = inflateSpan({ ...movingSpan, y: movingSpan.y + dy }, clearance)
-          for (const existingSpan of existing.spans) {
-            if (inflated.y !== existingSpan.y) continue
+          for (const existingSpan of existingRows.get(inflated.y) ?? noSpans) {
             const fromX = Math.max(inflated.fromX, existingSpan.fromX)
             const toX = Math.min(inflated.toX, existingSpan.toX)
             for (let x = fromX; x <= toX; x++) {
               const point = { x, y: inflated.y }
-              const movingOccupiesPoint = moving.spans.some(
-                (span) => span.y === point.y && point.x >= span.fromX && point.x <= span.toX,
+              movingRows ??= spansByRow(moving.spans)
+              const movingOccupiesPoint = (movingRows.get(point.y) ?? noSpans).some(
+                (span) => point.x >= span.fromX && point.x <= span.toX,
               )
-              if (!(movingOccupiesPoint && pointIsContact(point, existing, contacts))) {
-                conflicts.push({ moving, existing, point })
-              }
+              if (movingOccupiesPoint && pointIsContact(point, existing, contacts)) continue
+              conflicts.push({ moving, existing, point })
+              if (firstOnly) return conflicts
             }
           }
         }
@@ -228,10 +302,6 @@ export class SpatialIndex {
     }
 
     return conflicts
-  }
-
-  isFree(claim: SpatialClaim, policy: SpatialCollisionPolicy = {}): boolean {
-    return this.conflicts(claim, policy).length === 0
   }
 
   firstFit<T extends { claim: SpatialClaim }>(

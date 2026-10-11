@@ -2,7 +2,7 @@ import { orthogonalPathPoints, segmentBetween, type DiagramPoint } from "../../c
 import { SpatialIndex, spatialPathClaim, spatialRectClaim } from "../../core/spatial.js"
 import { diagramTextWidth } from "../../core/text.js"
 import { splitDiagramLines } from "../../core/text-lines.js"
-import { drawFlowchartDiagramGrid } from "../../flowchart/drawing.js"
+import { drawFlowchartLayoutGrid } from "../../flowchart/drawing.js"
 import { layoutFlowchartDiagram } from "../../flowchart/layout.js"
 import { flowchartRouteLabelLayout } from "../../flowchart/labels.js"
 import { parseMermaidFlowchartDiagram } from "../../flowchart/parser.js"
@@ -250,7 +250,7 @@ function auditFlowchart(fixture: LayoutFixture, viewport: (typeof auditViewports
   const violations: string[] = []
   const diagram = parseMermaidFlowchartDiagram(fixture.source)
   const layout = layoutFlowchartDiagram(diagram, { compact: true, layoutMaxWidth: viewport })
-  const grid = drawFlowchartDiagramGrid(diagram, { compact: true, layoutMaxWidth: viewport })
+  const grid = drawFlowchartLayoutGrid(layout)
   const output = grid.toString({ trimTop: true, trimBottom: true })
   const size = grid.getTextSize({ trimTop: true, trimBottom: true })
   const routes = layout.routes.map((route) => ({ from: route.edge.from, to: route.edge.to, points: route.points }))

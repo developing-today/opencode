@@ -14,7 +14,7 @@ import {
   drawOrthogonalPath,
   mergeDiagramLineGlyph,
 } from "../core/drawing.js"
-import { layoutFlowchartDiagram, visualLength } from "./layout.js"
+import { layoutFlowchartDiagram, visualLength, type FlowchartLayout } from "./layout.js"
 import { flowchartRouteLabelLayout } from "./labels.js"
 import type { FlowchartDiagramRenderOptions } from "./options.js"
 import { flowchartDirectionBetween, flowchartSourceConnector } from "./routing.js"
@@ -312,10 +312,17 @@ export function drawFlowchartDiagramGrid(
   diagram: FlowchartDiagram,
   options: FlowchartDiagramRenderOptions = {},
 ): FlowchartGrid {
+  return drawFlowchartLayoutGrid(layoutFlowchartDiagram(diagram, options), options)
+}
+
+// Takes a computed layout so callers that also inspect the layout do not lay the diagram out twice.
+export function drawFlowchartLayoutGrid(
+  layout: FlowchartLayout,
+  options: FlowchartDiagramRenderOptions = {},
+): FlowchartGrid {
   const borderStyle = options.borderStyle ?? DEFAULT_BORDER_STYLE
-  const layout = layoutFlowchartDiagram(diagram, options)
   const { bounds, routes, subgraphBounds, width, height } = layout
-  diagram = layout.diagram
+  const diagram = layout.diagram
   const grid = new DiagramCanvas<FlowchartCellStyle, FlowchartCellMetadata>(width, height, {
     mergeCell: mergeFlowchartCell,
   })
