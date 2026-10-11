@@ -66,7 +66,9 @@ serveTest(
     const events = await subscribe(server.url)
     const sessionID = await createSession(server.url, server.root)
     await send(server.url, server.root, `/api/session/${sessionID}/prompt`, { text: "hello" })
-    await waitUntil(() => llm.requests.length === 1)
+    // The first message also asks the same model for a title, so the held requests are not one per prompt.
+    await waitUntil(() => llm.requests.some((request) => !isTitleRequest(request)))
+    expect(llm.requests.filter((request) => !isTitleRequest(request))).toHaveLength(1)
 
     server.child.kill("SIGTERM")
     await waitUntil(() => refuses(server.url))
@@ -171,6 +173,12 @@ function holdingCompletion() {
       await llm.stop(true)
     },
   }
+}
+
+function isTitleRequest(request: unknown) {
+  const system = (request as { readonly messages?: ReadonlyArray<{ readonly content?: unknown }> } | undefined)?.messages?.[0]
+    ?.content
+  return typeof system === "string" && system.startsWith("You are a title generator")
 }
 
 function completion(text: string) {
