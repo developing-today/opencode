@@ -234,13 +234,17 @@ function dispatch(
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     const url = new URL(request.url, "http://localhost")
+    const info = request.method === "GET" && url.pathname === "/api/info"
+    // Only the info route answers at once during startup; other requests wait (bounded, see `Status.startupWait`).
+    // The request fiber is uninterruptible above the router, so the wait opts back in: a disconnect must cancel it.
+    if (!info) yield* status.awaitStartup.pipe(Effect.interruptible)
     const state = yield* status.current
     const app = yield* Ref.get(application)
     const ready = state.type === "ready" && Option.isSome(app)
     // A draining server stops listening, but it still answers the requests already accepted on its connections:
     // a 503 there would look like a failed request to a client that a successor is about to serve.
     const serving = (state.type === "ready" || state.type === "stopping") && Option.isSome(app)
-    if (request.method === "GET" && url.pathname === "/api/info" && !ready) {
+    if (info && !ready) {
       if (!(yield* authorizedRequest(request, auth))) return unauthorizedResponse(request)
       return yield* infoResponse(status, version, urls, tmp)
     }

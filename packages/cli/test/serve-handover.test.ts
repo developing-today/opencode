@@ -3,6 +3,8 @@ import fs from "node:fs/promises"
 import http from "node:http"
 import os from "node:os"
 import path from "node:path"
+import { Duration } from "effect"
+import { Status } from "@opencode/server/service-status"
 import { isolatedEnv } from "./fixture/environment"
 import { closeSocket, datagramReceiver, listenSocket } from "./fixture/systemd-socket"
 
@@ -17,6 +19,9 @@ const password = "serve-handover-password"
 const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
 const posixTest = process.platform === "win32" ? test.skip : test
 const linuxTest = process.platform === "linux" ? test : test.skip
+// A request that reaches a successor before it is ready is held for up to the startup wait, so this client gives up
+// only after that. A timeout here therefore means a hang, not a held request.
+const clientTimeoutMs = Duration.toMillis(Status.startupWait) + 5_000
 
 for (const runtime of ["node", "bun"] as const) {
   posixTest(
@@ -37,8 +42,10 @@ for (const runtime of ["node", "bun"] as const) {
         await Bun.sleep(300)
 
         // The successor reports ready on the same socket before the predecessor is told to stop.
+        const successorStarted = Date.now()
         second = serve({ root: session.root, port: listener.port, listenFd: listener.fd, runtime })
         await second.ready()
+        const successorReadyMs = Date.now() - successorStarted
         first.child.kill("SIGTERM")
         await Bun.sleep(1_500)
         expect(first.child.exitCode).toBeNull()
@@ -50,7 +57,12 @@ for (const runtime of ["node", "bun"] as const) {
         await Bun.sleep(1_000)
         const tally = await load.stop()
         load = undefined
-        const report = { ...summarize(tally), heldRequest: completed.status, predecessorExit: drained }
+        const report = {
+          ...summarize(tally),
+          heldRequest: completed.status,
+          predecessorExit: drained,
+          successorReadyMs,
+        }
         console.log(`handover ${JSON.stringify(report)}`)
 
         expect(tally.requests).toBeGreaterThan(100)
@@ -276,7 +288,7 @@ function loadTest(base: string) {
       try {
         const response = await fetch(`${base}/api/location`, {
           headers: { authorization, connection: "close" },
-          signal: AbortSignal.timeout(500),
+          signal: AbortSignal.timeout(clientTimeoutMs),
         })
         await response.arrayBuffer()
         if (response.status === 200) tally.ok++
