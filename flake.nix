@@ -26,6 +26,9 @@
             openssl
             git
           ];
+          # The @parcel/watcher native addon dlopens libstdc++, which is not on the default search path. Without
+          # it the watcher reports no native backend and watch tests time out.
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ];
         };
       });
 
