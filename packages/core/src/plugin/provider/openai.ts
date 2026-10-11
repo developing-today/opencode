@@ -14,8 +14,6 @@ import type { PluginInternal } from "../internal.js"
 
 const clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
 const issuer = "https://auth.openai.com"
-const callbackPort = 1455
-const callbackFallbackPort = 1457
 const callbackBindAttempts = 10
 const callbackBindRetryDelay = 200
 const pollingSafetyMargin = 3000
@@ -108,22 +106,30 @@ const browser = (app: App.Info) =>
     refresh: (value) => refresh(browserMethodID, value, app),
   }) satisfies IntegrationOAuthMethodRegistration
 
+// OpenAI registers these two loopback ports as redirect targets. Tests set OPENCODE_TEST_OPENAI_CALLBACK_PORTS to
+// "primary,fallback" so concurrent runs on one machine never contend for the real ports.
+function callbackPorts() {
+  const [primary, fallback] = process.env.OPENCODE_TEST_OPENAI_CALLBACK_PORTS?.split(",").map(Number) ?? []
+  return { primary: primary ?? 1455, fallback: fallback ?? 1457 }
+}
+
 function listen(server: Server) {
-  return bind(server, callbackPort).pipe(
-    Effect.as(callbackPort),
+  const { primary, fallback } = callbackPorts()
+  return bind(server, primary).pipe(
+    Effect.as(primary),
     Effect.catchIf(addressInUse, () =>
-      cancel(callbackPort).pipe(
+      cancel(primary).pipe(
         Effect.ignore,
         Effect.andThen(Effect.sleep(callbackBindRetryDelay)),
-        Effect.andThen(bindWithRetry(server, callbackPort, callbackBindAttempts - 1)),
-        Effect.as(callbackPort),
+        Effect.andThen(bindWithRetry(server, primary, callbackBindAttempts - 1)),
+        Effect.as(primary),
         Effect.catchIf(addressInUse, () =>
-          bindWithRetry(server, callbackFallbackPort, callbackBindAttempts).pipe(
-            Effect.as(callbackFallbackPort),
+          bindWithRetry(server, fallback, callbackBindAttempts).pipe(
+            Effect.as(fallback),
             Effect.catchIf(addressInUse, () =>
               Effect.fail(
                 new Error(
-                  `OpenAI browser login needs local port ${callbackPort} or ${callbackFallbackPort}, but both are already in use. Stop the processes using those ports or choose Codex device code (legacy), then try again.`,
+                  `OpenAI browser login needs local port ${primary} or ${fallback}, but both are already in use. Stop the processes using those ports or choose Codex device code (legacy), then try again.`,
                 ),
               ),
             ),
