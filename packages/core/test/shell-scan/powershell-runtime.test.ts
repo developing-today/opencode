@@ -486,6 +486,10 @@ const fixtures = [
 // Runtime execution is restricted to probes and $null/stream redirections; other cases are parser-only.
 const oracle = String.raw`
 $ErrorActionPreference = 'Stop'
+# Only probes and built-ins run here. Without this, each unknown command name (29 fixtures) searches every module,
+# about 0.5 s per lookup on this machine. Utility is imported first because auto-load would supply the JSON cmdlets.
+Import-Module Microsoft.PowerShell.Utility
+$PSModuleAutoLoadingPreference = 'None'
 $probe = 'Invoke-ProbeB'
 $script:seen = [System.Collections.Generic.List[string]]::new()
 function Invoke-ProbeA { [void]$script:seen.Add('Invoke-ProbeA'); 1 }
@@ -501,7 +505,12 @@ $results = foreach ($source in (ConvertFrom-Json -InputObject ([Console]::In.Rea
   $tokens = $null
   $errors = $null
   $ast = [System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
-  $nodes = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true))
+  $candidates = @($ast.FindAll({ param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -or
+    $node -is [System.Management.Automation.Language.FileRedirectionAst] -or
+    ($node -is [System.Management.Automation.Language.PipelineAst] -and $node.Background)
+  }, $true))
+  $nodes = @($candidates.Where({ $_ -is [System.Management.Automation.Language.CommandAst] }))
   $commands = @($nodes | ForEach-Object {
     @{
       name = $_.GetCommandName()
@@ -517,12 +526,10 @@ $results = foreach ($source in (ConvertFrom-Json -InputObject ([Console]::In.Rea
     ($name -and $name -notin @('Invoke-ProbeA', 'Invoke-ProbeB', 'Invoke-ProbeC', 'Invoke-ProbeBlock', 'ForEach-Object')) -or
     (!$name -and $_.CommandElements[0] -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst])
   })
-  $files = @($ast.FindAll({ param($node)
-    $node -is [System.Management.Automation.Language.FileRedirectionAst] -and $node.Location.Extent.Text -ne '$null'
-  }, $true))
-  $background = @($ast.FindAll({ param($node)
-    $node -is [System.Management.Automation.Language.PipelineAst] -and $node.Background
-  }, $true))
+  $files = @($candidates.Where({
+    $_ -is [System.Management.Automation.Language.FileRedirectionAst] -and $_.Location.Extent.Text -ne '$null'
+  }))
+  $background = @($candidates.Where({ $_ -is [System.Management.Automation.Language.PipelineAst] }))
   if ($errors.Count -eq 0 -and $unsafe.Count -eq 0 -and $files.Count -eq 0 -and $background.Count -eq 0) {
     try { & ([scriptblock]::Create($source)) | Out-Null }
     catch { $runtimeError = $_.Exception.Message }
@@ -538,29 +545,41 @@ $results = foreach ($source in (ConvertFrom-Json -InputObject ([Console]::In.Rea
 ConvertTo-Json -InputObject @($results) -Depth 10 -Compress
 `
 
+// Each shard runs in its own pwsh process with its own 45 s limit, so a busy machine slows a shard, not the whole run.
+const shards = 4
+
+async function runOracle(sources: readonly string[]) {
+  const process = Bun.spawn([pwsh!, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", oracle], {
+    stdin: new Blob([JSON.stringify(sources)]),
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 45_000,
+  })
+  const [output, error, code] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ])
+  return { code, error, output }
+}
+
 // Run with SHELL_SCAN_PWSH=/path/to/pwsh bun run test test/shell-scan/powershell-runtime.test.ts.
 test.skipIf(!pwsh)(
   "successful PowerShell scans cover real parser boundaries and executed probe calls",
   async () => {
-    const process = Bun.spawn([pwsh!, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", oracle], {
-      stdin: new Blob([JSON.stringify(fixtures)]),
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 45_000,
-    })
-    const [output, error, code] = await Promise.all([
-      new Response(process.stdout).text(),
-      new Response(process.stderr).text(),
-      process.exited,
-    ])
-    expect({ code, error }).toEqual({ code: 0, error: "" })
+    const runs = await Promise.all(
+      Array.from({ length: shards }, (_, shard) =>
+        runOracle(fixtures.filter((_fixture, index) => index % shards === shard)),
+      ),
+    )
+    for (const run of runs) expect({ code: run.code, error: run.error }).toEqual({ code: 0, error: "" })
     const results: Array<{
       source: string
       commands: Array<{ name: string | null; text: string; start: number; end: number }>
       errors: string[]
       executed: string[]
       runtimeError: string | null
-    }> = JSON.parse(output)
+    }> = runs.flatMap((run) => JSON.parse(run.output))
     expect(results).toHaveLength(fixtures.length)
     const failures: string[] = []
     let scanned = 0
