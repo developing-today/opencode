@@ -252,6 +252,28 @@ describe("cross-spawn spawner", () => {
         expect(out).toBe("a b c")
       }),
     )
+
+    fx.live("reports a child that exits before reading stdin with its own exit status", () =>
+      Effect.gen(function* () {
+        const dir = yield* Effect.acquireRelease(
+          Effect.promise(() => tmpdir()),
+          (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+        )
+        const config = path.join(dir.path, "broken.gitconfig")
+        yield* Effect.promise(() => fs.writeFile(config, "[broken\n"))
+        // git rejects its config before it reads stdin, so the piped write meets a closed pipe.
+        const handle = yield* ChildProcess.make("git", ["check-ignore", "--no-index", "--stdin", "-z"], {
+          env: { GIT_CONFIG_GLOBAL: config },
+          extendEnv: true,
+          stdin: Stream.make(Buffer.from("a\0b\0", "utf-8")),
+        })
+        const [stderr, code] = yield* Effect.all([decodeByteStream(handle.stderr), handle.exitCode], {
+          concurrency: "unbounded",
+        })
+        expect(code).toBe(ChildProcessSpawner.ExitCode(128))
+        expect(stderr).toContain("bad config line")
+      }),
+    )
   })
 
   describe("process control", () => {

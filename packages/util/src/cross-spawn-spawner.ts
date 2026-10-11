@@ -21,6 +21,25 @@ import { filesystem, path } from "./effect/app-node-platform.js"
 
 const toError = (err: unknown): Error => (err instanceof globalThis.Error ? err : new globalThis.Error(String(err)))
 
+// A child that exits before it reads its stdin makes the next write fail with EPIPE, or ERR_STREAM_DESTROYED once the
+// stream is torn down. The child's exit status and output are still the result, so this error is not a failure.
+const closedPipe = (err: unknown): boolean => {
+  const cause = err instanceof PlatformError.PlatformError ? err.reason.cause : err
+  const code = (cause as NodeJS.ErrnoException | undefined)?.code
+  return code === "EPIPE" || code === "ERR_STREAM_DESTROYED"
+}
+
+// The write sink listens for errors only while it pumps, so a closed-pipe error that lands after the last write has no
+// listener and Node throws it as unhandled. This listener stays attached for the stream's life and absorbs closed pipes.
+// Other errors still reach the sink while it writes; with no sink attached they are rethrown, as Node does by default.
+const listenStdin = (writable: NodeJS.WritableStream) => {
+  writable.on("error", (err) => {
+    if (closedPipe(err)) return
+    if (writable.listenerCount("error") > 1) return
+    throw err
+  })
+}
+
 const toTag = (err: NodeJS.ErrnoException): PlatformError.SystemErrorTag => {
   switch (err.code) {
     case "ENOENT":
@@ -229,6 +248,7 @@ const makeCrossSpawnSpawner = Effect.gen(function* () {
     Effect.suspend(() => {
       let sink: Sink.Sink<void, unknown, never, PlatformError.PlatformError> = Sink.drain
       if (Predicate.isNotNull(proc.stdin)) {
+        listenStdin(proc.stdin)
         sink = NodeSink.fromWritable({
           evaluate: () => proc.stdin!,
           onError: (err) => toPlatformError("fromWritable(stdin)", toError(err), command),
@@ -236,7 +256,11 @@ const makeCrossSpawnSpawner = Effect.gen(function* () {
           encoding: cfg.encoding,
         })
       }
-      if (Stream.isStream(cfg.stream)) return Effect.as(Effect.forkScoped(Stream.run(cfg.stream, sink)), sink)
+      if (Stream.isStream(cfg.stream))
+        return Effect.as(
+          Effect.forkScoped(Stream.run(cfg.stream, sink).pipe(Effect.catchIf(closedPipe, () => Effect.void))),
+          sink,
+        )
       return Effect.succeed(sink)
     })
 
