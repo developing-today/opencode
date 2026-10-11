@@ -114,11 +114,17 @@ const ensureDaemon = async (): Promise<void> => {
       stdio: "ignore",
       env: process.env,
     })
+    // A missing binary (ENOENT) is reported as an async 'error' event, not a thrown exception.
+    // Without a listener it crashes OpenCode for everyone who has not installed mcpx.
+    let spawnFailed = false
+    child.on("error", () => {
+      spawnFailed = true
+    })
     child.unref()
 
     // Give daemon up to 1.5s to answer /v1/health
     const deadline = Date.now() + 1500
-    while (Date.now() < deadline) {
+    while (Date.now() < deadline && !spawnFailed) {
       await new Promise((r) => setTimeout(r, 100))
       try {
         const health = await callDaemon("/v1/health")
