@@ -162,6 +162,9 @@ export const connect = Effect.fnUntraced(function* (
 
   // The SDK fails pending requests with a bare "Connection closed"; the transport error before it says why.
   let lastError: string | undefined
+  // The HTTP error behind lastError, when there was one. A request the server rejected fails with the same bare
+  // "Connection closed", so the status that says why is only visible here.
+  let lastHTTPError: SdkHttpError | undefined
   const explain = (error: unknown) =>
     error instanceof SdkError && error.code === SdkErrorCode.ConnectionClosed && lastError
       ? `${describe(error)}: ${lastError}`
@@ -201,6 +204,7 @@ export const connect = Effect.fnUntraced(function* (
     client.onerror = (error) => {
       if (error.name === "AbortError") return
       lastError = describe(error)
+      lastHTTPError = error instanceof SdkHttpError ? error : undefined
       runFork(Effect.logWarning("mcp transport error", { server, error: lastError }))
     }
     client.setRequestHandler("roots/list", () => ({ roots: [{ uri: pathToFileURL(directory).href }] }))
@@ -229,12 +233,14 @@ export const connect = Effect.fnUntraced(function* (
     reported: false,
   }
   const failure = (error: unknown) => {
-    if (!(error instanceof SdkHttpError) || session.transport?.sessionId === undefined) return new Error(explain(error))
+    const cause =
+      error instanceof SdkError && error.code === SdkErrorCode.ConnectionClosed && lastHTTPError ? lastHTTPError : error
+    if (!(cause instanceof SdkHttpError) || session.transport?.sessionId === undefined) return new Error(explain(error))
     const expired =
-      error.status === 404 ||
-      (error.status === 400 &&
-        typeof error.data.text === "string" &&
-        error.data.text.includes("Bad Request: Server not initialized"))
+      cause.status === 404 ||
+      (cause.status === 400 &&
+        typeof cause.data.text === "string" &&
+        cause.data.text.includes("Bad Request: Server not initialized"))
     if (!expired) return new Error(explain(error))
     if (!session.reported) {
       session.reported = true

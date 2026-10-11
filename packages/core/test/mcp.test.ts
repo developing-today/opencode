@@ -1146,6 +1146,59 @@ test("reconnects and retries a tool call after the MCP session expires", async (
   )
 })
 
+test("recovers a tool call that another request's session expiry closed underneath it", async () => {
+  // The first call hangs at the server until the client drops the connection. The second call is rejected
+  // with the 400 a restarted single-session server sends, which reconnects and closes the first call's transport.
+  let armed = false
+  let restart = async () => {}
+  let held: () => void = () => {}
+  const heldArrived = new Promise<void>((resolve) => (held = resolve))
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const server = yield* resourceServer({
+          respond: async (request) => {
+            if (!armed || request.method !== "POST") return undefined
+            const body = (await request.clone().json()) as { method: string; params: { arguments: { n: number } } }
+            if (body.method !== "tools/call") return undefined
+            if (body.params.arguments.n === 2) {
+              held()
+              return new Promise<undefined>(() => {})
+            }
+            armed = false
+            await restart()
+            return new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                error: { code: -32000, message: "Bad Request: Server not initialized" },
+                id: null,
+              }),
+              { status: 400, headers: { "content-type": "application/json" } },
+            )
+          },
+        })
+        restart = server.restart
+        yield* Effect.gen(function* () {
+          const service = yield* Mcp.Service
+          yield* service.callTool({ server: "resources", name: "echo", args: { n: 1 } })
+
+          armed = true
+          const first = Effect.runPromise(
+            service.callTool({ server: "resources", name: "echo", args: { n: 2 } }).pipe(Effect.exit),
+          )
+          yield* Effect.promise(() => heldArrived)
+          const second = yield* service.callTool({ server: "resources", name: "echo", args: { n: 3 } })
+          const exit = yield* Effect.promise(() => first)
+
+          expect(second.isError).toBe(false)
+          expect(Exit.isSuccess(exit) ? exit.value.isError : "failed").toBe(false)
+          expect(server.state.initializations).toBe(2)
+        }).pipe(Effect.provide(resourceMcpLayer(server.url)))
+      }),
+    ),
+  )
+})
+
 describe.each([
   ["legacy", undefined],
   ["modern", "2026-07-28"],
