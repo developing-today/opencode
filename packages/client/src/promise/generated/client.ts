@@ -191,6 +191,7 @@ import type {
   SkillListOutput,
   RpcCallInput,
   RpcCallOutput,
+  EventSubscribeInput,
   EventSubscribeOutput,
   PtyListInput,
   PtyListOutput,
@@ -281,6 +282,8 @@ export interface RequestOptions {
   readonly headers?: RequestInit["headers"]
   /** Reports every chunk a streaming response receives, including keepalive comments that yield no event. */
   readonly onActivity?: () => void
+  /** Reports the SSE id of each streamed event just before that event is yielded. */
+  readonly onEventId?: (id: string) => void
 }
 
 interface RequestDescriptor {
@@ -399,12 +402,19 @@ export function make(options: ClientOptions) {
               .split("\n")
               .flatMap((line) => (line.startsWith("data:") ? [line.slice(5).trimStart()] : []))
               .join("\n")
+            const id = block
+              .split("\n")
+              .flatMap((line) => (line.startsWith("id:") ? [line.slice(3).trimStart()] : []))
+              .pop()
             if (data !== "") {
+              let value: A
               try {
-                yield JSON.parse(data) as A
+                value = JSON.parse(data) as A
               } catch (cause) {
                 throw new ClientError("MalformedResponse", { cause })
               }
+              if (id) requestOptions?.onEventId?.(id)
+              yield value
             }
             boundary = buffer.indexOf("\n\n")
           }
@@ -1702,9 +1712,16 @@ export function make(options: ClientOptions) {
         ),
     },
     event: {
-      subscribe: (requestOptions?: RequestOptions): AsyncIterable<EventSubscribeOutput> =>
+      subscribe: (input?: EventSubscribeInput, requestOptions?: RequestOptions): AsyncIterable<EventSubscribeOutput> =>
         sse<EventSubscribeOutput>(
-          { method: "GET", path: `/api/event`, successStatus: 200, declaredStatuses: [400, 401], empty: false },
+          {
+            method: "GET",
+            path: `/api/event`,
+            headers: { "last-event-id": input?.["last-event-id"] },
+            successStatus: 200,
+            declaredStatuses: [400, 401],
+            empty: false,
+          },
           requestOptions,
         ),
     },

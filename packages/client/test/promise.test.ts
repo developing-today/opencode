@@ -676,6 +676,39 @@ test("event.subscribe exposes the Promise event stream wire projection", async (
   expect(events[1]?.type === "session.model.selected" && events[1].created).toBe(1_717_171_717_000)
 })
 
+test("event.subscribe sends Last-Event-ID and reports each SSE id when its event is taken", async () => {
+  const requests: Request[] = []
+  const client = OpenCode.make({
+    baseUrl: "http://localhost:3000",
+    fetch: async (input, init) => {
+      requests.push(input instanceof Request ? input : new Request(input, init))
+      return new Response(
+        `data: ${JSON.stringify({ id: "evt_connected", created: 0, type: "server.connected", data: {} })}\n\n` +
+          `id: inst-a:7\ndata: ${JSON.stringify(modelSwitchedEvent)}\n\n`,
+        { headers: { "content-type": "text/event-stream" } },
+      )
+    },
+  })
+  const seen: Array<readonly [string, string | undefined]> = []
+  let reported: string | undefined
+  const events = client.event.subscribe({
+    lastEventID: "inst-a:3",
+    onEventId: (id) => {
+      reported = id
+    },
+  })
+  for await (const event of events) {
+    seen.push([event.type, reported])
+    reported = undefined
+  }
+
+  expect(requests[0]?.headers.get("last-event-id")).toBe("inst-a:3")
+  expect(seen).toEqual([
+    ["server.connected", undefined],
+    ["session.model.selected", "inst-a:7"],
+  ])
+})
+
 // Moved from packages/app/e2e/regression/session-timeline-transport.spec.ts
 test("event.subscribe keeps one request open while delivering multiple events", async () => {
   const requests: Request[] = []

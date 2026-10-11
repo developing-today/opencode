@@ -63,6 +63,29 @@ function source(cleanup?: Promise<void>) {
   }
 }
 
+test("a stream opens from its first subscriber's cursor and reports each id when the event is taken", async () => {
+  const opened: SharedEvents.Resume[] = []
+  const shared = SharedEvents.make((_signal, _onActivity, resume) => {
+    opened.push(resume)
+    return (async function* () {
+      resume.onEventId("inst-a:1")
+      yield { type: "one" }
+      resume.onEventId("inst-a:2")
+      yield { type: "two" }
+    })()
+  })
+  const reported: string[] = []
+  const iterable = shared.subscribe({ lastEventID: "inst-a:0", onEventId: (id) => reported.push(id) })
+  const iterator = iterable[Symbol.asyncIterator]()
+
+  expect(await iterator.next()).toEqual({ done: false, value: { type: "one" } })
+  expect(reported).toEqual(["inst-a:1"])
+  expect(await iterator.next()).toEqual({ done: false, value: { type: "two" } })
+  expect(reported).toEqual(["inst-a:1", "inst-a:2"])
+  expect(opened.map((resume) => resume.lastEventID)).toEqual(["inst-a:0"])
+  expect(await iterator.next()).toEqual({ done: true, value: undefined })
+})
+
 test("creation, subscription, and idle iterators are lazy", async () => {
   const events = source()
   const shared = SharedEvents.make(events.connect)

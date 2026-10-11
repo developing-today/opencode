@@ -1945,8 +1945,9 @@ export interface RpcApi<E = never> {
   readonly call: RpcCallOperation<E>
 }
 
+export type EventSubscribeInput = { readonly "last-event-id"?: string | undefined }
 export type EventSubscribeOutput = OpenCodeEvent
-export type EventSubscribeOperation<E = never> = () => Stream.Stream<EventSubscribeOutput, E>
+export type EventSubscribeOperation<E = never> = (input?: EventSubscribeInput) => Stream.Stream<EventSubscribeOutput, E>
 
 export interface EventApi<E = never> {
   readonly subscribe: EventSubscribeOperation<E>

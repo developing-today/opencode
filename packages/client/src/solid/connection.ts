@@ -56,6 +56,10 @@ export function createClientConnection(initialApi: OpenCodeClient, options: Clie
   let generation = 0
   let lastActivity = 0
   let forced = false
+  // Cursor for Last-Event-ID. It lives here, not in the client, because reconnect can swap in a new client.
+  let lastEventID: string | undefined
+  // The id of the event the loop is about to read; it becomes the cursor only once that event is published.
+  let staged: string | undefined
 
   function record(status: ClientConnectionEvent["data"]["status"], attempt: number, error?: string) {
     history.push({ type: "client.connection", created: Date.now(), data: { status, attempt, error } })
@@ -94,7 +98,17 @@ export function createClientConnection(initialApi: OpenCodeClient, options: Clie
     try {
       record(attempt === 0 ? "connecting" : "reconnecting", attempt)
       options.log?.info?.("event stream connecting", { attempt })
-      const iterator = api.event.subscribe({ signal: request.signal, onActivity: touch })[Symbol.asyncIterator]()
+      const iterator = api.event
+        .subscribe({
+          signal: request.signal,
+          onActivity: touch,
+          lastEventID,
+          onEventId: (id) => {
+            staged = id
+          },
+        })
+        [Symbol.asyncIterator]()
+      staged = undefined
       const first = await iterator.next()
       if (signal.aborted) return { error: undefined, connectedAt }
       if (first.done)
@@ -115,6 +129,7 @@ export function createClientConnection(initialApi: OpenCodeClient, options: Clie
       setConnection({ status: "connected", attempt: 0, error: undefined })
 
       while (!signal.aborted) {
+        staged = undefined
         const event = await iterator.next()
         if (signal.aborted) return { error: undefined, connectedAt }
         if (event.done)
@@ -131,6 +146,7 @@ export function createClientConnection(initialApi: OpenCodeClient, options: Clie
             seq: event.value.durable.seq,
           })
         publish(event.value)
+        if (staged !== undefined) lastEventID = staged
       }
       return { error: undefined, connectedAt }
     } catch (error) {

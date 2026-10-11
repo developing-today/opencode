@@ -9493,7 +9493,23 @@
       "get": {
         "tags": ["event"],
         "operationId": "event.subscribe",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "last-event-id",
+            "in": "header",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "required": false
+          }
+        ],
         "security": [],
         "responses": {
           "200": {
@@ -9608,7 +9624,7 @@
             }
           }
         },
-        "description": "Subscribe to native events and plugin RPC events across all server locations. Volatile by contract: a slow consumer overflows and fails the stream, and events during disconnection are missed.",
+        "description": "Subscribe to native events and plugin RPC events across all server locations. Each frame carries an SSE id of the form `<instance>:<sequence>`. Reconnect with Last-Event-ID to receive the events after that id from the server's bounded in-process buffer. When the id belongs to another server process or has aged out of the buffer, the stream sends one server.resync event instead, and the client should refetch its state. Otherwise events are volatile: a slow consumer overflows and fails the stream.",
         "summary": "Subscribe to events"
       }
     },
@@ -14141,6 +14157,28 @@
                   "required": ["action", "resource", "effect"],
                   "additionalProperties": false
                 }
+              },
+              "model_routes": {
+                "$ref": "#/components/schemas/Config.ModelRoutes"
+              },
+              "model_route_tuning": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "intervalMinutes": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1440
+                  },
+                  "windowHours": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 336
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "additionalProperties": false
@@ -14351,6 +14389,195 @@
           }
         },
         "additionalProperties": false
+      },
+      "Config.ModelRoute.BudgetEncoded": {
+        "type": "object",
+        "properties": {
+          "requestsPerMinute": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "requestsPerDay": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "tokensPerMinute": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "tokensPerDay": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "softLimit": {
+            "type": "number",
+            "minimum": 0.125,
+            "maximum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "Config.ModelRoute.RouteEncoded": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Config.ModelRoute.Target"
+            },
+            "description": "Ordered provider/model references. A route may include another route reference."
+          },
+          "health": {
+            "type": "object",
+            "properties": {
+              "firstTokenTimeoutMs": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 3600000
+                  },
+                  {
+                    "type": "boolean",
+                    "enum": [false]
+                  }
+                ]
+              },
+              "maxResponseTimeMs": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 3600000
+              },
+              "minOutputTokensPerSecond": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "sampleWindow": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 50
+              },
+              "slowThreshold": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 50
+              },
+              "cooldownMs": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 3600000
+              },
+              "quotaCooldownMs": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 3600000
+              }
+            },
+            "additionalProperties": false
+          },
+          "budgets": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Config.ModelRoute.BudgetEncoded"
+            }
+          },
+          "hedgeAfterMs": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 3600000
+          },
+          "attempts": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 50
+          },
+          "autonomy": {
+            "type": "string",
+            "enum": ["fixed", "rules", "adaptive", "predictive", "agent"]
+          },
+          "selection": {
+            "type": "string",
+            "enum": ["ordered", "round-robin", "weighted"]
+          },
+          "weights": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "required": ["targets"],
+        "additionalProperties": false
+      },
+      "Config.ModelRoute.Target": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/Config.ModelSelectionEncoded"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "model": {
+                "$ref": "#/components/schemas/Config.ModelSelectionEncoded"
+              },
+              "defaultVariant": {
+                "type": "string"
+              },
+              "variants": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "until": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": ["model"],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "Config.ModelRoutes": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {
+          "$ref": "#/components/schemas/Config.ModelRoute.RouteEncoded"
+        }
+      },
+      "Config.ModelSelectionEncoded": {
+        "anyOf": [
+          {
+            "type": "string",
+            "pattern": "^[^/#]+\\/[^#]+(?:#[^#]+)?$"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "providerID": {
+                "type": "string",
+                "pattern": "^[^/#]+$"
+              },
+              "model": {
+                "type": "string",
+                "pattern": "^[^#]+$"
+              },
+              "variant": {
+                "type": "string",
+                "pattern": "^[^#]+$"
+              }
+            },
+            "required": ["providerID", "model"],
+            "additionalProperties": false
+          }
+        ]
       },
       "Config.Patch": {
         "type": "object",

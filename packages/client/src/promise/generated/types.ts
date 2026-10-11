@@ -481,6 +481,14 @@ export type V2EventServerConnected = {
   data: {}
 }
 
+export type V2EventServerResync = {
+  id: string
+  metadata?: { [x: string]: any } | undefined
+  location?: LocationPublicRef | undefined
+  type: "server.resync"
+  data: {}
+}
+
 export type ModelSettings = { compaction?: ProviderCompaction } & { [x: string]: any }
 
 export type ConfigModelSettings = { compaction?: ProviderCompaction } & { [x: string]: JsonValue | null }
@@ -2569,6 +2577,7 @@ export type V2Event =
   | McpResourcesChanged
   | V2EventRpc
   | V2EventServerConnected
+  | V2EventServerResync
 
 export type SessionLogItem = SessionEventDurable | EventLogSynced
 
@@ -6314,6 +6323,10 @@ export type RpcCallInput = {
 }
 
 export type RpcCallOutput = RpcOutput
+
+export type EventSubscribeInput = {
+  readonly "last-event-id"?: { readonly "last-event-id"?: string | undefined }["last-event-id"]
+}
 
 export type EventSubscribeOutput = V2Event
 
