@@ -7,8 +7,12 @@ import path from "path"
 const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "opencode-server-test-")))
 const home = path.join(root, "home")
 const temporary = path.join(root, "tmp")
+// Default project directory (process.cwd() for requests without a location). Under the temp root, config discovery
+// walks only temp ancestors and never reaches the real HOME's .opencode.
+const project = path.join(root, "project")
 await fs.mkdir(home)
 await fs.mkdir(temporary)
+await fs.mkdir(project)
 
 const environment = {
   ...Object.fromEntries(
@@ -33,6 +37,7 @@ const environment = {
   OPENCODE_CONFIG: undefined,
   OPENCODE_CONFIG_CONTENT: undefined,
   OPENCODE_DB: path.join(home, "opencode.db"),
+  OPENCODE_TEST_PROJECT: project,
   TMPDIR: temporary,
   ...(process.platform === "win32" ? { USERPROFILE: home, TMP: temporary, TEMP: temporary } : {}),
 }

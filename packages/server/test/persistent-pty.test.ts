@@ -817,8 +817,14 @@ function controlFrame(cols: number, rows: number) {
   return frame
 }
 
+// Echoes arrive through the server's serial input path, so a typed command's echo takes longer when the host
+// is busy. Measured: about 0.5 s idle, and 1.9-2.2 s with 24 busy loops on a 16-core host. Measured in wall-clock
+// time, not in poll attempts, because Bun.sleep overshoots under load.
+const outputTimeoutMs = 10_000
+
 async function waitForSocketOutput(sockets: Array<{ output: string; closed: boolean }>, expected: string) {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  const deadline = performance.now() + outputTimeoutMs
+  while (performance.now() < deadline) {
     if (sockets.every((socket) => socket.output.includes(expected))) return
     if (sockets.some((socket) => socket.closed)) throw new Error("Persistent PTY observer disconnected")
     await Bun.sleep(20)
