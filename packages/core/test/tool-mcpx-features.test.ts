@@ -170,6 +170,31 @@ describe("Feature 5: Just-in-Time Secret Prompting", () => {
     expect(res.success).toBe(true)
     expect(lastHeaders["x-mcpx-secret-openai_api_key"]).toBe("sk-test-secret-12345")
   })
+
+  it("resolves a missing secret from the environment when no host prompt is set", async () => {
+    process.env.MCPX_TEST_ENV_SECRET = "from-env"
+    try {
+      let lastHeaders: Record<string, string> = {}
+      const mockDaemon = async (_path: string, _method?: string, _body?: any, headers?: Record<string, string>) => {
+        lastHeaders = headers || {}
+        if (!lastHeaders["x-mcpx-secret-mcpx_test_env_secret"]) throw { secretRequired: "MCPX_TEST_ENV_SECRET", server: "test" }
+        return { success: true }
+      }
+
+      const res = await callWithSecretPrompt({ path: "/v1/call", callDaemon: mockDaemon })
+      expect(res.success).toBe(true)
+      expect(lastHeaders["x-mcpx-secret-mcpx_test_env_secret"]).toBe("from-env")
+    } finally {
+      delete process.env.MCPX_TEST_ENV_SECRET
+    }
+  })
+
+  it("names the missing secret when neither a host nor the environment has it", async () => {
+    const mockDaemon = async () => {
+      throw { secretRequired: "MCPX_TEST_ABSENT_SECRET", server: "test" }
+    }
+    await expect(callWithSecretPrompt({ path: "/v1/call", callDaemon: mockDaemon })).rejects.toThrow("MCPX_TEST_ABSENT_SECRET")
+  })
 })
 
 describe("Feature 2: TTL and Script Auto-Projection", () => {
