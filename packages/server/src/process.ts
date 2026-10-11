@@ -17,6 +17,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { ListenOptions } from "node:net"
 import { ServerAuth } from "./auth"
 import { isAllowedCorsOrigin } from "./cors"
+import { adoptInheritedSocket } from "./inherited-socket"
 import { authorizedRequest, unauthorizedResponse } from "./middleware/authorization"
 import { withoutParentSpan } from "./request-tracing"
 import { createRoutes } from "./routes"
@@ -187,17 +188,7 @@ function listen(options: {
   readonly port: Option.Option<number>
   readonly inheritedFd?: number | undefined
 }) {
-  if (options.inheritedFd !== undefined) {
-    // Bun 1.4 ignores the fd option and binds a port of its own, so the handover would silently not happen.
-    if ("Bun" in globalThis)
-      return Effect.fail(
-        new Error(
-          "A listening socket was inherited, but the Bun runtime cannot serve an inherited socket. " +
-            "Run the Node build (opencode-node) or unset LISTEN_FDS.",
-        ),
-      )
-    return bind({ fd: options.inheritedFd })
-  }
+  if (options.inheritedFd !== undefined) return bind({ fd: options.inheritedFd })
   if (Option.isSome(options.port)) return bind({ host: options.hostname, port: options.port.value })
   const next = (port: number): ReturnType<typeof bind> =>
     bind({ host: options.hostname, port }).pipe(
@@ -211,9 +202,11 @@ function bind(address: { readonly host: string; readonly port: number } | { read
     const parentScope = yield* Scope.Scope
     const serverScope = yield* Scope.fork(parentScope)
     const server = createServer()
+    // Bun's node:http ignores `fd`, so an inherited socket is adopted through node:net there. Node takes `fd` directly.
+    const listening = "fd" in address && "Bun" in globalThis ? adoptInheritedSocket(server, address.fd) : server
     return yield* Effect.gen(function* () {
       // @types/node leaves `fd` off ListenOptions, but Node's server.listen accepts it.
-      const http = yield* NodeHttpServer.make(() => server, address as ListenOptions)
+      const http = yield* NodeHttpServer.make(() => listening, address as ListenOptions)
       yield* Effect.addFinalizer(() => Effect.sync(() => server.closeAllConnections()))
       return { http, server, scope: serverScope }
     }).pipe(
