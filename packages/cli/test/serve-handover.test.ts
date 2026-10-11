@@ -6,8 +6,8 @@ import path from "node:path"
 import { isolatedEnv } from "./fixture/environment"
 import { closeSocket, datagramReceiver, listenSocket } from "./fixture/systemd-socket"
 
-// Real `serve` processes handing a port from one to the next. The inherited-socket path runs on the Node build,
-// because Bun 1.4 cannot serve an inherited socket; the handover is tested against dist-node/opencode.mjs.
+// Real `serve` processes handing a port from one to the next, on both runtimes: the Node build (dist-node/opencode.mjs)
+// and the Bun build (src/index.ts). Each runtime runs the same handover and the same control.
 
 const cliRoot = path.resolve(import.meta.dir, "..")
 const entry = path.join(cliRoot, "src", "index.ts")
@@ -18,97 +18,99 @@ const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("bas
 const posixTest = process.platform === "win32" ? test.skip : test
 const linuxTest = process.platform === "linux" ? test : test.skip
 
-posixTest(
-  "a successor takes over a supervisor's socket with no refused connection and no failed request",
-  async () => {
-    await ensureNodeBundle()
-    const listener = listenSocket()
-    const session = await sessionRoot()
-    const base = `http://127.0.0.1:${listener.port}`
-    const first = serve({ root: session.root, port: listener.port, listenFd: listener.fd })
-    let second: Server | undefined
-    let load: ReturnType<typeof loadTest> | undefined
-    try {
-      await first.ready()
-      load = loadTest(base)
-      await Bun.sleep(200)
-      const held = heldSession(base, session.root)
-      await Bun.sleep(300)
+for (const runtime of ["node", "bun"] as const) {
+  posixTest(
+    `${runtime}: a successor takes over a supervisor's socket with no refused connection and no failed request`,
+    async () => {
+      if (runtime === "node") await ensureNodeBundle()
+      const listener = listenSocket()
+      const session = await sessionRoot()
+      const base = `http://127.0.0.1:${listener.port}`
+      const first = serve({ root: session.root, port: listener.port, listenFd: listener.fd, runtime })
+      let second: Server | undefined
+      let load: ReturnType<typeof loadTest> | undefined
+      try {
+        await first.ready()
+        load = loadTest(base)
+        await Bun.sleep(200)
+        const held = heldSession(base, session.root)
+        await Bun.sleep(300)
 
-      // The successor reports ready on the same socket before the predecessor is told to stop.
-      second = serve({ root: session.root, port: listener.port, listenFd: listener.fd })
-      await second.ready()
-      first.child.kill("SIGTERM")
-      await Bun.sleep(1_500)
-      expect(first.child.exitCode).toBeNull()
+        // The successor reports ready on the same socket before the predecessor is told to stop.
+        second = serve({ root: session.root, port: listener.port, listenFd: listener.fd, runtime })
+        await second.ready()
+        first.child.kill("SIGTERM")
+        await Bun.sleep(1_500)
+        expect(first.child.exitCode).toBeNull()
 
-      const completed = await held.finish()
-      expect(completed.status).toBe(200)
-      const drained = await exited(first.child, 30_000)
-      expect(drained).not.toBe("timeout")
-      await Bun.sleep(1_000)
-      const tally = await load.stop()
-      load = undefined
-      const report = { ...summarize(tally), heldRequest: completed.status, predecessorExit: drained }
-      console.log(`handover ${JSON.stringify(report)}`)
+        const completed = await held.finish()
+        expect(completed.status).toBe(200)
+        const drained = await exited(first.child, 30_000)
+        expect(drained).not.toBe("timeout")
+        await Bun.sleep(1_000)
+        const tally = await load.stop()
+        load = undefined
+        const report = { ...summarize(tally), heldRequest: completed.status, predecessorExit: drained }
+        console.log(`handover ${JSON.stringify(report)}`)
 
-      expect(tally.requests).toBeGreaterThan(100)
-      expect(tally.refused).toEqual([])
-      expect(tally.failed).toEqual([])
-    } finally {
-      await load?.stop()
-      first.child.kill("SIGKILL")
-      second?.child.kill("SIGKILL")
-      closeSocket(listener.fd)
-      await session.cleanup()
-    }
-  },
-  300_000,
-)
+        expect(tally.requests).toBeGreaterThan(100)
+        expect(tally.refused).toEqual([])
+        expect(tally.failed).toEqual([])
+      } finally {
+        await load?.stop()
+        first.child.kill("SIGKILL")
+        second?.child.kill("SIGKILL")
+        closeSocket(listener.fd)
+        await session.cleanup()
+      }
+    },
+    300_000,
+  )
 
-posixTest(
-  "control: without a supervisor's socket, the same restart refuses connections",
-  async () => {
-    await ensureNodeBundle()
-    const port = freePort()
-    const session = await sessionRoot()
-    const base = `http://127.0.0.1:${port}`
-    const first = serve({ root: session.root, port })
-    let second: Server | undefined
-    let load: ReturnType<typeof loadTest> | undefined
-    try {
-      await first.ready()
-      load = loadTest(base)
-      await Bun.sleep(200)
-      const held = heldSession(base, session.root)
-      await Bun.sleep(300)
+  posixTest(
+    `${runtime}: control: without a supervisor's socket, the same restart refuses connections`,
+    async () => {
+      if (runtime === "node") await ensureNodeBundle()
+      const port = freePort()
+      const session = await sessionRoot()
+      const base = `http://127.0.0.1:${port}`
+      const first = serve({ root: session.root, port, runtime })
+      let second: Server | undefined
+      let load: ReturnType<typeof loadTest> | undefined
+      try {
+        await first.ready()
+        load = loadTest(base)
+        await Bun.sleep(200)
+        const held = heldSession(base, session.root)
+        await Bun.sleep(300)
 
-      first.child.kill("SIGTERM")
-      await Bun.sleep(1_500)
-      const completed = await held.finish()
-      expect(completed.status).toBe(200)
-      const drained = await exited(first.child, 30_000)
-      expect(drained).not.toBe("timeout")
+        first.child.kill("SIGTERM")
+        await Bun.sleep(1_500)
+        const completed = await held.finish()
+        expect(completed.status).toBe(200)
+        const drained = await exited(first.child, 30_000)
+        expect(drained).not.toBe("timeout")
 
-      // Without a socket the successor can only bind after the predecessor has closed the port.
-      second = serve({ root: session.root, port })
-      await second.ready()
-      await Bun.sleep(1_000)
-      const tally = await load.stop()
-      load = undefined
-      const report = { ...summarize(tally), heldRequest: completed.status, predecessorExit: drained }
-      console.log(`control ${JSON.stringify(report)}`)
+        // Without a socket the successor can only bind after the predecessor has closed the port.
+        second = serve({ root: session.root, port, runtime })
+        await second.ready()
+        await Bun.sleep(1_000)
+        const tally = await load.stop()
+        load = undefined
+        const report = { ...summarize(tally), heldRequest: completed.status, predecessorExit: drained }
+        console.log(`control ${JSON.stringify(report)}`)
 
-      expect(tally.refused.length).toBeGreaterThan(0)
-    } finally {
-      await load?.stop()
-      first.child.kill("SIGKILL")
-      second?.child.kill("SIGKILL")
-      await session.cleanup()
-    }
-  },
-  300_000,
-)
+        expect(tally.refused.length).toBeGreaterThan(0)
+      } finally {
+        await load?.stop()
+        first.child.kill("SIGKILL")
+        second?.child.kill("SIGKILL")
+        await session.cleanup()
+      }
+    },
+    300_000,
+  )
+}
 
 posixTest(
   "a second SIGTERM ends a drain that is still waiting on a request",
@@ -175,24 +177,6 @@ linuxTest(
     }
   },
   300_000,
-)
-
-posixTest(
-  "the bun runtime refuses an inherited socket instead of binding a port of its own",
-  async () => {
-    const listener = listenSocket()
-    const session = await sessionRoot()
-    const server = serve({ root: session.root, port: listener.port, listenFd: listener.fd, runtime: "bun" })
-    try {
-      expect(await exited(server.child, 60_000)).not.toBe(0)
-      expect(await server.stderr()).toContain("cannot serve an inherited socket")
-    } finally {
-      server.child.kill("SIGKILL")
-      closeSocket(listener.fd)
-      await session.cleanup()
-    }
-  },
-  120_000,
 )
 
 type Server = ReturnType<typeof serve>
