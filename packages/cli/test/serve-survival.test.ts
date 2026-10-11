@@ -227,7 +227,8 @@ async function subscribe(url: string) {
 }
 
 async function createSession(url: string, root: string) {
-  const body = await send(url, root, "/api/session", {})
+  // session.create takes its location in the body; the query location does not place the session.
+  const body = await send(url, root, "/api/session", { location: { directory: root } })
   return (body as { readonly data: { readonly id: string } }).data.id
 }
 
