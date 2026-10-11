@@ -1,6 +1,6 @@
 export * as ModelRouteLog from "./model-route-log.js"
 
-import { and, asc, count, desc, eq, gt, gte, isNull, or, sql } from "drizzle-orm"
+import { and, asc, count, desc, eq, gt, gte, isNull, ne, or, sql } from "drizzle-orm"
 import { Effect, Layer, Queue } from "effect"
 import type { AIError, HttpContext } from "@opencode/ai"
 import { RequestExecutor, type StreamOptions } from "@opencode/ai/route"
@@ -55,7 +55,7 @@ export interface RequestObservation {
   readonly inputTokens?: number
   /** True for both legs of a hedged attempt. */
   readonly hedged?: boolean
-  /** Keep the provider's error body. Off by default: it can echo the request. */
+  /** Keeps the provider's error body for this request, overriding the `captureErrorBodies` setting. */
   readonly captureBody?: boolean
 }
 
@@ -128,7 +128,7 @@ export const observer = (
             tokens && result.firstOutputAt !== undefined
               ? ((tokens.output + tokens.reasoning) * 1_000) / Math.max(1, at - result.firstOutputAt)
               : undefined,
-          tokens_input: tokens ? tokens.input + tokens.cache.read + tokens.cache.write : request.inputTokens,
+          tokens_input: tokens ? tokens.input : request.inputTokens,
           tokens_estimated: result.tokensEstimated ?? (tokens === undefined && request.inputTokens !== undefined),
           tokens_output: tokens?.output,
           tokens_reasoning: tokens?.reasoning,
@@ -209,6 +209,24 @@ const isRetryableHint = (failure: unknown) => {
   return reason.reason?._tag !== undefined
 }
 
+/** Whether failed requests keep their provider error body: `experimental.model_route_log`, read live. */
+let captureErrorBodies: () => boolean = () => false
+
+export const onCaptureErrorBodies = (read: () => boolean) => {
+  captureErrorBodies = read
+}
+
+/** Scrubs what looks like a credential from a provider error body before it is stored: bearer tokens,
+ * key-like fields, and `sk-`-style keys. A heuristic, which is why keeping bodies is opt-in. */
+const redactBody = (body: string) =>
+  body
+    .replace(/\bbearer\s+[^\s"',;]+/gi, "Bearer [REDACTED]")
+    .replace(
+      /(["']?(?:api[_-]?key|authorization|access[_-]?token|token|secret|password)["']?\s*[:=]\s*["']?)[^\s"',;}]+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(/\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{8,}/g, "[REDACTED]")
+
 export const failureFields = (reason: unknown, options?: { readonly captureBody?: boolean }) => {
   const value = (reason ?? {}) as Record<string, unknown>
   const http = value.http as { status?: unknown; headers?: unknown } | undefined
@@ -233,8 +251,11 @@ export const failureFields = (reason: unknown, options?: { readonly captureBody?
     error_code: typeof value.code === "string" ? value.code : undefined,
     error_status: typeof http?.status === "number" ? http.status : undefined,
     error_message: typeof value.message === "string" ? value.message : undefined,
-    // Kept only when the caller asks: a provider body can echo the request, so it is opt-in.
-    error_body: options?.captureBody && typeof value.body === "string" ? value.body.slice(0, 2_000) : undefined,
+    // Kept only when configured: a provider body can echo the request, so it is opt-in and redacted.
+    error_body:
+      (options?.captureBody ?? captureErrorBodies()) && typeof value.body === "string"
+        ? redactBody(value.body).slice(0, 2_000)
+        : undefined,
     quota,
   }
 }
@@ -366,7 +387,13 @@ export const restoreUsageFrom = (db: Database.Interface["db"]) =>
         reasoning: RouteAttemptTable.tokens_reasoning,
       })
       .from(RouteAttemptTable)
-      .where(gte(RouteAttemptTable.time_ended, Date.now() - 86_400_000))
+      // A request that never went out is not counted live, so it is not restored either.
+      .where(
+        and(
+          gte(RouteAttemptTable.time_ended, Date.now() - 86_400_000),
+          ne(RouteAttemptTable.outcome, "resolution-failure"),
+        ),
+      )
       .all()
       .pipe(Effect.orElseSucceed(() => []))
     restoreUsage?.(

@@ -59,6 +59,40 @@ describe("scheduled tuning", () => {
     }),
   )
 
+  it.effect("tags the review with the level a route needs before it applies, so a fixed route is left alone", () =>
+    Effect.gen(function* () {
+      failures("tagged", 8)
+      yield* settle
+      const fiber = yield* ModelRouteTuning.schedule(
+        () => ({ enabled: false, intervalMinutes: 10 }),
+        () => ["fixed", "adaptive"],
+      ).pipe(Effect.forkChild)
+      yield* TestClock.adjust("11 minutes")
+      yield* settle
+      expect(ModelRoute.activeAdjustments()).toContainEqual(
+        expect.objectContaining({ id: "auto:tagged/m", requires: "adaptive" }),
+      )
+      yield* Fiber.interrupt(fiber)
+    }),
+  )
+
+  it.effect("with tuning enabled, the review also reaches rules routes", () =>
+    Effect.gen(function* () {
+      failures("enabled", 8)
+      yield* settle
+      const fiber = yield* ModelRouteTuning.schedule(
+        () => ({ enabled: true, intervalMinutes: 10 }),
+        () => ["fixed"],
+      ).pipe(Effect.forkChild)
+      yield* TestClock.adjust("11 minutes")
+      yield* settle
+      expect(ModelRoute.activeAdjustments()).toContainEqual(
+        expect.objectContaining({ id: "auto:enabled/m", requires: "rules" }),
+      )
+      yield* Fiber.interrupt(fiber)
+    }),
+  )
+
   it.effect("does nothing without settings, and a failed review does not stop the schedule", () =>
     Effect.gen(function* () {
       failures("quiet", 8)

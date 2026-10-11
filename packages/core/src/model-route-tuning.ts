@@ -147,31 +147,6 @@ export const predict = (input: {
   return result
 }
 
-/**
- * When a provider says a quota comes back, from the text of its error. Two forms are read: an
- * absolute time ("resets at 2026-01-01T00:00:00Z", "back at 2026-01-01") and a relative one
- * ("in 3 hours", "in 30 minutes", "in 45s"). Nothing else is guessed at.
- */
-export const parseQuotaReset = (message: string | undefined, now: number): number | undefined => {
-  if (!message) return undefined
-  const text = message.toLowerCase()
-  if (!/(?:quota|limit|rate limit)/.test(text)) return undefined
-  const absolute =
-    /(?:reset|resume|back|available|return)[a-z ]{0,20}(?:at|on)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2})?)?)/.exec(
-      text,
-    )?.[1]
-  if (absolute) {
-    const date = Date.parse(absolute)
-    if (!Number.isNaN(date)) return date
-  }
-  const relative = /in\s+(\d+)\s*(second|minute|hour|day)s?/.exec(text)
-  if (relative) {
-    const unit = { second: 1_000, minute: 60_000, hour: 3_600_000, day: 86_400_000 } as Record<string, number>
-    return now + Number(relative[1]) * (unit[relative[2]] ?? 1_000)
-  }
-  return undefined
-}
-
 export interface Settings {
   readonly enabled?: boolean
   readonly intervalMinutes?: number
@@ -227,6 +202,8 @@ export const review = (options: {
   readonly notes?: readonly string[]
   /** Skip time-of-day and error-text prediction. Defaults to false. */
   readonly withoutPredictions?: boolean
+  /** The least autonomy a route needs for the review's adjustments to apply to it. */
+  readonly floor: ModelRouteAutonomy.Level
 }) =>
   Effect.gen(function* () {
     const now = Date.now()
@@ -241,10 +218,12 @@ export const review = (options: {
     const { stats, errors } = Option.getOrElse(read, () => ({ stats: [], errors: [] }))
     const hourly = Option.getOrElse(readHourly, () => [] as ModelRouteLog.HourlyStat[])
     const predictions = options.withoutPredictions ? [] : predict({ hourly, errors, now })
-    const suggestions = suggest({ stats, errors, now, holdMs: options.holdMs })
-    suggestions.push(...noteAdjustments(parseNotes(options.notes), now, options.holdMs))
+    const suggestions: ModelRoute.Adjustment[] = [
+      ...suggest({ stats, errors, now, holdMs: options.holdMs }),
+      ...noteAdjustments(parseNotes(options.notes), now, options.holdMs),
+    ].map((item) => ({ ...item, requires: options.floor }))
     // A target that has been unreliable at this hour is down-weighted for a while, and one whose
-    // message says when its quota returns is skipped until then.
+    // message says when its quota returns is skipped until then. Only `predictive` routes apply these.
     for (const prediction of predictions) {
       if (prediction.state === "busy-hour")
         suggestions.push({
@@ -254,6 +233,7 @@ export const review = (options: {
           factor: 0.5,
           until: now + options.holdMs,
           note: prediction.detail,
+          requires: "predictive",
         })
       else if (prediction.until !== undefined)
         suggestions.push({
@@ -262,6 +242,7 @@ export const review = (options: {
           action: "skip",
           until: prediction.until,
           note: prediction.detail,
+          requires: "predictive",
         })
     }
     for (const item of suggestions) ModelRoute.addAdjustment(item, item.note)
@@ -269,7 +250,8 @@ export const review = (options: {
   })
 
 /** Reviews on a schedule for as long as the scope lives. The settings are read again before every
- * cycle, so enabling, disabling or retiming takes effect without a restart. */
+ * cycle, so enabling, disabling or retiming takes effect without a restart. Each adjustment names the
+ * least level a route needs, so a route only takes the review and predictions its own level reaches. */
 export const schedule = (
   read: () => Settings | undefined,
   levels: () => readonly (ModelRouteAutonomy.Level | undefined)[] = () => [],
@@ -279,10 +261,12 @@ export const schedule = (
       const interval = Math.max(1, read()?.intervalMinutes ?? DEFAULT_INTERVAL_MINUTES)
       yield* Effect.sleep(Duration.minutes(interval))
       const settings = read()
-      if (!ModelRouteAutonomy.reviews(levels(), settings?.enabled === true)) continue
+      const enabled = settings?.enabled === true
+      if (!ModelRouteAutonomy.reviews(levels(), enabled)) continue
       const applied = yield* review({
         notes: settings?.notes,
         withoutPredictions: !ModelRouteAutonomy.predicts(levels()),
+        floor: ModelRouteAutonomy.reviewFloor(enabled),
         windowHours: settings?.windowHours ?? DEFAULT_WINDOW_HOURS,
         // Long enough to bridge to the next review, so an adjustment does not flicker off in between.
         holdMs: Math.max(1, settings?.intervalMinutes ?? DEFAULT_INTERVAL_MINUTES) * 2 * 60_000,

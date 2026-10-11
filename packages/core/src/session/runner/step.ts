@@ -28,6 +28,7 @@ import { SessionSchema } from "../schema.js"
 import { toSessionError } from "../to-session-error.js"
 import { SessionUsage } from "../usage.js"
 import { ModelRoute } from "../../model-route.js"
+import { ModelRouteAutonomy } from "../../model-route-autonomy.js"
 import { ModelRouteLimits } from "../../model-route-limits.js"
 import { ModelRouteLog } from "../../model-route-log.js"
 import { SessionRunnerModel } from "./model.js"
@@ -376,7 +377,7 @@ export const make = Effect.gen(function* () {
           const failed = llmFailure !== undefined
           const timedOut = failed && llmFailure.reason._tag === "Transport" && llmFailure.reason.code === "Timeout"
           const tokens = recorded.finish?.tokens
-          ModelRoute.recordUsage(input.model.ref, tokens ? tokens.input + tokens.output + tokens.reasoning : 0)
+          ModelRoute.recordRequest(input.model.ref, tokens)
           const failureLog = failed ? ModelRouteLog.failureFields(llmFailure.reason) : undefined
           if (failed)
             ModelRoute.observeRateLimit(
@@ -444,7 +445,7 @@ export const make = Effect.gen(function* () {
               )
             : undefined
 
-        // A target gets `attempts` tries before the route moves on. The failure only counts against
+        // A target gets `attempts` requests before the route moves on. The failure only counts against
         // the target's health once it is given up on.
         const retryKey = `${input.assistantMessageID}|${input.model.ref.providerID}/${input.model.ref.id}`
         const sameTargetRetry =
@@ -593,8 +594,10 @@ export const make = Effect.gen(function* () {
   const attempt = Effect.fn("SessionStep.attempt")(function* (input: Input) {
     const routing = input.model.routing
     const prepareFor = input.prepareFor
-    // A target that keeps giving up is raced at once rather than after the hedge delay.
-    const escalate = routing !== undefined && ModelRoute.escalates(routing.target)
+    // A target that keeps giving up is raced at once rather than after the hedge delay, on routes whose
+    // autonomy allows it; `fixed` and `rules` routes only fail over.
+    const escalate =
+      routing !== undefined && ModelRouteAutonomy.races(routing.autonomy) && ModelRoute.escalates(routing.target)
     // Once a turn has been hedged, its retries stay on one request rather than racing again.
     if (!routing || (!routing.hedgeAfterMs && !escalate) || !prepareFor || wasHedged(input.assistantMessageID))
       return yield* run(input)

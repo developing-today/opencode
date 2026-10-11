@@ -12,6 +12,7 @@ import { Provider } from "@opencode/core/provider"
 import { Variant } from "@opencode/core/variant"
 import { ModelResolver } from "@opencode/core/model-resolver"
 import { ModelRoute } from "@opencode/core/model-route"
+import { ModelRouteAutonomy } from "@opencode/core/model-route-autonomy"
 import { AISDK } from "@opencode/core/aisdk"
 import { Npm } from "@opencode/util/npm"
 import { it } from "./lib/effect"
@@ -1748,6 +1749,61 @@ describe("ModelResolver routes", () => {
         // A real failure still moves a fixed route along.
         ModelRoute.failed(ModelRoute.ref({ providerID: "pa", model: a.id }), ModelRoute.policy(), Date.now())
         expect(targetOf(yield* resolver.resolveModel(fixed))).toBe("pb")
+      }),
+    )
+  })
+
+  it.effect("a requested route variant runs each target at the variant it is remapped to", () => {
+    ModelRoute.resetHealth()
+    const a = model(Provider.aisdk("@ai-sdk/openai"), {
+      providerID: Provider.ID.make("pa"),
+      modelID: "luna",
+      settings: { apiKey: "key" },
+      variants: [{ id: VariantID.make("high") }],
+    })
+    const b = leaf("pb")
+    // The route advertises `low` as the config plugin would: every target can produce it through a remap.
+    const route = Info.make({
+      ...routed([a, b], { ...ordered, targetVariants: [{ map: { low: VariantID.make("high") } }, {}] }),
+      variants: [{ id: VariantID.make("low") }],
+    })
+    return withResolver([a, b], (resolver) =>
+      Effect.gen(function* () {
+        const resolved = yield* resolver.resolveModel(route, VariantID.make("low"))
+        expect(targetOf(resolved)).toBe("pa")
+        expect(resolved.routing?.target.variant).toBe(VariantID.make("high"))
+        // Without a requested variant, each target runs at its own default, which for this one is none.
+        const plain = yield* resolver.resolveModel(route)
+        expect(targetOf(plain)).toBe("pa")
+        expect(plain.routing?.target.variant).toBeUndefined()
+      }),
+    )
+  })
+
+  it.effect("learned adjustments take effect only on the routes whose level they were made for", () => {
+    ModelRoute.resetHealth()
+    const a = leaf("pa")
+    const b = leaf("pb")
+    const c = leaf("pc")
+    // The review skips pa from adaptive up; the prediction skips pb from predictive up.
+    ModelRoute.setAdjustments([
+      { id: "auto:pa", match: "pa", action: "skip", until: Date.now() + 60_000, requires: "adaptive" },
+      { id: "auto-hourly:pb", match: "pb", action: "skip", until: Date.now() + 60_000, requires: "predictive" },
+    ])
+    const trio = {
+      nodes: [{ selection: "ordered", weights: [1, 1, 1], children: [{ leaf: 0 }, { leaf: 1 }, { leaf: 2 }] }],
+    }
+    const levelled = (autonomy: ModelRouteAutonomy.Level | undefined) =>
+      routed([a, b, c], { ...trio, ...(autonomy ? { autonomy } : {}) })
+    return withResolver([a, b, c], (resolver) =>
+      Effect.gen(function* () {
+        // A rules route keeps its own order: neither learned skip is for it.
+        expect(targetOf(yield* resolver.resolveModel(levelled("rules")))).toBe("pa")
+        // An adaptive route takes the review's skip of pa, but not the prediction's skip of pb.
+        expect(targetOf(yield* resolver.resolveModel(levelled("adaptive")))).toBe("pb")
+        // A predictive route takes both, and a route with no level keeps every rule on.
+        expect(targetOf(yield* resolver.resolveModel(levelled("predictive")))).toBe("pc")
+        expect(targetOf(yield* resolver.resolveModel(levelled(undefined)))).toBe("pc")
       }),
     )
   })

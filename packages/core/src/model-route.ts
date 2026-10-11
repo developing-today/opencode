@@ -251,38 +251,11 @@ export const slow = (target: Model.Ref, policy: Policy, now = Date.now()) => {
   }
 }
 
-/** Tunable behaviour. Users never need to set these; they exist so the thresholds can be changed
- * without a code change. Defaults are what a route does when nothing is configured. */
-export interface Settings {
-  readonly escalation: {
-    /** After this many give-ups in the recent window, a route races its next target at once. */
-    readonly enabled: boolean
-    readonly afterGiveUps: number
-  }
-  readonly quota: {
-    /** Quota errors within `windowMs` that move a target to the end of the route's order. */
-    readonly demoteAfter: number
-    readonly windowMs: number
-  }
-}
-
-const DEFAULT_SETTINGS: Settings = {
-  escalation: { enabled: true, afterGiveUps: 2 },
-  quota: { demoteAfter: 3, windowMs: 4 * 3_600_000 },
-}
-
-let settings: Settings = DEFAULT_SETTINGS
-
-export const configure = (
-  next: Partial<{ escalation: Partial<Settings["escalation"]>; quota: Partial<Settings["quota"]> }>,
-) => {
-  settings = {
-    escalation: { ...settings.escalation, ...next.escalation },
-    quota: { ...settings.quota, ...next.quota },
-  }
-}
-
-export const currentSettings = () => settings
+/** Give-ups among a target's recent requests at which a route stops retrying it and races its next target. */
+const GIVE_UPS_BEFORE_RACE = 2
+/** Quota errors within `QUOTA_WINDOW_MS` that move a target to the end of every order. */
+const QUOTA_DEMOTE_AFTER = 3
+const QUOTA_WINDOW_MS = 4 * 3_600_000
 
 /** Give-ups among a target's recent requests. */
 export const giveUps = (target: Model.Ref) => {
@@ -290,11 +263,12 @@ export const giveUps = (target: Model.Ref) => {
   return (state?.outcomes ?? []).filter((answered) => !answered).length
 }
 
-/** A target is steady while it has at most one give-up among its recent requests. */
-export const steady = (target: Model.Ref) => giveUps(target) < settings.escalation.afterGiveUps
+/** A target is steady while it has fewer give-ups than the race threshold among its recent requests. */
+export const steady = (target: Model.Ref) => giveUps(target) < GIVE_UPS_BEFORE_RACE
 
-/** A route should race its next target immediately when its current target keeps giving up. */
-export const escalates = (target: Model.Ref) => settings.escalation.enabled && !steady(target)
+/** A route should race its next target immediately when its current target keeps giving up. Whether a
+ * route races at all depends on its autonomy level; see ModelRouteAutonomy.races. */
+export const escalates = (target: Model.Ref) => !steady(target)
 
 // Quota errors are recorded per target so a provider that keeps saying "out of quota" drops to the end
 // of every order, instead of being retried first on each new session.
@@ -302,13 +276,13 @@ const quotaEvents = new Map<string, number[]>()
 
 /** True when a target has hit its quota errors often enough recently to be put last. */
 export const demoted = (target: Model.Ref, now = Date.now()) => {
-  const recent = (quotaEvents.get(key(target)) ?? []).filter((at) => now - at <= settings.quota.windowMs)
-  return recent.length >= settings.quota.demoteAfter
+  const recent = (quotaEvents.get(key(target)) ?? []).filter((at) => now - at <= QUOTA_WINDOW_MS)
+  return recent.length >= QUOTA_DEMOTE_AFTER
 }
 
 const recordQuota = (target: Model.Ref, now: number) => {
   const id = key(target)
-  const recent = (quotaEvents.get(id) ?? []).filter((at) => now - at <= settings.quota.windowMs)
+  const recent = (quotaEvents.get(id) ?? []).filter((at) => now - at <= QUOTA_WINDOW_MS)
   quotaEvents.set(id, [...recent, now].slice(-50))
 }
 
@@ -348,13 +322,13 @@ export const resetHealth = () => {
 
 /** Per-route selection state: rotation counters for round-robin, sticky session choices, both
  * process-local like health. */
-const selection = new Map<string, { cursor: number; sessions: Map<string, number>; scores: Map<number, number> }>()
+const selection = new Map<string, { sessions: Map<string, number>; scores: Map<number, number> }>()
 const SESSION_LIMIT = 5_000
 
 const selectionEntry = (routeID: string) => {
   let current = selection.get(routeID)
   if (!current) {
-    current = { cursor: 0, sessions: new Map(), scores: new Map() }
+    current = { sessions: new Map(), scores: new Map() }
     selection.set(routeID, current)
   }
   return current
@@ -372,7 +346,7 @@ export const sessionTarget = (routeID: string, sessionID: string) => {
 }
 
 /** Chooses the session's target index. `ordered` always returns the first entry; round-robin
- * advances a shared cursor; weighted draws by relative ratio. Only the outcome is sticky. */
+ * rotates by smooth weights; weighted draws by relative ratio. Only the outcome is sticky. */
 export const selectSessionTarget = (
   routeID: string,
   sessionID: string,
@@ -404,7 +378,6 @@ export const selectSessionTarget = (
       }
     }
     state.scores.set(chosen, (state.scores.get(chosen) ?? 0) - total)
-    state.cursor = (state.cursor + 1) % Number.MAX_SAFE_INTEGER
   } else {
     const total = candidateIndexes.reduce((sum, index) => sum + (weights[index] ?? 1), 0)
     let draw = random() * total
@@ -468,6 +441,16 @@ export const recordUsage = (target: Model.Ref, tokens: number, now = Date.now())
   state.day.tokens += tokens
   while (usage.size > HEALTH_LIMIT) usage.delete(usage.keys().next().value!)
 }
+
+/** Counts one request with the tokens it used: input plus output plus reasoning, as the routing history
+ * stores them. Without a usage report, `estimatedInput` stands in for the input, as the history row does.
+ * Every request OpenCode sends is counted this way, background ones included, so live usage matches what
+ * a restart restores. */
+export const recordRequest = (
+  target: Model.Ref,
+  tokens?: { readonly input: number; readonly output: number; readonly reasoning: number },
+  estimatedInput = 0,
+) => recordUsage(target, tokens ? tokens.input + tokens.output + tokens.reasoning : estimatedInput)
 
 /** Requests and tokens used by the target in the last minute and the last day. */
 export const usageOf = (target: Model.Ref, now = Date.now()) => {
@@ -568,6 +551,9 @@ export interface Adjustment {
   readonly factor?: number
   readonly until: number
   readonly note?: string
+  /** Set on learned adjustments: the least autonomy a route needs before this one applies to it. Unset
+   * means an operator or agent instruction, which applies wherever a route uses rules. */
+  readonly requires?: ModelRouteAutonomy.Level
 }
 
 let adjustments: readonly Adjustment[] = []
@@ -646,9 +632,13 @@ const userOverride = (
 export const userSkipped = (target: Model.Ref, now = Date.now(), scope: ModelRouteOverrides.Scope = {}) =>
   userOverride("avoid", target, now, scope)
 
+/** Learned adjustments apply only to a route whose level reaches their floor; the rest apply everywhere. */
+const appliesOn = (item: Adjustment, scope: ModelRouteOverrides.Scope) =>
+  item.requires === undefined || ModelRouteAutonomy.reaches(scope.autonomy, item.requires)
+
 /** A target the route's learned adjustments skip. Only routes that let the tuner decide see these. */
-export const skipped = (target: Model.Ref, now = Date.now()) =>
-  activeAdjustments(now).some((item) => item.action === "skip" && matches(item, target))
+export const skipped = (target: Model.Ref, now = Date.now(), scope: ModelRouteOverrides.Scope = {}) =>
+  activeAdjustments(now).some((item) => item.action === "skip" && matches(item, target) && appliesOn(item, scope))
 
 /** Weight multiplier for a target demoted by quota errors. */
 const DEMOTED_FACTOR = 0.01
@@ -667,7 +657,7 @@ export const weightFactor = (target: Model.Ref, now = Date.now(), scope: ModelRo
     scope.fixed === true
       ? 1
       : activeAdjustments(now)
-          .filter((item) => item.action === "weight" && matches(item, target))
+          .filter((item) => item.action === "weight" && matches(item, target) && appliesOn(item, scope))
           .reduce((product, item) => product * (item.factor ?? 1), 1)
   return preferred * learned * (demoted(target, now) ? DEMOTED_FACTOR : 1)
 }
@@ -685,6 +675,7 @@ export const keepsThrough = (routeID: string, sessionID: string | undefined, tar
 export const scopeOf = (definition: Definition): ModelRouteOverrides.Scope => ({
   routeID: definition.id,
   fixed: !ModelRouteAutonomy.usesRules(definition.autonomy),
+  autonomy: definition.autonomy,
 })
 
 /** Chooses one leaf lazily. Only groups on the chosen path draw their sticky/rotation entry; nested

@@ -146,6 +146,8 @@ export interface Resolved {
     readonly attempts: number
     /** Start the next target if this one is silent after this long. */
     readonly hedgeAfterMs?: number
+    /** The route's autonomy level: a route races its next target once a target keeps giving up only at `adaptive` and up. */
+    readonly autonomy?: ModelRouteAutonomy.Level
     readonly fallback: () => Effect.Effect<Resolved | undefined, Error>
     /** Set just after a session failed over: the target it came from, which a hedge races instead of
      * the next fallback while the session is still new on the alternate. */
@@ -455,7 +457,8 @@ export const layer = Layer.effect(
             const rules = ModelRouteAutonomy.usesRules(definition.autonomy)
             const scope = ModelRoute.scopeOf(definition)
             // A user's "avoid" holds on every route; learned skips and budgets are rules the route opted into.
-            const isSkipped = ModelRoute.userSkipped(target, now, scope) || (rules && ModelRoute.skipped(target, now))
+            const isSkipped =
+              ModelRoute.userSkipped(target, now, scope) || (rules && ModelRoute.skipped(target, now, scope))
             const isOverBudget = rules && ModelRoute.overBudget(target, definition.budgets?.[index], now, scope)
             const limited = rules ? ModelRoute.limitedUntil(target, now) : 0
             // A burst hold steers new sessions away but leaves a session on the target it is already using.
@@ -541,10 +544,11 @@ export const layer = Layer.effect(
               routeID: definition.id,
               target: current.ref,
               policy: definition.health,
-              // Two tries by default: a single transient failure on a steady target is retried before the
+              // Two requests by default: a single transient failure on a steady target is retried before the
               // route moves on. Rate limits skip the retry (see the runner). Set 1 to fail over at once.
               attempts: definition.attempts ?? 2,
               ...(definition.hedgeAfterMs ? { hedgeAfterMs: definition.hedgeAfterMs } : {}),
+              autonomy: definition.autonomy,
               fallback: () => resolveRoute(selected, definition, requestedVariant, triedTargets, false, sessionID),
               ...(origin ? { origin } : {}),
             },

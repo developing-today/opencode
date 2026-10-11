@@ -296,6 +296,71 @@ describe("ModelRouteLog.failureFields", () => {
   })
 })
 
+describe("error bodies", () => {
+  const reason = {
+    _tag: "RateLimit",
+    message: "rate limited",
+    body: `{"detail":"retry later","api_key":"sk-live-abcdefgh1234","pad":"${"x".repeat(3_000)}"}`,
+  }
+
+  test("a body is kept, redacted and capped only while captureErrorBodies is on", () => {
+    ModelRouteLog.onCaptureErrorBodies(() => false)
+    expect(ModelRouteLog.failureFields(reason).error_body).toBeUndefined()
+    ModelRouteLog.onCaptureErrorBodies(() => true)
+    const kept = ModelRouteLog.failureFields(reason).error_body
+    ModelRouteLog.onCaptureErrorBodies(() => false)
+    expect(kept?.startsWith('{"detail":"retry later","api_key":"[REDACTED]"')).toBe(true)
+    expect(kept).not.toContain("sk-live")
+    expect(kept).toHaveLength(2_000)
+  })
+
+  test("a request can keep its body without the setting", () => {
+    expect(ModelRouteLog.failureFields(reason, { captureBody: true }).error_body).toHaveLength(2_000)
+  })
+})
+
+describe("usage restore", () => {
+  it.live("restores no usage for a request that never went out", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      ModelRoute.resetHealth()
+      const now = Date.now()
+      ModelRouteLog.record({
+        kind: "attempt",
+        row: attempt({
+          provider_id: "restore-unsent",
+          model_id: "m",
+          outcome: "resolution-failure",
+          time_started: now,
+          time_ended: now,
+        }),
+      })
+      ModelRouteLog.record({
+        kind: "attempt",
+        row: attempt({
+          provider_id: "restore-sent",
+          model_id: "m",
+          outcome: "success",
+          tokens_input: 5,
+          tokens_output: 2,
+          time_started: now,
+          time_ended: now,
+        }),
+      })
+      yield* Effect.sleep("100 millis")
+      yield* ModelRouteLog.restoreUsageFrom(db)
+      expect(ModelRoute.usageOf(ModelRoute.ref({ providerID: "restore-unsent", model: "m" })).day).toEqual({
+        requests: 0,
+        tokens: 0,
+      })
+      expect(ModelRoute.usageOf(ModelRoute.ref({ providerID: "restore-sent", model: "m" })).day).toEqual({
+        requests: 1,
+        tokens: 7,
+      })
+    }),
+  )
+})
+
 describe("cooldown restore", () => {
   it.live("rebuilds cooldowns that are still running, and only those", () =>
     Effect.gen(function* () {

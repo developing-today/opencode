@@ -7,6 +7,8 @@ import { optional, PositiveInt } from "../schema.js"
 const BoundedPositiveInt = PositiveInt.check(Schema.isLessThanOrEqualTo(3_600_000))
 const SampleCount = PositiveInt.check(Schema.isLessThanOrEqualTo(50))
 const PositiveFinite = Schema.Finite.check(Schema.isGreaterThan(0))
+/** One note per line: `match: text`, with a non-empty match before the first colon and text after it. */
+const NoteLine = Schema.String.check(Schema.isPattern(/^[^:\r\n]*\S[^:\r\n]*:[^\r\n]*\S[^\r\n]*$/))
 
 /** An ordered model target: either `provider/model`, `provider/model#variant`, or an object with
  * per-target variant defaults and remaps. */
@@ -90,7 +92,7 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
   }),
   attempts: SampleCount.pipe(optional).annotate({
     description:
-      "Requests to make against one target before failing over to the next. Defaults to 1. Retries only happen before any response output, so no tool call ever runs twice.",
+      "Total requests to make against one target before failing over to the next, so 2 allows one retry. Defaults to 2. Retries only happen before any response output, so no tool call ever runs twice.",
   }),
   autonomy: Schema.Literals(["fixed", "rules", "adaptive", "predictive", "agent"]).pipe(optional).annotate({
     description:
@@ -112,13 +114,25 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
 export class Tuning extends Schema.Class<Tuning>("Config.ModelRoute.Tuning")({
   enabled: Schema.Boolean.pipe(optional).annotate({
     description:
-      "Review routing history on a schedule and put the resulting adjustments in force without asking. They only lower a target's share or skip it, and lapse on their own. Defaults to false.",
+      "Review routing history on a schedule and put the resulting adjustments in force without asking, for every route that uses rules as well as those at adaptive or higher. They only lower a target's share or skip it, and lapse on their own. Defaults to false.",
   }),
   intervalMinutes: PositiveInt.check(Schema.isLessThanOrEqualTo(1440)).pipe(optional).annotate({
     description: "Minutes between reviews. Defaults to 15.",
   }),
   windowHours: PositiveInt.check(Schema.isLessThanOrEqualTo(336)).pipe(optional).annotate({
     description: "How much history each review looks at. Defaults to 24.",
+  }),
+  notes: Schema.Array(NoteLine).pipe(optional).annotate({
+    description:
+      'What the history cannot say, one note per line as "match: text". match is a case-insensitive substring of provider/model; text may state when a limit returns, e.g. "anthropic/claude-opus-5: promo credits, reset at 2026-01-04T00:00:00Z".',
+  }),
+}) {}
+
+/** How routing history records failed requests. */
+export class Log extends Schema.Class<Log>("Config.ModelRoute.Log")({
+  captureErrorBodies: Schema.Boolean.pipe(optional).annotate({
+    description:
+      "Keep the first 2 KB of a failed request's error body in the routing history, with credentials redacted. A provider body can echo the request, so this is off by default. Defaults to false.",
   }),
 }) {}
 

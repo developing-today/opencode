@@ -2337,7 +2337,13 @@ export type ConfigEntry =
             effect: "allow" | "deny"
           }>
           model_routes?: ConfigModelRoutes
-          model_route_tuning?: { enabled?: boolean; intervalMinutes?: number; windowHours?: number }
+          model_route_tuning?: {
+            enabled?: boolean
+            intervalMinutes?: number
+            windowHours?: number
+            notes?: Array<string>
+          }
+          model_route_log?: { captureErrorBodies?: boolean }
         }
       }
     }

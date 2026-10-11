@@ -3,6 +3,7 @@ export * as ModelRouteOverrides from "./model-route-overrides.js"
 import fs from "node:fs"
 import path from "node:path"
 import { Global } from "@opencode/util/global"
+import { ModelRouteAutonomy } from "./model-route-autonomy.js"
 
 /** `avoid` takes a target out of rotation, `prefer` favours it, `allow-over-budget` lets it run past
  * its soft budget. Each one lasts until `until`, and applies only to the targets it names. */
@@ -85,6 +86,8 @@ const glob = (pattern: string) => new RegExp(`^${pattern.split("*").map(escape).
 export interface Scope {
   readonly routeID?: string
   readonly fixed?: boolean
+  /** The route's autonomy level; learned adjustments apply only where it reaches their floor. */
+  readonly autonomy?: ModelRouteAutonomy.Level
 }
 
 /** Whether an override is in force for a target at `now`, on a given route. */

@@ -464,13 +464,6 @@ describe("ModelRoute burst holds, quota demotion and escalation", () => {
     reset: { requests: "30s" },
   })
 
-  afterEach(() => {
-    ModelRoute.configure({
-      escalation: { enabled: true, afterGiveUps: 2 },
-      quota: { demoteAfter: 3, windowMs: 4 * 3_600_000 },
-    })
-  })
-
   test("a session already on a held target keeps it, while a new session goes elsewhere", () => {
     ModelRoute.resetHealth()
     const now = 9_000_000
@@ -515,20 +508,11 @@ describe("ModelRoute burst holds, quota demotion and escalation", () => {
     expect(ModelRoute.orderTargets(ordered, both, "q", false)).toEqual([1, 0])
   })
 
-  test("escalation starts once a target has given up twice recently, and can be switched off", () => {
+  test("escalation starts once a target has given up twice recently", () => {
     ModelRoute.resetHealth()
     expect(ModelRoute.escalates(primary)).toBe(false)
     ModelRoute.failed(primary, policy)
     expect(ModelRoute.escalates(primary)).toBe(false)
-    ModelRoute.failed(primary, policy)
-    expect(ModelRoute.escalates(primary)).toBe(true)
-    ModelRoute.configure({ escalation: { enabled: false } })
-    expect(ModelRoute.escalates(primary)).toBe(false)
-  })
-
-  test("the escalation threshold is tunable", () => {
-    ModelRoute.resetHealth()
-    ModelRoute.configure({ escalation: { afterGiveUps: 1 } })
     ModelRoute.failed(primary, policy)
     expect(ModelRoute.escalates(primary)).toBe(true)
   })

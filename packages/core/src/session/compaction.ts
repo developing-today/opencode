@@ -525,6 +525,7 @@ export const layer = Layer.effect(
               outputStarted: textOf(exit).length > 0,
               tokens: usage?.tokens,
             })
+            ModelRoute.recordRequest(context.model.ref, usage?.tokens)
           }),
         ),
       )

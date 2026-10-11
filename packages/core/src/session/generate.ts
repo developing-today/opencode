@@ -85,12 +85,14 @@ export const generate = Effect.fn("SessionGenerate.generate")(function* (input: 
       Effect.onExit((exit) =>
         Effect.sync(() => {
           const outcome = Exit.isSuccess(exit) ? "success" : Exit.hasInterrupts(exit) ? "interrupted" : "failure"
+          const tokens = Exit.isSuccess(exit) ? responseTokens(exit.value) : undefined
           observed.done(outcome as "success" | "failure" | "interrupted", {
             failure: Exit.isSuccess(exit) ? undefined : Cause.squash(exit.cause),
             outputStarted: responseHasOutput(exit),
             firstOutputAt: Exit.isSuccess(exit) ? started : undefined,
-            tokens: Exit.isSuccess(exit) ? responseTokens(exit.value) : undefined,
+            tokens,
           })
+          ModelRoute.recordRequest(model.ref, tokens)
         }),
       ),
     )

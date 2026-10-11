@@ -13,6 +13,7 @@ import { ConfigEntryObserver } from "./entry-observer.js"
 import { Permission } from "../../permission.js"
 import { ModelRouteTuning } from "../../model-route-tuning.js"
 import { ModelRouteAutonomy } from "../../model-route-autonomy.js"
+import { ModelRouteLog } from "../../model-route-log.js"
 import { RouteAdjustTool } from "../../tool/plugin/route-adjust.js"
 import { RouteStatsTool } from "../../tool/plugin/route-stats.js"
 
@@ -38,6 +39,8 @@ export const Plugin = define({
       ["experimental"],
       ctx.provider.reload().pipe(Effect.andThen(ctx.tool.reload())),
     )
+
+    ModelRouteLog.onCaptureErrorBodies(() => configuredLog(loaded.entries)?.captureErrorBodies === true)
 
     // Scheduled review of the routing history, off unless configured.
     yield* ModelRouteTuning.schedule(
@@ -122,6 +125,14 @@ function configuredTuning(entries: readonly Entry[]) {
     .reduce<
       ModelRouteTuning.Settings | undefined
     >((found, entry) => entry.info.experimental?.model_route_tuning ?? found, undefined)
+}
+
+function configuredLog(entries: readonly Entry[]) {
+  return entries
+    .filter((entry): entry is Document => entry.type === "document")
+    .reduce<
+      ConfigModelRoutes.Log | undefined
+    >((found, entry) => entry.info.experimental?.model_route_log ?? found, undefined)
 }
 
 function configuredRoutes(entries: readonly Entry[]) {
@@ -268,7 +279,7 @@ function intersect(values: readonly (readonly string[])[]) {
   return (first ?? []).filter((value) => rest.every((items) => items.includes(value)))
 }
 
-function routeVariants(targets: readonly SourceModel[]) {
+export function routeVariants(targets: readonly SourceModel[]) {
   if (targets.some((target) => target.fixedVariant)) return []
   // A route-level variant is offered when every target can produce it, either natively or through
   // its remap table.

@@ -432,6 +432,12 @@ function normalizeExperimental(
         if (value !== undefined) result.subagent_depth = value
       }
       if (own(experimental, "model_route_tuning")) {
+        unknownKeys(
+          experimental.model_route_tuning,
+          ConfigModelRoutes.Tuning.fields,
+          ["experimental", "model_route_tuning"],
+          diagnostics,
+        )
         const value = decodeEncoded(
           ConfigExperimental.Info.fields.model_route_tuning,
           experimental.model_route_tuning,
@@ -439,6 +445,21 @@ function normalizeExperimental(
           diagnostics,
         )
         if (value !== undefined) result.model_route_tuning = value
+      }
+      if (own(experimental, "model_route_log")) {
+        unknownKeys(
+          experimental.model_route_log,
+          ConfigModelRoutes.Log.fields,
+          ["experimental", "model_route_log"],
+          diagnostics,
+        )
+        const value = decodeEncoded(
+          ConfigExperimental.Info.fields.model_route_log,
+          experimental.model_route_log,
+          ["experimental", "model_route_log"],
+          diagnostics,
+        )
+        if (value !== undefined) result.model_route_log = value
       }
       if (own(experimental, "model_routes")) {
         const value = decodeMap(
@@ -803,6 +824,15 @@ function unsupportedIfPresent(value: Record<string, unknown>, key: string, path:
 
 function invalid(path: string[], diagnostics: Diagnostic[]) {
   diagnostics.push({ kind: "invalid", path, message: "skipped malformed recognized value" })
+}
+
+/** The decode drops keys a block does not know; for these blocks each one is reported by name. */
+function unknownKeys(value: unknown, fields: object, path: string[], diagnostics: Diagnostic[]) {
+  if (!isRecord(value)) return
+  Object.keys(value).forEach((key) => {
+    if (!Object.keys(fields).includes(key))
+      diagnostics.push({ kind: "invalid", path: [...path, key], message: "omitted unknown setting" })
+  })
 }
 
 function conflict(path: string[], diagnostics: Diagnostic[]) {

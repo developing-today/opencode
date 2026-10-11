@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Arbitrary, Duration, Effect, Schema } from "effect"
 import { ConfigNormalize } from "@opencode/core/config/normalize"
+import { ModelRouteTuning } from "@opencode/core/model-route-tuning"
 import { Info } from "@opencode/schema/config"
 
 const options = { errors: "all", onExcessProperty: "ignore" } as const
@@ -652,5 +653,83 @@ describe("ConfigNormalize", () => {
       experimental: { subagent_depth: 0 },
     })
     expect(result.encoded.share).toBeUndefined()
+  })
+})
+
+describe("model route tuning and log settings", () => {
+  const experimentalOf = (encoded: Readonly<Record<string, unknown>>) =>
+    encoded.experimental as
+      | {
+          model_route_tuning?: ModelRouteTuning.Settings
+          model_route_log?: { captureErrorBodies?: boolean }
+        }
+      | undefined
+
+  test("notes survive normalization and reach the tuner as match and text", () => {
+    const result = ConfigNormalize.normalize({
+      experimental: {
+        model_route_tuning: {
+          enabled: true,
+          notes: [
+            "anthropic/claude-opus-5: promo credits, reset at 2026-01-04T00:00:00Z",
+            "openai/gpt-6-luna: out of quota, back in 3 hours",
+          ],
+        },
+      },
+    })
+    expect(result.type).toBe("normalized")
+    if (result.type !== "normalized") return
+    const notes = ModelRouteTuning.parseNotes(experimentalOf(result.encoded)?.model_route_tuning?.notes)
+    expect(notes).toEqual([
+      { match: "anthropic/claude-opus-5", text: "promo credits, reset at 2026-01-04T00:00:00Z" },
+      { match: "openai/gpt-6-luna", text: "out of quota, back in 3 hours" },
+    ])
+    const adjustments = ModelRouteTuning.noteAdjustments(notes, Date.parse("2026-01-03T00:00:00Z"), 60_000)
+    expect(adjustments.find((item) => item.match === "anthropic/claude-opus-5")).toMatchObject({
+      action: "skip",
+      until: Date.parse("2026-01-04T00:00:00Z"),
+    })
+  })
+
+  test("a malformed note makes the tuning block invalid, and says so", () => {
+    const result = ConfigNormalize.normalize({
+      experimental: { model_route_tuning: { enabled: true, notes: ["no separator here"] } },
+    })
+    expect(result.type).toBe("normalized")
+    if (result.type !== "normalized") return
+    expect(result.diagnostics).toContainEqual({
+      kind: "invalid",
+      path: ["experimental", "model_route_tuning"],
+      message: "skipped malformed recognized value",
+    })
+    expect(experimentalOf(result.encoded)?.model_route_tuning).toBeUndefined()
+  })
+
+  test("an unknown key under the tuning block is named in a diagnostic and the rest is kept", () => {
+    const result = ConfigNormalize.normalize({
+      experimental: { model_route_tuning: { enabled: true, intervalMinutes: 30, intervall: 5 } },
+    })
+    expect(result.type).toBe("normalized")
+    if (result.type !== "normalized") return
+    expect(result.diagnostics).toContainEqual({
+      kind: "invalid",
+      path: ["experimental", "model_route_tuning", "intervall"],
+      message: "omitted unknown setting",
+    })
+    expect(experimentalOf(result.encoded)?.model_route_tuning).toEqual({ enabled: true, intervalMinutes: 30 })
+  })
+
+  test("captureErrorBodies is kept through normalization, and an unknown log key is reported", () => {
+    const result = ConfigNormalize.normalize({
+      experimental: { model_route_log: { captureErrorBodies: true, captureErrorBody: true } },
+    })
+    expect(result.type).toBe("normalized")
+    if (result.type !== "normalized") return
+    expect(experimentalOf(result.encoded)?.model_route_log).toEqual({ captureErrorBodies: true })
+    expect(result.diagnostics).toContainEqual({
+      kind: "invalid",
+      path: ["experimental", "model_route_log", "captureErrorBody"],
+      message: "omitted unknown setting",
+    })
   })
 })

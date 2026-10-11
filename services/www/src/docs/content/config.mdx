@@ -267,6 +267,12 @@ provider at `high` and another at `low`. The route advertises the union of each
 target's native variants and remap keys, and only offers what every target can
 produce.
 
+A target's model can contain `*` to match every model of its provider whose id
+fits, such as `"openai/gpt-6-*"`; matches follow the provider's order, and a model
+reached twice is used once, at its first place. `until` is an epoch time in
+milliseconds after which the target leaves the route, for time-limited pool
+membership. It takes effect when the configuration reloads.
+
 By default (`"selection": "ordered"`) every session starts at the first healthy
 target. `"round-robin"` gives each new session the next target in rotation and
 `"weighted"` draws one by `weights`, roughly `weights[a] : weights[b]` across
@@ -295,17 +301,27 @@ includes the ones before it:
 | `agent`      | Also expose `route_stats` and `route_adjust`, so the model can inspect and steer routing.  |
 
 A route with no `autonomy` keeps every rule on and offers the agent tools, as before
-levels existed. The scheduled review runs when `model_route_tuning.enabled` is true
-or any route is `adaptive` or higher. Real failures always cool a target down, at
-every level, so a `fixed` route still fails over.
+levels existed. Each route takes only what its own level reaches. The scheduled
+review's skips and down-weights apply to `adaptive` and higher routes, and to `rules`
+routes when `model_route_tuning.enabled` is true. Time-of-day and error-text
+prediction apply to `predictive` and higher routes. A route with no `autonomy` takes
+all of it. The review runs when tuning is enabled or any route is `adaptive` or
+higher. Real failures always cool a target down, at every level, so a `fixed` route
+still fails over.
 
-Set `attempts` to retry a target that many times before the route moves on. The
-default is 2, so one transient failure is retried on the same target before the
-route moves on; set 1 to fail over at once. Retries only happen before any output,
-so a tool call never runs twice. A rate limit or quota error never retries the same
-target: the turn moves on at once. A target that fails is not penalized until its
-attempts are used up, and a target with two give-ups among its last five requests
-is no longer retried, so a struggling target is not given extra chances.
+Set `attempts` to the total number of requests made to a target before the route
+moves on. The default is 2, so one transient failure is retried on the same target
+before the route moves on; set 1 to fail over at once. Retries only happen before
+any output, so a tool call never runs twice. A rate limit or quota error never
+retries the same target: the turn moves on at once. A target that fails is not
+penalized until its attempts are used up.
+
+When a target has two give-ups among its last five requests, the route stops
+retrying it and starts its next target at once, as a hedge would: the first to
+answer wins and the other is cancelled. `hedgeAfterMs` does not control this, and
+nothing waits for it. It applies to routes whose `autonomy` is `adaptive`,
+`predictive` or `agent`, and to routes with no `autonomy`. A `fixed` or `rules`
+route never races; it retries and fails over.
 
 Sessions keep their cache. On an `ordered` route, a session stays on the target
 that last answered it while that target is ready, so a recovered primary does not
@@ -384,7 +400,10 @@ cannot say, one per line as `match: text`:
 A note that states when a limit returns (`reset at`, `back in 3 hours`) skips
 matching targets until then. The rest is left for the agent to read: `route_stats`
 returns the notes with the history it covers. The tuner also reads a stated reset
-time out of a provider's own error message when the headers say nothing.
+time out of a provider's own error message when the headers say nothing. Each note
+is one line with a non-empty match before the first colon and non-empty text after
+it. A malformed note makes the whole `model_route_tuning` block invalid, which is
+reported and skipped, and an unknown key in the block is reported and ignored.
 
 To have that review happen on its own, enable scheduled tuning:
 
@@ -415,7 +434,10 @@ compaction, so nothing is invisible. A request that never went out, because the
 chosen target could not be resolved, is recorded as `resolution-failure`. Both
 legs of a hedged attempt are marked `hedged`, which is how `route_stats` reports
 hedge accuracy: how often a target won the race it was drawn into. Provider error
-bodies are only kept when a request opts in, since a body can echo the request.
+bodies are not kept unless `experimental.model_route_log.captureErrorBodies` is
+`true`. When it is, the first 2 KB of each failed request's body is stored with
+bearer tokens, key-like fields and `sk-` style keys redacted, since a body can echo
+the request.
 
 OpenCode records routing history in its database for analysis and tuning:
 `route_decision` (what was eligible, what was drawn and why), `route_attempt`

@@ -26,4 +26,25 @@ describe("ModelRouteAutonomy", () => {
     expect(ModelRouteAutonomy.offersTools(["predictive", "agent"])).toBe(true)
     expect(ModelRouteAutonomy.offersTools([undefined])).toBe(true)
   })
+
+  test("a route races its next target after repeated give-ups only from adaptive up, and unset keeps that", () => {
+    expect(ModelRouteAutonomy.races(undefined)).toBe(true)
+    expect(ModelRouteAutonomy.races("fixed")).toBe(false)
+    expect(ModelRouteAutonomy.races("rules")).toBe(false)
+    expect(ModelRouteAutonomy.races("adaptive")).toBe(true)
+    expect(ModelRouteAutonomy.races("predictive")).toBe(true)
+    expect(ModelRouteAutonomy.races("agent")).toBe(true)
+  })
+
+  test("a learned adjustment reaches a route only when the route's level reaches its floor", () => {
+    expect(ModelRouteAutonomy.reaches("rules", "adaptive")).toBe(false)
+    expect(ModelRouteAutonomy.reaches("adaptive", "adaptive")).toBe(true)
+    expect(ModelRouteAutonomy.reaches("adaptive", "predictive")).toBe(false)
+    expect(ModelRouteAutonomy.reaches(undefined, "predictive")).toBe(true)
+  })
+
+  test("the review's floor is rules when tuning is enabled, and adaptive otherwise", () => {
+    expect(ModelRouteAutonomy.reviewFloor(true)).toBe("rules")
+    expect(ModelRouteAutonomy.reviewFloor(false)).toBe("adaptive")
+  })
 })

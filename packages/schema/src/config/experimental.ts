@@ -21,4 +21,7 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
   model_route_tuning: ConfigModelRoutes.Tuning.pipe(optional).annotate({
     description: "Scheduled review of routing history that adjusts model routes automatically",
   }),
+  model_route_log: ConfigModelRoutes.Log.pipe(optional).annotate({
+    description: "What the routing history records about failed requests",
+  }),
 }) {}

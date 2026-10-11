@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { expand } from "@opencode/core/config/plugin/model-routes"
+import { expand, routeVariants } from "@opencode/core/config/plugin/model-routes"
 import { Model } from "@opencode/core/model"
 import { Provider } from "@opencode/core/provider"
 import type { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
@@ -20,7 +20,7 @@ const selection = (reference: string) => {
   const [providerID, model] = reference.split("/")
   return { providerID, model }
 }
-const route = (targets: (string | { model: string; until?: number })[]) =>
+const route = (targets: (string | { model: string; until?: number; variants?: Record<string, string> })[]) =>
   new Map<string, ConfigModelRoutes.Route>([
     [
       "r",
@@ -53,5 +53,33 @@ describe("pool targets", () => {
     const expired = { model: "openai/gpt-6-luna", until: now - 1 }
     const kept = expand("r", route([live, expired]), definitions)
     expect(kept.leaves.map((leaf) => String(leaf.ref.id))).toEqual(["claude-opus-4-1"])
+  })
+})
+
+describe("advertised variants", () => {
+  const withVariants = (providerID: Provider.ID, id: string, variants: string[]) =>
+    [
+      id,
+      {
+        ...Model.Info.default(providerID, Model.ID.make(id)),
+        variants: variants.map((variant) => ({ id: Model.VariantID.make(variant) })),
+      },
+    ] as const
+
+  test("a route offers a variant only when every target can produce it, natively or through a remap", () => {
+    const definitionsWithVariants = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>([
+      [anthropic, new Map([withVariants(anthropic, "claude-opus-4-1", ["high", "medium"])])],
+      [openai, new Map([withVariants(openai, "gpt-6-luna", ["high"])])],
+    ])
+    const { leaves } = expand(
+      "r",
+      route([
+        { model: "anthropic/claude-opus-4-1", variants: { low: "medium" } },
+        { model: "openai/gpt-6-luna", variants: { low: "high" } },
+      ]),
+      definitionsWithVariants,
+    )
+    // `high` is native to both; `low` is remapped on both; `medium` only the first target has.
+    expect(routeVariants(leaves).map((variant) => String(variant.id))).toEqual(["high", "low"])
   })
 })

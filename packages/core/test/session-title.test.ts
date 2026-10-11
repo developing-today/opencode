@@ -31,6 +31,8 @@ import { Project } from "@opencode/core/project"
 import { ProjectTable } from "@opencode/core/project/sql"
 import { App } from "@opencode/core/app"
 import { Model } from "@opencode/core/model"
+import { ModelRoute } from "@opencode/core/model-route"
+import { ModelRouteLog } from "@opencode/core/model-route-log"
 import { Provider } from "@opencode/core/provider"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Money } from "@opencode/schema/money"
@@ -113,6 +115,7 @@ const it = testEffect(
       Agent.node,
       PluginHooks.node,
       SessionTitle.node,
+      ModelRouteLog.node,
     ]),
     [
       llmClient.replace(client),
@@ -227,6 +230,33 @@ it.effect("generates a title from the sole user message and renames the session"
     expect(renamed?.title).toBe("Generated Title")
     expect(renamed?.tokens).toEqual({ input: 10, output: 4, reasoning: 2, cache: { read: 3, write: 2 } })
     expect(renamed?.cost).toBeCloseTo(0.0000233)
+  }),
+)
+
+it.live("counts a title request against its target's budget, and a restart restores the same count", () =>
+  Effect.gen(function* () {
+    ModelRoute.resetHealth()
+    yield* enableTitleAgent
+    const sessionID = Session.ID.make("ses_title_budget")
+    yield* insertSession(sessionID)
+    yield* prompt(sessionID, "Count this request against the budget")
+
+    const title = yield* SessionTitle.Service
+    yield* title.generate(sessionID)
+
+    const target = ModelRoute.ref({ providerID: "test", model: "title-model" })
+    const live = ModelRoute.usageOf(target)
+    expect(live.minute.requests).toBe(1)
+    // Input, output and reasoning, the same tokens the main path counts; the cache is left out.
+    expect(live.day.tokens).toBe(16)
+    expect(ModelRoute.overBudget(target, { requestsPerMinute: 1 })).toBe(true)
+
+    // After a restart only the routing history is left, and it must restore what was counted live.
+    yield* Effect.sleep("100 millis")
+    ModelRoute.resetHealth()
+    const { db } = yield* Database.Service
+    yield* ModelRouteLog.restoreUsageFrom(db)
+    expect(ModelRoute.usageOf(target)).toEqual(live)
   }),
 )
 

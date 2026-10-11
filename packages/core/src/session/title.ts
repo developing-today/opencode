@@ -59,6 +59,7 @@ export const layer = Layer.effect(
       // Rough prompt size for the attempt record: a title request is small, and the provider's own
       // count replaces this when the response reports usage.
       const promptText = [input.agent.system ?? "", input.text].join("\n")
+      const estimate = Math.ceil(promptText.length / 4) || undefined
       const observed = ModelRouteLog.observer(
         {
           routeID: input.model.routing?.routeID ?? "",
@@ -67,7 +68,7 @@ export const layer = Layer.effect(
           variant: input.model.ref.variant,
           sessionID: input.session.id,
           startedAt: Date.now(),
-          inputTokens: Math.ceil(promptText.length / 4) || undefined,
+          inputTokens: estimate,
         },
         (snapshot) => ModelRoute.observeRateLimit(input.model.ref, snapshot),
       )
@@ -117,6 +118,7 @@ export const layer = Layer.effect(
         outputStarted: chunks.length > 0,
         tokens: usage?.tokens,
       })
+      ModelRoute.recordRequest(input.model.ref, usage?.tokens, estimate)
       yield* recordUsage
       if (failed) return
       return chunks
