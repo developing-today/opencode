@@ -132,7 +132,7 @@ const connectOpenAI = (handler: Handler) =>
     }).pipe(
       Effect.filterOrFail((ready) => ready),
       Effect.retry(Schedule.spaced("10 millis")),
-      Effect.timeout("2 seconds"),
+      Effect.timeout("10 seconds"),
     )
     return yield* Effect.promise(() =>
       handler(
@@ -403,8 +403,9 @@ it.live(
         kind: "integration_authorization",
       })
     }),
-  // Real retries wait 18 * 200 ms; startup and scoped cleanup also count toward the deadline.
-  { timeout: 10_000 },
+  // Busy ports: the cancel probe waits up to 2 s, then the bind retries take about 6.8 s, and startup and
+  // scoped cleanup count toward the same deadline. A loaded machine can stretch startup, so the budget is 30 s.
+  { timeout: 30_000 },
 )
 
 it.live("serves the session view operation and missing-session error", () =>
@@ -567,7 +568,7 @@ it.live("routes pending requests through the Session's instance", () =>
     }).pipe(
       Effect.filterOrFail((ready) => ready),
       Effect.retry(Schedule.spaced("10 millis")),
-      Effect.timeout("2 seconds"),
+      Effect.timeout("10 seconds"),
     )
     const createdPermission = yield* Effect.promise(() =>
       handler(

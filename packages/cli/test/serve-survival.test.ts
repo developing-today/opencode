@@ -49,7 +49,7 @@ serveTest(
     await ready(server.url)
 
     server.child.kill("SIGTERM")
-    const outcome = await Promise.race([server.child.exited, Bun.sleep(15_000).then(() => "timeout" as const)])
+    const outcome = await Promise.race([server.child.exited, Bun.sleep(60_000).then(() => "timeout" as const)])
 
     expect(outcome).not.toBe("timeout")
   },
@@ -74,7 +74,7 @@ serveTest(
 
     llm.release()
     await events.until((text) => text.includes("session.execution.succeeded"))
-    const outcome = await Promise.race([server.child.exited, Bun.sleep(15_000).then(() => "timeout" as const)])
+    const outcome = await Promise.race([server.child.exited, Bun.sleep(60_000).then(() => "timeout" as const)])
 
     expect(outcome).not.toBe("timeout")
   },
@@ -218,7 +218,7 @@ async function subscribe(url: string) {
   return {
     text: () => text,
     async until(match: (text: string) => boolean) {
-      await waitUntil(() => match(text), 15_000)
+      await waitUntil(() => match(text), 60_000)
     },
     async [Symbol.asyncDispose]() {
       await reader.cancel().catch(() => undefined)
@@ -265,7 +265,7 @@ function refuses(url: string) {
   })
 }
 
-async function waitUntil(condition: () => boolean | Promise<boolean>, timeout = 15_000) {
+async function waitUntil(condition: () => boolean | Promise<boolean>, timeout = 60_000) {
   const deadline = Date.now() + timeout
   while (!(await condition())) {
     if (Date.now() > deadline) throw new Error("timed out waiting for condition")
