@@ -172,6 +172,61 @@ test("shared event source runs with the Effect context captured by make", async 
   expect((await Effect.runPromise(Stream.runCollect(client.event.subscribe())))[0]).toEqual(connected)
 })
 
+test("event.subscribe reports each SSE id and resumes after the last one a consumer took", async () => {
+  const lastEventIDs: Array<string | null> = []
+  const bodies = [
+    `data: ${JSON.stringify({ id: "evt_connected", created: 0, type: "server.connected", data: {} })}\n\n` +
+      `id: inst:1\ndata: ${JSON.stringify(modelSwitchedEvent)}\n\n` +
+      `id: inst:2\ndata: ${JSON.stringify({ ...modelSwitchedEvent, id: "evt_second" })}\n\n`,
+    `data: ${JSON.stringify({ id: "evt_connected", created: 0, type: "server.connected", data: {} })}\n\n` +
+      `id: inst:3\ndata: ${JSON.stringify({ ...modelSwitchedEvent, id: "evt_third" })}\n\n`,
+  ]
+  const httpClient = HttpClient.make((request) => {
+    lastEventIDs.push(request.headers["last-event-id"] ?? null)
+    const body = bodies[lastEventIDs.length - 1] ?? bodies[bodies.length - 1]!
+    return Effect.succeed(
+      HttpClientResponse.fromWeb(request, new Response(body, { headers: { "content-type": "text/event-stream" } })),
+    )
+  })
+  const client = await Effect.runPromise(
+    OpenCode.make({ baseUrl: "http://localhost:3000" }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
+  )
+
+  // server.connected carries no id, so three events leave inst:2 as the last one consumed.
+  const first = await Effect.runPromise(Stream.runCollect(client.event.subscribe().pipe(Stream.take(3))))
+  expect(first.map((event) => event.type)).toEqual([
+    "server.connected",
+    "session.model.selected",
+    "session.model.selected",
+  ])
+  const second = await Effect.runPromise(Stream.runCollect(client.event.subscribe()))
+
+  expect(lastEventIDs).toEqual([null, "inst:2"])
+  expect(second.map((event) => event.type)).toEqual(["server.connected", "session.model.selected"])
+})
+
+test("event.subscribe does not advance the cursor past an event that was never taken", async () => {
+  const lastEventIDs: Array<string | null> = []
+  const httpClient = HttpClient.make((request) => {
+    lastEventIDs.push(request.headers["last-event-id"] ?? null)
+    const body =
+      `data: ${JSON.stringify({ id: "evt_connected", created: 0, type: "server.connected", data: {} })}\n\n` +
+      `id: inst:1\ndata: ${JSON.stringify(modelSwitchedEvent)}\n\n` +
+      `id: inst:2\ndata: ${JSON.stringify({ ...modelSwitchedEvent, id: "evt_second" })}\n\n`
+    return Effect.succeed(
+      HttpClientResponse.fromWeb(request, new Response(body, { headers: { "content-type": "text/event-stream" } })),
+    )
+  })
+  const client = await Effect.runPromise(
+    OpenCode.make({ baseUrl: "http://localhost:3000" }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
+  )
+
+  await Effect.runPromise(Stream.runCollect(client.event.subscribe().pipe(Stream.take(1))))
+  await Effect.runPromise(Stream.runCollect(client.event.subscribe()))
+
+  expect(lastEventIDs).toEqual([null, null])
+})
+
 test("event.subscribe terminates on Effect protocol decode failures", async () => {
   const httpClient = HttpClient.make((request) =>
     Effect.succeed(
