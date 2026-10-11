@@ -273,7 +273,7 @@ Review endpoints in document order. For each endpoint, select one disposition an
 |---|---|---|---|---|---|
 | [x] 138 | `POST` | `/api/experimental/generate` | `experimental.generate.text` | Experimental-only | Stateless generation retained alongside session generation. |
 | [x] 139 | `POST` | `/api/rpc/{rpcID}/{method}` | `rpc.call` | Keep | Generic typed-error plugin RPC transport retained. |
-| [x] 140 | `GET` | `/api/event` | `event.subscribe` | Keep | Unified native and dynamic plugin event stream retained. |
+| [x] 140 | `GET` | `/api/event` | `event.subscribe` | Keep | Unified native and dynamic plugin event stream retained. Each public frame has SSE id `<instance>:<sequence>`; `Last-Event-ID` replays up to 1,024 frames (about 4 MiB) from the current process, and any other cursor gets one `server.resync` at the head id. The ring is per process, so a restart resyncs. See `packages/core/TODO.md`. |
 | [x] 141 | `GET` | `/api/debug/location` | `debug.location.list` | Keep | Loaded-location debug inventory retained. |
 | [x] 142 | `DELETE` | `/api/debug/location` | `debug.location.evict` | Keep | Idempotent loaded-location eviction retained. |
 | [x] 143 | `GET` | `/api/experimental/migration/v1` | `experimental.migration.v1.status` | Experimental-only | Retained outside the stable API commitment. |
