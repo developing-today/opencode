@@ -2,6 +2,7 @@ import { expect } from "bun:test"
 import { OpenCode } from "@opencode/client/promise"
 import { Effect } from "effect"
 import { it } from "../../core/test/lib/effect"
+import { EventFeed } from "../src/event-feed"
 import { ServerFetch } from "../src/fetch"
 
 const options = {
@@ -156,6 +157,55 @@ async function resyncsAcrossRestart(before: Handler, after: Handler) {
   }
 }
 
+async function resyncsPastReplayWindow(handler: Handler) {
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: handler })
+  const base = `http://127.0.0.1:${server.port}`
+  const control = listen(base)
+  try {
+    await until(() => control.received.length === 1)
+    const first = listen(base)
+    await until(() => first.received.length === 1)
+    await createSession(base)
+    await until(() => first.received.length > 1)
+    await settle(first.received)
+    const cursor = idOf(first.received)
+    first.stop()
+    await first.done
+
+    // Push the cursor out of the window: more frames than the ring keeps after it.
+    const behindCursor = () => control.received.length - control.received.findIndex((seen) => seen.id === cursor) - 1
+    while (behindCursor() <= EventFeed.ReplayCapacity) {
+      for (let i = 0; i < 50; i++) await createSession(base)
+      await settle(control.received)
+    }
+    expect(behindCursor()).toBeGreaterThan(EventFeed.ReplayCapacity)
+    const head = idOf(control.received)
+
+    const second = listen(base, cursor)
+    try {
+      await until(() => second.received.length === 2)
+      expect(second.received[0]).toEqual({ id: undefined, type: "server.connected" })
+      // The resync carries the head id, so the client's cursor moves to the state it just refetched.
+      expect(second.received[1]).toEqual({ id: head, type: "server.resync" })
+
+      await createSession(base)
+      await settle(control.received)
+      const live = control.received.slice(control.received.findIndex((seen) => seen.id === head) + 1)
+      expect(live.length).toBeGreaterThan(0)
+      await until(() => second.received.length === 2 + live.length)
+      expect(second.received.slice(2)).toEqual(live)
+      expect(second.received.filter((seen) => seen.type === "server.resync")).toHaveLength(1)
+    } finally {
+      second.stop()
+      await second.done
+    }
+  } finally {
+    control.stop()
+    await control.done
+    server.stop(true)
+  }
+}
+
 it.live("a reconnect with Last-Event-ID receives exactly the events it missed, in order", () =>
   Effect.gen(function* () {
     const handler: Handler = yield* ServerFetch.make(options)
@@ -169,4 +219,14 @@ it.live("a cursor from a previous process instance gets one resync and then live
     const after: Handler = yield* ServerFetch.make(options)
     yield* Effect.promise(() => resyncsAcrossRestart(before, after))
   }).pipe(Effect.scoped),
+)
+
+it.live(
+  "a cursor older than the replay window gets one resync at the head id, then live events",
+  () =>
+    Effect.gen(function* () {
+      const handler: Handler = yield* ServerFetch.make(options)
+      yield* Effect.promise(() => resyncsPastReplayWindow(handler))
+    }).pipe(Effect.scoped),
+  120_000,
 )

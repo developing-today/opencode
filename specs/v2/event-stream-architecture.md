@@ -131,26 +131,28 @@ The listener is installed synchronously before the feed service is exposed. Publ
 
 Core invokes the one observer sequentially. It does not fork encoding or fan-out per event, so every healthy subscriber observes the same order.
 
-When no HTTP subscribers are registered, the observer returns before wire encoding, so headless and idle servers do not pay serialization cost.
+Encoding happens whether or not HTTP subscribers are registered. The replay ring must hold every public frame so a client that returns can resume from its cursor, and the ring's frame and byte bounds cap that cost.
+
+Each public frame carries an SSE id of the form `<instance>:<sequence>`. The instance is random per feed and the sequence rises by one per public event. See `packages/core/TODO.md` for the replay ring, its limits, and the cursor rules.
 
 ### Connection scope
 
-Each `feed.subscribe` acquisition:
+Each `feed.subscribe(lastEventID?)` acquisition:
 
-1. Allocates one dropping queue.
-2. Registers it synchronously.
+1. Takes the replay and allocates one dropping queue in one synchronous step. A cursor that can be honoured yields the retained frames after it. Otherwise the replay is a single `server.resync` frame carrying the head id. A subscriber without a cursor has no replay.
+2. Registers the queue in that same step, so a publish either lands in the replay or goes live, never both and never neither.
 3. Returns `Stream.fromQueue(queue)`.
 4. Removes and shuts down the queue when the request scope closes.
 
-The raw handler acquires and registers the queue before prepending its connection-specific `server.connected` frame:
+The raw handler takes the replay and registers the queue before prepending its connection-specific `server.connected` frame:
 
 ```text
-register queue
+take replay and register queue
   -> emit server.connected
-  -> drain queued live frames
+  -> drain replay, then queued live frames
 ```
 
-Events before registration may be missed, consistent with a volatile stream. Events after registration queue behind `server.connected`.
+`server.connected` carries no SSE id, so it never moves a client's cursor. A subscriber without a cursor sees only events published after its registration. A subscriber with a cursor sees the retained events after it, then live events.
 
 Heartbeats remain connection-local and outside the feed.
 
@@ -167,11 +169,15 @@ Keeping current clients connected would create a silent gap. Permanently termina
 
 ## HTTP And Code Generation
 
-Protocol remains unchanged:
+The protocol keeps the method, path, and stream shape:
 
 ```ts
 HttpApiSchema.StreamSse({ data: OpenCodeEvent })
 ```
+
+It also declares the `last-event-id` request header on `event.subscribe`, and `server.resync` is a member of `OpenCodeEvent`. OpenAPI and the generated Promise client were regenerated for those additions.
+
+The generated Effect client still decodes the stream into events without their SSE ids. `packages/client/src/effect/client.ts` therefore reads the frames itself so it can track the cursor, and it yields the same `OpenCodeEvent` values.
 
 The raw handler continues to own:
 
@@ -180,15 +186,7 @@ The raw handler continues to own:
 - SSE response headers;
 - `HttpServerResponse.stream` construction.
 
-The feed supplies complete immutable SSE frame strings for ordinary public events. The handler merges connection-local frames and performs text-to-byte encoding.
-
-Because method, path, schema, and wire representation do not change:
-
-- OpenAPI does not change;
-- generated Promise clients do not change;
-- generated Effect clients do not change;
-- TUI decoding and reconnect behavior do not change;
-- client regeneration is not required.
+The feed supplies complete immutable SSE frame strings for public events, including each frame's id. The handler merges connection-local frames and performs text-to-byte encoding.
 
 ## Core Cleanup
 
@@ -222,6 +220,10 @@ Behavioral tests cover:
 - healthy delivery of events after another subscriber overflows;
 - filtering internal events before capacity;
 - failure of current subscribers after malformed public encoding;
-- continued delivery to later subscribers after an encoding failure.
+- continued delivery to later subscribers after an encoding failure;
+- SSE ids on public frames, and none on `server.connected`;
+- replay of exactly the frames after a cursor, with no gap or duplicate before live delivery;
+- one `server.resync` at the head id for a foreign, malformed, future, or evicted cursor, including a cursor older than the 1,024-frame window in a real server;
+- the Effect and Promise clients sending the cursor on resubscribe, and advancing it only for events a consumer took.
 
 Package typechecks and the existing Core event/event-logger suites protect the Core interface migration.
