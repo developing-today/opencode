@@ -12,10 +12,18 @@ import { McpxSubagent } from "./mcpx-subagent.js"
 export * as McpxSubagent from "./mcpx-subagent.js"
 import { interceptToolDiagnostic } from "./mcpx-diagnose.js"
 export * as McpxDiagnose from "./mcpx-diagnose.js"
-import { projectTools, projectedToolDefinitions, retractTools, autoProjectFromScript, stepTurnTtl } from "./mcpx-projection.js"
+import {
+  projectTools,
+  projectedNamespaces,
+  projectedToolDefinitions,
+  retractTools,
+  autoProjectFromScript,
+  stepTurnTtl,
+} from "./mcpx-projection.js"
 export * as McpxProjection from "./mcpx-projection.js"
-import { callWithSecretPrompt } from "./mcpx-secrets.js"
+import { DaemonHTTPError, DaemonUnreachableError, ensureScriptReady, failureOf } from "./mcpx-secrets.js"
 export * as McpxSecrets from "./mcpx-secrets.js"
+import { CodeModeRules } from "../../codemode/rules.js"
 
 export const name = "mcpx"
 
@@ -70,6 +78,19 @@ const cliOutput = (args: string[], env?: Record<string, string | undefined>) =>
     catch: (error: any) => new ToolFailure({ message: error.message, error }),
   })
 
+// No answer at all is DaemonUnreachableError; a non-2xx answer is DaemonHTTPError. Only the first lets mcpx_exec fall
+// back to the CLI, because only then did the daemon not receive the request.
+const send = async (request: () => Promise<Response>): Promise<any> => {
+  let res: Response
+  try {
+    res = await request()
+  } catch (error) {
+    throw new DaemonUnreachableError(error instanceof Error ? error.message : String(error))
+  }
+  if (!res.ok) throw new DaemonHTTPError(res.status, await res.text())
+  return await res.json()
+}
+
 export const callDaemon = async (
   path: string,
   method = "GET",
@@ -78,29 +99,21 @@ export const callDaemon = async (
 ): Promise<any> => {
   const endpoint = process.env.MCPX_DAEMON_ENDPOINT || process.env.MCPX_ENDPOINT
   const socket = findDaemonSocket()
+  const init = {
+    method,
+    headers: { "Content-Type": "application/json", ...headers },
+    body: body ? JSON.stringify(body) : undefined,
+  }
 
   if (endpoint && endpoint.startsWith("http")) {
-    const res = await fetch(`${endpoint.replace(/\/+$/, "")}${path}`, {
-      method,
-      headers: { "Content-Type": "application/json", ...headers },
-      body: body ? JSON.stringify(body) : undefined,
-    })
-    if (!res.ok) throw new Error(`mcpx daemon returned HTTP ${res.status}: ${await res.text()}`)
-    return await res.json()
+    return send(() => fetch(`${endpoint.replace(/\/+$/, "")}${path}`, init))
   }
 
   if (socket) {
-    const res = await (fetch as any)(`http://localhost${path}`, {
-      unix: socket,
-      method,
-      headers: { "Content-Type": "application/json", ...headers },
-      body: body ? JSON.stringify(body) : undefined,
-    })
-    if (!res.ok) throw new Error(`mcpx daemon returned HTTP ${res.status}: ${await res.text()}`)
-    return await res.json()
+    return send(() => (fetch as any)(`http://localhost${path}`, { ...init, unix: socket }))
   }
 
-  throw new Error("No mcpx daemon reachable")
+  throw new DaemonUnreachableError("No mcpx daemon reachable")
 }
 
 let daemonEnsured = false
@@ -205,9 +218,12 @@ export const Plugin = {
       // 1. mcpx_exec: TypeScript Code Mode across all MCP servers
       editor.add({
         name: "mcpx_exec",
-        options: { namespace: "opencode" },
-        description:
+        options: { codemode: false },
+        description: [
           "Run TypeScript against every MCP server at once via mcpx. Tools are bound as await tools.<namespace>.<tool>({...}) and only what you print comes back, saving context tokens. Top-level await is supported.",
+          "Before any code runs, mcpx checks every server the script uses. A missing secret is waited for; if it is not provided, the call fails and nothing runs.",
+          CodeModeRules.canonical,
+        ].join(" "),
         input: Schema.Struct({
           source: Schema.String.annotate({ description: "TypeScript code to execute against tools.<server>.<method>()" }),
         }),
@@ -223,12 +239,21 @@ export const Plugin = {
             if (lease?.parentSessionID) headers["x-mcpx-parent-session-id"] = lease.parentSessionID
             const body: any = { source: input.source }
             if (sessionID) body.session = sessionID
-            // Only a daemon that cannot be reached falls back to the CLI. A script that ran and failed is reported, never run again.
-            const daemon = yield* Effect.tryPromise(() =>
-              callWithSecretPrompt({ path: "/v1/exec", method: "POST", body, headers, callDaemon }),
-            ).pipe(
-              Effect.map((res: any) => ({ res })),
-              Effect.catch(() => Effect.succeed(undefined)),
+            // Nothing runs until every server the script uses is active. Only a daemon that cannot be reached falls back
+            // to the CLI. A refused or failed run is reported and never retried.
+            const daemon = yield* Effect.gen(function* () {
+              yield* ensureScriptReady(callDaemon, input.source)
+              const res = yield* Effect.tryPromise({
+                try: () => callDaemon("/v1/exec", "POST", body, headers),
+                catch: (error) => error,
+              })
+              return { res }
+            }).pipe(
+              Effect.catch((error) =>
+                error instanceof DaemonUnreachableError
+                  ? Effect.succeed(undefined)
+                  : Effect.fail(failureOf(error, "the script")),
+              ),
             )
             let output: string
             if (daemon) {
@@ -257,9 +282,11 @@ export const Plugin = {
       // 2. mcpx_discover: server listing and tool signatures
       editor.add({
         name: "mcpx_discover",
-        options: { namespace: "opencode" },
-        description:
-          "List the MCP servers mcpx knows about, or show signatures for one. Call with no arguments first: the answer is small and tells you what else is worth asking for.",
+        options: { codemode: false },
+        description: [
+          "List the MCP servers mcpx knows about, the tools scripts can call, and the tools that can be projected. Pass a namespace to show its TypeScript signatures. Call with no arguments first: the answer is small and tells you what else is worth asking for.",
+          CodeModeRules.canonical,
+        ].join(" "),
         input: Schema.Struct({
           namespace: Schema.optionalKey(Schema.String.annotate({ description: "Namespace to show TypeScript signatures for; omit to list all" })),
         }),
@@ -292,8 +319,10 @@ export const Plugin = {
       editor.add({
         name: "mcpx_observe",
         options: { namespace: "opencode" },
-        description:
+        description: [
           "Query what mcpx has been doing: the durable log, or aggregate statistics. Use it when a call failed and you want to know why without running it again.",
+          CodeModeRules.canonical,
+        ].join(" "),
         input: Schema.Struct({
           what: Schema.Literals(["log", "calls", "errors", "servers", "slowest"]).annotate({
             description: "log for records, the rest are aggregate stats",
@@ -325,8 +354,10 @@ export const Plugin = {
       editor.add({
         name: "mcpx_project",
         options: { codemode: false },
-        description:
-          "Dynamically project tools from specified mcpx namespaces directly into the tool registry for this session. Projected tools become available immediately as top-level tools named <namespace>_<tool>.",
+        description: [
+          "Project tools from mcpx namespaces for this session. A projected tool becomes a native tool named <namespace>_<tool> right away, and scripts can also call it as tools.<namespace>.<tool>(args). Projected tools stay until they are retracted or their ttl runs out.",
+          CodeModeRules.canonical,
+        ].join(" "),
         input: Schema.Struct({
           namespaces: Schema.optionalKey(Schema.Array(Schema.String).annotate({ description: "Namespaces to project tools from (e.g. ['neon', 'chrome_devtools'])" })),
           tools: Schema.optionalKey(Schema.Array(Schema.String).annotate({ description: "Specific tool names to project (e.g. ['click', 'take_screenshot'])" })),
@@ -364,8 +395,10 @@ export const Plugin = {
       editor.add({
         name: "mcpx_retract",
         options: { codemode: false },
-        description:
-          "Retract previously projected MCP tools from the top-level tool registry to reduce schema context bloat.",
+        description: [
+          "Retract previously projected MCP tools from the native tool list and the Code Mode catalog, to reduce schema context bloat.",
+          CodeModeRules.canonical,
+        ].join(" "),
         input: Schema.Struct({
           targets: Schema.Array(Schema.String).annotate({ description: "Tool names or namespaces to retract (e.g. ['chrome_devtools', 'neon_describe_table_schema'])" }),
         }),
@@ -388,6 +421,7 @@ export const Plugin = {
       })
 
       // Projected tools live in the projection module, not in this editor: re-add them on every rebuild
+      for (const namespace of projectedNamespaces()) editor.namespace(namespace)
       for (const tool of projectedToolDefinitions()) {
         try {
           editor.add(tool)

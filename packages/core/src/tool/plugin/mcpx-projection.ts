@@ -4,18 +4,19 @@ import { ToolFailure } from "@opencode/ai"
 import type { Tool } from "@opencode/schema/tool"
 import { Effect, Schema } from "effect"
 import type { Editor } from "../../tool.js"
+import { CodeModeRules } from "../../codemode/rules.js"
 import { McpxSecrets } from "./mcpx-secrets.js"
 import { McpxSubagent } from "./mcpx-subagent.js"
 
-export type DaemonCall = (path: string, method?: string, body?: any, headers?: Record<string, string>) => Promise<any>
+export type DaemonCall = McpxSecrets.DaemonCall
 
 export interface ProjectedToolRecord {
   readonly id: string
   readonly namespace: string
   readonly toolName: string
   readonly originalTool: any
-  /** What the tool registry receives. The stable transform re-adds it on every rebuild. */
-  readonly definition?: Tool.Info
+  /** What the tool registry receives: the native entry and the Code Mode entry. The stable transform re-adds both on every rebuild. */
+  readonly definitions?: readonly Tool.Info[]
   ttlRemaining?: number // turns remaining before auto-retract
 }
 
@@ -26,9 +27,16 @@ export const getProjectedTools = (): ReadonlyMap<string, ProjectedToolRecord> =>
 
 export const isProjected = (name: string): boolean => projectedTools.has(name)
 
-/** Definitions for the stable registry transform to add on every rebuild. */
+/** Definitions for the stable registry transform to add on every rebuild: a native and a Code Mode entry per tool. */
 export const projectedToolDefinitions = (): Tool.Info[] =>
-  [...projectedTools.values()].flatMap((record) => (record.definition ? [record.definition] : []))
+  [...projectedTools.values()].flatMap((record) => record.definitions ?? [])
+
+/** Namespace descriptions for projected servers, so each Code Mode catalog line states the rule. */
+export const projectedNamespaces = (): Tool.Namespace[] =>
+  [...new Set([...projectedTools.values()].map((record) => record.namespace))].map((name) => ({
+    name,
+    description: `Tools from the mcpx server ${name}. ${CodeModeRules.canonical}`,
+  }))
 
 export const clearProjectedTools = (editor?: Editor): string[] => {
   const removed: string[] = []
@@ -86,26 +94,24 @@ export const stepTurnTtl = (editor?: Editor): string[] => {
 }
 
 /**
- * Parses script source for calls to tools.<namespace>.<tool>(...)
+ * Parses script source for references to tools.<namespace>.<tool> and tools["namespace"]["tool"], the two forms the
+ * daemon's preflight reads. Each distinct pair is returned once, in source order.
  */
 export const extractToolsFromScript = (source: string): Array<{ namespace: string; tool: string }> => {
   const results: Array<{ namespace: string; tool: string }> = []
   const seen = new Set<string>()
 
-  // Matches tools.namespace.tool or tools["namespace"]["tool"] or tools['namespace'].tool
-  const regex = /tools(?:\.([a-zA-Z0-9_-]+)|\[["']([^"']+)["']\])(?:\.([a-zA-Z0-9_-]+)|\[["']([^"']+)["']\])/g
+  const regex = /\btools(?:\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)|\[["']([^"']+)["']\]\[["']([^"']+)["']\])/g
   let match: RegExpExecArray | null
 
   while ((match = regex.exec(source)) !== null) {
-    const ns = match[1] || match[2]
-    const tool = match[3] || match[4]
-    if (ns && tool) {
-      const key = `${ns}_${tool}`
-      if (!seen.has(key)) {
-        seen.add(key)
-        results.push({ namespace: ns, tool })
-      }
-    }
+    const namespace = match[1] ?? match[3]
+    const tool = match[2] ?? match[4]
+    if (namespace === undefined || tool === undefined) continue
+    const key = JSON.stringify([namespace, tool])
+    if (seen.has(key)) continue
+    seen.add(key)
+    results.push({ namespace, tool })
   }
 
   return results
@@ -233,54 +239,65 @@ export const projectTools = async (
           output: Schema.Unknown,
         })
 
-        const toolDef: Tool.Info = {
+        const description = item.description ? `[mcpx:${ns}] ${item.description}` : `[mcpx:${ns}] ${toolName}`
+
+        // One execute serves both faces, so a projected tool behaves the same native and in a script: the same
+        // server gate, the same /v1/call body, and the same failures.
+        const execute = (args: any, context?: any) =>
+          Effect.gen(function* () {
+            const lease = context?.sessionID ? McpxSubagent.getLease(context.sessionID) : undefined
+            const sessionID = lease ? lease.childSessionID : context?.sessionID
+            const headers: Record<string, string> = {}
+            if (sessionID) headers["x-mcpx-session-id"] = sessionID
+            if (lease?.parentSessionID) headers["x-mcpx-parent-session-id"] = lease.parentSessionID
+
+            const body: any = {
+              server: ns,
+              tool: toolName,
+              arguments: args || {},
+            }
+            if (sessionID) body.session = sessionID
+
+            yield* McpxSecrets.ensureServerReady(options.callDaemon, ns, toolName).pipe(
+              Effect.mapError((error) => McpxSecrets.failureOf(error, fullName)),
+            )
+            const res = yield* Effect.tryPromise({
+              try: () => options.callDaemon("/v1/call", "POST", body, headers),
+              catch: (error) => McpxSecrets.failureOf(error, fullName),
+            })
+
+            if (res?.error) {
+              return yield* new ToolFailure({ message: String(res.error) })
+            }
+
+            return { output: { output: res.result ?? res } }
+          })
+
+        const nativeTool: Tool.Info = {
           name: fullName,
           options: { codemode: false },
-          description: item.description ? `[mcpx:${ns}] ${item.description}` : `[mcpx:${ns}] ${toolName}`,
+          description,
           input: inputSchema as any,
           output: outputSchema as any,
-          execute: (args: any, context?: any) =>
-            Effect.gen(function* () {
-              const lease = context?.sessionID ? McpxSubagent.getLease(context.sessionID) : undefined
-              const sessionID = lease ? lease.childSessionID : context?.sessionID
-              const headers: Record<string, string> = {}
-              if (sessionID) headers["x-mcpx-session-id"] = sessionID
-              if (lease?.parentSessionID) headers["x-mcpx-parent-session-id"] = lease.parentSessionID
-
-              const body: any = {
-                server: ns,
-                tool: toolName,
-                arguments: args || {},
-              }
-              if (sessionID) body.session = sessionID
-
-              const res = yield* Effect.tryPromise({
-                try: () =>
-                  McpxSecrets.callWithSecretPrompt({
-                    path: "/v1/call",
-                    method: "POST",
-                    body,
-                    headers,
-                    callDaemon: options.callDaemon,
-                  }),
-                catch: (err: any) => new ToolFailure({ message: err?.message || String(err), error: err }),
-              })
-
-              if (res?.error) {
-                return yield* new ToolFailure({ message: String(res.error) })
-              }
-
-              return { output: { output: res.result ?? res } }
-            }),
+          execute,
+        }
+        const codeModeTool: Tool.Info = {
+          name: toolName,
+          options: { namespace: ns, codemode: true },
+          description,
+          input: inputSchema as any,
+          output: outputSchema as any,
+          execute,
         }
 
-        options.editor?.add(toolDef)
+        options.editor?.add(nativeTool)
+        options.editor?.add(codeModeTool)
         projectedTools.set(fullName, {
           id: fullName,
           namespace: ns,
           toolName,
           originalTool: item,
-          definition: toolDef,
+          definitions: [nativeTool, codeModeTool],
           ttlRemaining: options.ttl,
         })
         added.push(fullName)

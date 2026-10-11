@@ -32,8 +32,13 @@ export interface Editor {
   readonly remove: (id: string) => void
 }
 
+type Entry = Tool.Info & { readonly id: string }
+
+// Each face keeps one entry per effective name. A native tool is called directly by its model name; a Code Mode
+// tool is called through the catalog. A projected tool registers one entry in each face, so they never collide.
 type Data = {
-  tools: Map<string, Tool.Info & { readonly id: string }>
+  native: Map<string, Entry>
+  codeMode: Map<string, Entry>
   namespaces: Map<string, Tool.Namespace>
   errors: { kind: "tool" | "namespace"; name: string; namespace?: string; error: RegistrationError }[]
 }
@@ -159,13 +164,14 @@ const layer = Layer.effect(
     const state = State.create<Data, Editor>({
       name: "tool",
       initial: () => ({
-        tools: new Map(),
+        native: new Map(),
+        codeMode: new Map(),
         namespaces: new Map(),
         errors: [],
       }),
       editor: (editor) => ({
-        list: () => Array.from(editor.tools.values()),
-        get: (id) => editor.tools.get(id),
+        list: () => visibleTools(editor),
+        get: (id) => editor.native.get(id) ?? editor.codeMode.get(id),
         namespace: (namespace) => {
           const error = namespaceError(namespace.name)
           if (error) {
@@ -181,26 +187,34 @@ const layer = Layer.effect(
             return
           }
           const id = effectiveName(tool)
-          editor.tools.set(id, { ...tool, id, options: tool.options && { ...tool.options } })
+          face(editor, tool).set(id, { ...tool, id, options: tool.options && { ...tool.options } })
         },
         update: (id, update) => {
-          const current = editor.tools.get(id)
-          if (!current) return
-          const tool = { ...current, options: current.options && { ...current.options } }
-          update(tool)
-          tool.name = current.name
-          tool.id = id
-          if (tool.options?.namespace !== current.options?.namespace)
-            tool.options = { ...tool.options, namespace: current.options?.namespace }
-          const error = registrationError(tool)
-          if (error) {
-            editor.errors.push({ kind: "tool", name: tool.name, namespace: tool.options?.namespace, error })
-            return
+          const updated: Entry[] = []
+          for (const current of [editor.native.get(id), editor.codeMode.get(id)]) {
+            if (!current) continue
+            const tool = { ...current, options: current.options && { ...current.options } }
+            update(tool)
+            tool.name = current.name
+            tool.id = id
+            if (tool.options?.namespace !== current.options?.namespace)
+              tool.options = { ...tool.options, namespace: current.options?.namespace }
+            const error = registrationError(tool)
+            if (error) {
+              editor.errors.push({ kind: "tool", name: tool.name, namespace: tool.options?.namespace, error })
+              updated.push(current)
+              continue
+            }
+            updated.push(tool)
           }
-          editor.tools.set(id, tool)
+          // An update can move an entry to the other face, so both are cleared before the copies are filed again.
+          editor.native.delete(id)
+          editor.codeMode.delete(id)
+          for (const tool of updated) face(editor, tool).set(id, tool)
         },
         remove: (id) => {
-          editor.tools.delete(id)
+          editor.native.delete(id)
+          editor.codeMode.delete(id)
         },
       }),
       notify: (value) => {
@@ -221,18 +235,17 @@ const layer = Layer.effect(
     return Service.of({
       transform: state.transform,
       reload: state.reload,
-      list: () => Effect.sync(() => Array.from(state.get().tools.values())),
+      list: () => Effect.sync(() => visibleTools(state.get())),
       snapshot: Effect.fn("Tool.snapshot")((permissions) =>
         Effect.sync(() => {
           const data = state.get()
-          const active = new Map<string, Tool.Info>()
           const rules = permissions ?? []
-          for (const [name, tool] of data.tools) {
-            if (whollyDisabled(tool.options?.permission ?? name, rules)) continue
-            active.set(name, tool)
-          }
-          const direct = new Map(Array.from(active).filter(([, tool]) => tool.options?.codemode === false))
-          const codeModeTools = new Map(Array.from(active).filter(([, tool]) => tool.options?.codemode !== false))
+          const enabled = (entries: ReadonlyMap<string, Entry>) =>
+            new Map(
+              Array.from(entries).filter(([name, tool]) => !whollyDisabled(tool.options?.permission ?? name, rules)),
+            )
+          const direct = enabled(data.native)
+          const codeModeTools = enabled(data.codeMode)
           const namespaces = data.namespaces
           const codeModeInventory = { tools: codeModeTools, namespaces }
           const codeModeEnabled = !whollyDisabled("execute", rules)
@@ -293,6 +306,15 @@ const whollyDisabled = (action: string, rules: Permission.Ruleset) => {
   const rule = rules.findLast((rule) => Wildcard.match(action, rule.action))
   return rule?.resource === "*" && rule.effect === "deny"
 }
+
+const face = (data: Pick<Data, "native" | "codeMode">, tool: Tool.Info) =>
+  tool.options?.codemode === false ? data.native : data.codeMode
+
+// One entry per effective name. When both faces hold a name, the native entry is the one listed.
+const visibleTools = (data: Pick<Data, "native" | "codeMode">): Entry[] => [
+  ...data.native.values(),
+  ...Array.from(data.codeMode.values()).filter((tool) => !data.native.has(tool.id)),
+]
 
 const formatSchemaIssue = SchemaIssue.makeFormatterDefault()
 
