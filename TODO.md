@@ -35,6 +35,10 @@ Implemented in `serve` (the Node build; see the runtime note below):
   `$NOTIFY_SOCKET` (sd_notify, `Type=notify`) and prints `opencode: ready` on stdout. In `--stdio`
   mode the line goes to stderr, because stdout carries the JSON handshake. The check runs in-process
   rather than over the socket: a request sent to a shared socket could be answered by a predecessor.
+- Starting: until it is ready, the successor answers `GET /api/info` at once with 503 and `Retry-After`, and
+  holds every other request for up to `Status.startupWait` (25 seconds). A held request is served as soon as the
+  successor is ready, so a request that reaches the successor early is not refused. Only a startup still running
+  when the wait ends answers 503 `service_starting`. A client that disconnects cancels its own wait.
 - Runtime: Bun 1.4's `node:http`, `Bun.serve` and `Bun.listen` ignore an inherited socket and bind a
   port of their own, but `node:net` adopts it (`net.Server.listen({ fd })`). On Bun the listener is a net
   server on fd 3, and each accepted connection is handed to the unchanged http server

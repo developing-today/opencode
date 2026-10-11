@@ -36,8 +36,8 @@ Namespace descriptions are registered once through `editor.namespace(...)`. Tool
 
 The service uses shared `State` to replay synchronous transforms in registration order against a fresh editor. `Tool.Service.reload()` rebuilds from captured source data without changing registration precedence. Registrations are scoped and return a real, idempotent `dispose` Effect:
 
-- The latest valid active registration for the same effective name wins.
-- `update` and `remove` target effective names and do nothing for missing tools. Updates preserve the name and namespace; invalid updates leave the previous definition intact. Creating a tool requires `add`.
+- Registrations live in two faces, native and Code Mode, each keyed by effective name. Within a face the latest valid active registration for the same effective name wins. A projected tool registers one native entry and one Code Mode entry under the same effective name, sharing one `execute`; the two faces never overwrite each other. `list` and `get` show the native entry when both exist.
+- `update` and `remove` target effective names across both faces and do nothing for missing tools. Updates preserve the name and namespace; invalid updates leave the previous definition intact. An update that changes `codemode` moves the entry to the other face. Creating a tool requires `add`.
 - Disposing a registration or closing its scope removes only its transform and rebuilds from the remaining transforms, revealing any earlier definition it overrode.
 - Each model request captures the effective definitions and executors it advertises; later reloads and disposal affect later snapshots. Captured executors may still reference mutable producer-owned state.
 

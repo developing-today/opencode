@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test"
 import { CodeModeCatalog } from "@opencode/core/codemode/catalog"
 import { CodeModeInstructions } from "@opencode/core/codemode/instructions"
+import { CodeModeRules } from "@opencode/core/codemode/rules"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { Location } from "@opencode/core/location"
 import { AbsolutePath } from "@opencode/core/schema"
@@ -48,6 +49,8 @@ describe("CodeModeInstructions", () => {
       const initialized = yield* readInitial(CodeModeInstructions.make({ tools: [echo] }))
       expect(initialized.text).toContain("Use the `execute` tool to call the tools listed below.")
       expect(initialized.text).toContain("The catalog is complete.")
+      expect(initialized.text).toContain(CodeModeRules.canonical)
+      expect(initialized.text).toContain("A tool that mcpx_discover lists can be called in an mcpx_exec script")
       expect(initialized.text).toContain("## Available tools")
       expect(initialized.text).toContain(`  - ${echo.signature} // Echo text`)
 

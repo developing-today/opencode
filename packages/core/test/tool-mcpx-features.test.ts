@@ -1,8 +1,14 @@
 import { describe, expect, it } from "bun:test"
 import { findClosestTool, levenshteinDistance, analyzeArgumentMismatch, attemptParameterRepair } from "../src/tool/plugin/mcpx-diagnose.js"
 import { generateSubagentSessionID, registerLease, getLease, removeLease, clearLeases } from "../src/tool/plugin/mcpx-subagent.js"
-import { projectTools, retractTools, clearProjectedTools, getProjectedTools } from "../src/tool/plugin/mcpx-projection.js"
-import { detectMissingSecret, callWithSecretPrompt } from "../src/tool/plugin/mcpx-secrets.js"
+import {
+  projectTools,
+  retractTools,
+  clearProjectedTools,
+  getProjectedTools,
+  extractToolsFromScript,
+} from "../src/tool/plugin/mcpx-projection.js"
+import { McpxSecrets } from "../src/tool/plugin/mcpx-secrets.js"
 
 describe("Feature 2: Dynamic Tool Projection", () => {
   it("projects and retracts tools via mock daemon", async () => {
@@ -129,71 +135,101 @@ describe("Feature 4: Self-Healing & Diagnostics", () => {
 })
 
 describe("Feature 5: Just-in-Time Secret Prompting", () => {
-  it("detects missing secret errors", () => {
-    const error1 = { secretRequired: "NEON_API_KEY", server: "neon" }
-    const res1 = detectMissingSecret(error1)
-    expect(res1.isSecretRequired).toBe(true)
-    expect(res1.secretKey).toBe("NEON_API_KEY")
-    expect(res1.server).toBe("neon")
-
-    const error2 = "Error: ANTHROPIC_API_KEY is required to proceed"
-    const res2 = detectMissingSecret(error2)
-    expect(res2.isSecretRequired).toBe(true)
-    expect(res2.secretKey).toBe("ANTHROPIC_API_KEY")
-  })
-
-  it("intercepts 401 secret error and retries with injected secret", async () => {
-    let callCount = 0
-    let lastHeaders: Record<string, string> = {}
-
-    const mockDaemon = async (path: string, method?: string, body?: any, headers?: Record<string, string>) => {
-      callCount++
-      lastHeaders = headers || {}
-      if (callCount === 1) {
-        throw { secretRequired: "OPENAI_API_KEY", server: "openai" }
-      }
-      return { success: true }
-    }
-
-    const mockPrompt = async (req: any) => {
-      expect(req.secretKey).toBe("OPENAI_API_KEY")
-      return "sk-test-secret-12345"
-    }
-
-    const res = await callWithSecretPrompt({
-      path: "/v1/call",
-      callDaemon: mockDaemon,
-      promptSecret: mockPrompt,
+  it("detects a missing secret only from a daemon 409, never from free text", () => {
+    const refused = new McpxSecrets.DaemonHTTPError(
+      409,
+      JSON.stringify({ code: "secret_required", server: "neon", secrets: ["NEON_API_KEY"], requestId: "req_1" }),
+    )
+    expect(McpxSecrets.secretRequired(refused)).toEqual({
+      server: "neon",
+      secrets: ["NEON_API_KEY"],
+      requestId: "req_1",
     })
-
-    expect(callCount).toBe(2)
-    expect(res.success).toBe(true)
-    expect(lastHeaders["x-mcpx-secret-openai_api_key"]).toBe("sk-test-secret-12345")
+    expect(McpxSecrets.secretRequired(new McpxSecrets.DaemonHTTPError(500, "boom"))).toBeUndefined()
+    expect(McpxSecrets.secretRequired(new Error("ANTHROPIC_API_KEY is required to proceed"))).toBeUndefined()
   })
 
-  it("resolves a missing secret from the environment when no host prompt is set", async () => {
+  it("fails a refused call with the request id and sends no secret header", async () => {
+    const headers: Record<string, string>[] = []
+    const mockDaemon = async (_path: string, _method?: string, _body?: any, requestHeaders?: Record<string, string>) => {
+      headers.push(requestHeaders ?? {})
+      throw new McpxSecrets.DaemonHTTPError(
+        409,
+        JSON.stringify({ code: "secret_required", server: "openai", secrets: ["OPENAI_API_KEY"], requestId: "req_7" }),
+      )
+    }
+
+    const failure = await mockDaemon("/v1/call", "POST", {}, { "x-mcpx-session-id": "ses_1" }).catch((error) =>
+      McpxSecrets.failureOf(error, "openai_run"),
+    )
+    expect(failure.message).toContain('OPENAI_API_KEY (server "openai")')
+    expect(failure.message).toContain("(request req_7)")
+    expect(headers).toHaveLength(1)
+    expect(Object.keys(headers[0] ?? {}).filter((name) => name.startsWith("x-mcpx-secret"))).toEqual([])
+    expect(headers[0]).not.toHaveProperty("x-mcpx-injected-secrets")
+  })
+
+  it("never resolves a missing secret from the environment", async () => {
     process.env.MCPX_TEST_ENV_SECRET = "from-env"
     try {
-      let lastHeaders: Record<string, string> = {}
-      const mockDaemon = async (_path: string, _method?: string, _body?: any, headers?: Record<string, string>) => {
-        lastHeaders = headers || {}
-        if (!lastHeaders["x-mcpx-secret-mcpx_test_env_secret"]) throw { secretRequired: "MCPX_TEST_ENV_SECRET", server: "test" }
-        return { success: true }
+      const headers: Record<string, string>[] = []
+      const mockDaemon = async (_path: string, _method?: string, _body?: any, requestHeaders?: Record<string, string>) => {
+        headers.push(requestHeaders ?? {})
+        throw new McpxSecrets.DaemonHTTPError(
+          409,
+          JSON.stringify({ code: "secret_required", server: "test", secrets: ["MCPX_TEST_ENV_SECRET"] }),
+        )
       }
 
-      const res = await callWithSecretPrompt({ path: "/v1/call", callDaemon: mockDaemon })
-      expect(res.success).toBe(true)
-      expect(lastHeaders["x-mcpx-secret-mcpx_test_env_secret"]).toBe("from-env")
+      const failure = await mockDaemon("/v1/call", "POST", {}).catch((error) => McpxSecrets.failureOf(error, "test_run"))
+      expect(failure.message).toContain("MCPX_TEST_ENV_SECRET")
+      expect(headers[0] ?? {}).not.toHaveProperty("x-mcpx-secret-mcpx_test_env_secret")
     } finally {
       delete process.env.MCPX_TEST_ENV_SECRET
     }
   })
 
-  it("names the missing secret when neither a host nor the environment has it", async () => {
-    const mockDaemon = async () => {
-      throw { secretRequired: "MCPX_TEST_ABSENT_SECRET", server: "test" }
-    }
-    await expect(callWithSecretPrompt({ path: "/v1/call", callDaemon: mockDaemon })).rejects.toThrow("MCPX_TEST_ABSENT_SECRET")
+  it("names the missing secret and its request id when neither the host nor the environment has it", () => {
+    const refused = new McpxSecrets.DaemonHTTPError(
+      409,
+      JSON.stringify({ code: "secret_required", server: "test", secrets: ["MCPX_TEST_ABSENT_SECRET"], requestId: "req_9" }),
+    )
+    const failure = McpxSecrets.failureOf(refused, "test_run")
+    expect(failure.message).toContain("MCPX_TEST_ABSENT_SECRET")
+    expect(failure.message).toContain("(request req_9)")
+  })
+
+  it("names every missing secret and server when a script needs more than one", () => {
+    const failure = McpxSecrets.secretFailure({
+      subject: "the script",
+      reason: "unset",
+      missing: [
+        { server: "neon", secrets: ["NEON_API_KEY"] },
+        { server: "github", secrets: ["GITHUB_TOKEN"] },
+      ],
+      requestIDs: ["req_1", "req_2"],
+    })
+    expect(failure.message).toContain('NEON_API_KEY (server "neon")')
+    expect(failure.message).toContain('GITHUB_TOKEN (server "github")')
+    expect(failure.message).toContain("(request req_1, req_2)")
+    expect(failure.message).toContain("`mcpx secrets set NEON_API_KEY` and `mcpx secrets set GITHUB_TOKEN`")
+  })
+})
+
+describe("Feature 2: Script references", () => {
+  it("returns each referenced namespace and tool once, in both reference forms", () => {
+    expect(
+      extractToolsFromScript(
+        `await tools.neon.run_sql({}); await tools["neon"]["run_sql"]({}); tools['github']['create_issue']({})`,
+      ),
+    ).toEqual([
+      { namespace: "neon", tool: "run_sql" },
+      { namespace: "github", tool: "create_issue" },
+    ])
+  })
+
+  it("ignores partial references and look-alikes", () => {
+    expect(extractToolsFromScript("tools.neon; mytools.neon.run_sql({}); tools.neon['run_sql']({})")).toEqual([])
   })
 })
 

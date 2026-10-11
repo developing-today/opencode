@@ -1,5 +1,5 @@
 import { expect } from "bun:test"
-import { Effect } from "effect"
+import { Deferred, Effect, Fiber, Option } from "effect"
 import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { it } from "../../core/test/lib/effect"
 import { ServerProcess } from "../src/process"
@@ -259,3 +259,82 @@ it.live("server info lists remote URLs alongside local addresses while they are 
     expect((yield* info()).urls).toEqual([base])
   }),
 )
+
+it.live("holds a request that arrives during startup until the server is ready", () =>
+  Effect.gen(function* () {
+    const gate = yield* Deferred.make<void>()
+    const server = yield* startingServer(gate)
+    yield* Effect.gen(function* () {
+      const request = yield* Effect.forkChild(
+        Effect.promise(() =>
+          fetch(new URL("/api/location", server.base), {
+            headers: { authorization: `Basic ${btoa("opencode:secret")}` },
+          }),
+        ),
+      )
+      // Startup is still open, so the request waits rather than receiving a 503.
+      expect(Option.isNone(yield* Fiber.join(request).pipe(Effect.timeoutOption("300 millis")))).toBe(true)
+
+      yield* Deferred.succeed(gate, undefined)
+      expect((yield* Fiber.join(request)).status).toBe(200)
+    }).pipe(Effect.ensuring(Deferred.succeed(gate, undefined)))
+    yield* Fiber.join(server.starting)
+  }),
+)
+
+it.live("cancels a request held for startup when its client disconnects", () =>
+  Effect.gen(function* () {
+    const gate = yield* Deferred.make<void>()
+    const cancelled = yield* Deferred.make<void>()
+    const server = yield* startingServer(gate, (app) =>
+      app.pipe(Effect.onInterrupt(() => Deferred.succeed(cancelled, undefined))),
+    )
+    yield* Effect.gen(function* () {
+      const client = new AbortController()
+      const request = yield* Effect.forkChild(
+        Effect.promise(() =>
+          fetch(new URL("/api/location", server.base), {
+            headers: { authorization: `Basic ${btoa("opencode:secret")}` },
+            signal: client.signal,
+          }).catch(() => undefined),
+        ),
+      )
+      yield* Effect.sleep("300 millis")
+      client.abort()
+      // The held request must end with its client, not when the startup wait runs out.
+      yield* Deferred.await(cancelled).pipe(Effect.timeout("5 seconds"))
+      yield* Fiber.join(request)
+    }).pipe(Effect.ensuring(Deferred.succeed(gate, undefined)))
+    yield* Fiber.join(server.starting)
+  }),
+)
+
+// Starts a server that listens but stays in startup until `gate` is released, so requests can arrive mid-startup.
+const startingServer = Effect.fnUntraced(function* (
+  gate: Deferred.Deferred<void>,
+  transform?: ServerProcess.Transform,
+) {
+  const listening = yield* Deferred.make<string>()
+  const starting = yield* Effect.forkChild(
+    ServerProcess.start<never, never>(
+      {
+        hostname: "127.0.0.1",
+        port: 0,
+        password: "secret",
+        app: { version: "test-version" },
+        database: { path: ":memory:" },
+        models: { fetch: false },
+      },
+      {
+        onListen: (address) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(listening, HttpServer.formatAddress(address))
+            yield* Deferred.await(gate)
+            return Effect.void
+          }),
+      },
+      transform,
+    ),
+  )
+  return { base: new URL(yield* Deferred.await(listening)), starting }
+})

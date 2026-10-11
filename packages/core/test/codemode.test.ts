@@ -92,4 +92,46 @@ describe("CodeMode", () => {
       expect(direct).not.toContain("$ref")
     }).pipe(Effect.scoped, Effect.provide(toolNode)),
   )
+
+  it.effect("keeps a native entry and a Code Mode entry that share an effective name, and removes both", () =>
+    Effect.gen(function* () {
+      const tools = yield* Tool.Service
+      const input = Schema.Struct({ text: Schema.String })
+      const execute = ({ text }: { readonly text: string }) => Effect.succeed({ output: text })
+      yield* tools.transform((editor) => {
+        editor.namespace({ name: "notes", description: "Notes" })
+        editor.add({
+          name: "notes_echo",
+          description: "Native echo",
+          input,
+          output: Schema.String,
+          options: { codemode: false },
+          execute,
+        })
+        editor.add({
+          name: "echo",
+          description: "Code Mode echo",
+          input,
+          output: Schema.String,
+          options: { namespace: "notes" },
+          execute,
+        })
+      })
+
+      const snapshot = yield* tools.snapshot()
+      expect(snapshot.definitions.find((tool) => tool.name === "notes_echo")?.description).toBe("Native echo")
+      expect(snapshot.codeModeCatalog?.tools).toMatchObject([
+        { type: "namespace", name: "notes", tools: [{ name: "echo", description: "Code Mode echo" }] },
+      ])
+      // The registry lists one entry per effective name, and the native one is the listed entry.
+      expect((yield* tools.list()).map((tool) => [tool.id, tool.description])).toEqual([["notes_echo", "Native echo"]])
+
+      yield* tools.transform((editor) => {
+        editor.remove("notes_echo")
+      })
+      const removed = yield* tools.snapshot()
+      expect(removed.definitions.some((tool) => tool.name === "notes_echo")).toBe(false)
+      expect(JSON.stringify(removed.codeModeCatalog)).not.toContain("echo")
+    }).pipe(Effect.scoped, Effect.provide(toolNode)),
+  )
 })

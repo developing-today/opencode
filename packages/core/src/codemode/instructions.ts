@@ -4,6 +4,7 @@ import { searchSignature, toolExpression } from "@opencode/codemode"
 import { Effect, Schema } from "effect"
 import { Instructions } from "../instructions/index.js"
 import { CodeModeCatalog } from "./catalog.js"
+import { CodeModeRules } from "./rules.js"
 
 // prettier-ignore
 const prompt = (hasMoreTools: boolean) => `# Code Mode
@@ -13,6 +14,8 @@ Use the \`execute\` tool to call the tools listed below. They cannot be called d
 ${hasMoreTools ? `The catalog is partial. Inside \`execute\`, use \`search(...)\` to find a tool, then call it by the \`path\` in the result. \`search\` is synchronous. Call it without \`await\`; it does not return a Promise. Do not guess tool names.
 
 - ${searchSignature}` : "The catalog is complete. Do not guess tool names."}
+
+${CodeModeRules.canonical} A tool that mcpx_discover lists can be called in an mcpx_exec script as tools.<namespace>.<tool>(args). Projecting it with mcpx_project lists it here too.
 
 ## Available tools`
 
