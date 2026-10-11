@@ -96,7 +96,7 @@ describe("Skill", () => {
       expect(yield* skills.list()).toEqual([])
       expect(yield* skills.get(Skill.ID.make("review"))).toBeUndefined()
       yield* config.setEntries([])
-      yield* bus.publish(Event.Updated, {})
+      yield* bus.publish(Event.Updated, { sections: ["*"] })
       yield* waitUntil(skills.get(Skill.ID.make("review")).pipe(Effect.map((skill) => skill !== undefined)))
       expect(yield* skills.get(Skill.ID.make("review"))).toEqual(info("review", "Review"))
     }),

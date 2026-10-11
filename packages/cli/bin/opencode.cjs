@@ -9,7 +9,17 @@ const forwardedSignals =
   process.platform === "win32" ? ["SIGINT", "SIGTERM", "SIGHUP"] : ["SIGINT", "SIGTERM", "SIGHUP", "SIGUSR1"]
 
 function run(target) {
-  const child = childProcess.spawn(target, process.argv.slice(2), { stdio: "inherit" })
+  // A supervisor's socket activation names this wrapper in LISTEN_PID and passes the socket as fd 3. The server
+  // is the process that serves, so it gets the socket on fd 3, and `exec` keeps its pid, which LISTEN_PID now names.
+  const inherited =
+    process.platform !== "win32" && process.env.LISTEN_FDS && process.env.LISTEN_PID === String(process.pid)
+  const child = inherited
+    ? childProcess.spawn(
+        "/bin/sh",
+        ["-c", 'LISTEN_PID=$$ exec "$0" "$@"', target, ...process.argv.slice(2)],
+        { stdio: ["inherit", "inherit", "inherit", 3] },
+      )
+    : childProcess.spawn(target, process.argv.slice(2), { stdio: "inherit" })
   child.on("error", (error) => {
     console.error(error.message)
     process.exit(1)

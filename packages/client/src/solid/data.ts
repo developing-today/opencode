@@ -598,7 +598,9 @@ export function createData(config: CreateDataInput) {
 
   function handleEvent(event: OpenCodeEvent) {
     switch (event.type) {
-      case "server.connected": {
+      // A resync means the server could not replay what this client missed, so it refetches like a fresh connection.
+      case "server.connected":
+      case "server.resync": {
         const updates = new Map<string, DataSessionStatus | undefined>()
         activeUpdates = updates
         refresh(() =>

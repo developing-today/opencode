@@ -4579,7 +4579,52 @@ describe("SessionRunnerLLM", () => {
       Expected.assistant({}, [
         Expected.failedTool(
           { id: "call-interrupted" },
-          { error: { type: "aborted", message: "Tool execution interrupted: echo" } },
+          { error: { type: "aborted", message: "Tool execution interrupted, the server was restarted: echo" } },
+        ),
+      ]),
+    ])
+  })
+
+  scenario("fails a pending question left by a prior process as interrupted by the restart", function* (s) {
+    yield* s.admit("Ask before restart")
+    yield* SessionInbox.promote(s.db, s.bus, sessionID, "steer")
+    const assistantMessageID = SessionMessage.ID.create()
+    yield* s.bus.publish(SessionEvent.Step.Started, {
+      sessionID,
+      assistantMessageID,
+      agent: Agent.ID.make("build"),
+      model: { id: ID.make("fake-model"), providerID: Provider.ID.make("fake") },
+      started: 0,
+    })
+    yield* s.bus.publish(SessionEvent.Tool.Input.Started, {
+      sessionID,
+      assistantMessageID,
+      id: "call-pending-question",
+      name: "question",
+    })
+    yield* s.bus.publish(SessionEvent.Tool.Input.Ended, {
+      sessionID,
+      assistantMessageID,
+      id: "call-pending-question",
+      text: '{"questions":[{"question":"Proceed?"}]}',
+    })
+    yield* s.bus.publish(SessionEvent.Tool.Called, {
+      sessionID,
+      assistantMessageID,
+      id: "call-pending-question",
+      input: { questions: [{ question: "Proceed?" }] },
+      executed: false,
+    })
+    s.requests.length = 0
+    yield* s.llm.push([])
+    yield* s.resume
+
+    expect(yield* s.context).toMatchObject([
+      Expected.user("Ask before restart"),
+      Expected.assistant({}, [
+        Expected.failedTool(
+          { id: "call-pending-question" },
+          { error: { type: "aborted", message: "Tool execution interrupted, the server was restarted: question" } },
         ),
       ]),
     ])
@@ -4639,7 +4684,7 @@ describe("SessionRunnerLLM", () => {
           {
             error: {
               type: "aborted",
-              message: "Tool execution interrupted: subagent (sessionID: ses_existing_child)",
+              message: "Tool execution interrupted, the server was restarted: subagent (sessionID: ses_existing_child)",
             },
             metadata: { sessionID: "ses_existing_child", status: "running", internal: "private" },
           },

@@ -1,7 +1,7 @@
 export * as McpxSubagent from "./mcpx-subagent.js"
 
 import type { Context } from "@opencode/plugin/effect/plugin"
-import { Effect, Predicate } from "effect"
+import { Effect } from "effect"
 import { SessionEnvironment } from "../../session/environment.js"
 import { SessionSchema } from "../../session/schema.js"
 
@@ -137,7 +137,7 @@ export const releaseSubagentSession = Effect.fnUntraced(function* (childOrLeaseI
   yield* Effect.tryPromise(() =>
     executeCallDaemon("/v1/session/release", "POST", { session: sessionToRelease }),
   ).pipe(
-    Effect.catchAll((error) =>
+    Effect.catch((error) =>
       Effect.logDebug("Failed to release mcpx subagent session lease", { error, session: sessionToRelease }),
     ),
   )
@@ -158,32 +158,5 @@ export const Plugin = {
         }
       }),
     )
-
-    // Inject subagent session leasing into tool invocations
-    yield* Effect.sync(() => {
-      try {
-        ctx.tool.hook("execute.before", (event: any) =>
-          Effect.sync(() => {
-            if (!event) return
-            const sessionID = event.sessionID
-            const lease = sessionID ? getLease(sessionID) : undefined
-            if (lease) {
-              ;(event as any).env ??= {}
-              if (Predicate.isObject((event as any).env)) {
-                ;(event as any).env.MCPX_SESSION_ID = lease.childSessionID
-                ;(event as any).env.MCPX_PARENT_SESSION_ID = lease.parentSessionID
-              }
-              if (Predicate.isObject(event.input)) {
-                ;(event.input as any).env ??= {}
-                if (Predicate.isObject((event.input as any).env)) {
-                  ;(event.input as any).env.MCPX_SESSION_ID = lease.childSessionID
-                  ;(event.input as any).env.MCPX_PARENT_SESSION_ID = lease.parentSessionID
-                }
-              }
-            }
-          }),
-        )
-      } catch {}
-    })
   }),
 }

@@ -319,7 +319,7 @@ const layer = Layer.effect(
             parentSessionID: input.parentID,
             childID: sessionID,
             environments,
-          }).pipe(Effect.catchAll(() => Effect.void))
+          }).pipe(Effect.catch(() => Effect.void))
         }
         // TODO: Restore recorded sessions onto replacement synchronized workspaces in a future API slice.
         return yield* result.get(sessionID).pipe(Effect.orDie)
@@ -379,7 +379,7 @@ const layer = Layer.effect(
         yield* transport.close(sessionID)
         const children = yield* result.list({ parentID: sessionID })
         yield* Effect.forEach(children.data, (child) => result.remove(child.id), { concurrency: 1, discard: true })
-        yield* McpxSubagent.releaseSubagentSession(sessionID).pipe(Effect.catchAll(() => Effect.void))
+        yield* McpxSubagent.releaseSubagentSession(sessionID).pipe(Effect.catch(() => Effect.void))
         yield* environments.clear(sessionID)
         yield* bus.publish(SessionEvent.Deleted, { sessionID })
         yield* bus.remove(sessionID)

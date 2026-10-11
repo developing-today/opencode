@@ -268,7 +268,7 @@ describe("PluginSupervisor reload", () => {
         expect(yield* commands.get("greet-v1")).toBeDefined()
 
         yield* write("export default {", new Date())
-        yield* bus.publish(Event.Updated, {})
+        yield* bus.publish(Event.Updated, { sections: ["*"] })
         const failure = yield* failed(plugins)
 
         expect(failure).toMatchObject({ source: { type: "local", path: file }, state: { status: "failed" } })
@@ -319,7 +319,7 @@ describe("PluginSupervisor reload", () => {
         npm.gate = gate
         npm.inflight = 0
         npm.peak = 0
-        yield* bus.publish(Event.Updated, {})
+        yield* bus.publish(Event.Updated, { sections: ["*"] })
         yield* TestClock.adjust("100 millis")
         yield* settle(() => npm.inflight === 1)
         yield* TestClock.adjust("24 hours")
@@ -369,7 +369,7 @@ it.live("applies organization integration changes to running external plugins", 
       expect(yield* commands.get("policy-greet")).toBeUndefined()
       expect(yield* Effect.promise(() => Bun.file(entered).exists())).toBe(false)
       yield* Effect.promise(() => Bun.write(configuration, JSON.stringify({ plugins: [root] })))
-      yield* bus.publish(Event.Updated, {})
+      yield* bus.publish(Event.Updated, { sections: ["*"] })
       yield* commands.get("policy-greet").pipe(
         Effect.flatMap((command) => (command ? Effect.void : Effect.fail("pending"))),
         Effect.retry({ times: 200, schedule: Schedule.spaced("10 millis") }),

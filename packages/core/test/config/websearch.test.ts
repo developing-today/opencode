@@ -28,7 +28,7 @@ describe("ConfigWebSearchPlugin.Plugin", () => {
       expect((yield* websearch.default().pipe(Effect.flip))._tag).toBe("WebSearch.Disabled")
 
       yield* config.setEntries([configured(new ConfigWebSearch.Info({ provider: "random" }))])
-      yield* bus.publish(Event.Updated, {})
+      yield* bus.publish(Event.Updated, { sections: ["*"] })
       yield* waitUntil(
         websearch.default().pipe(
           Effect.map((provider) => provider?.id === WebSearch.ID.make("test")),

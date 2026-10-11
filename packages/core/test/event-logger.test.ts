@@ -27,7 +27,7 @@ describe("EventLogger", () => {
       yield* bus.publish(Provider.Event.Updated, {})
       yield* bus.publish(Model.Event.Updated, {})
       yield* bus.publish(Command.Event.Updated, {})
-      yield* bus.publish(Config.Event.Updated, {})
+      yield* bus.publish(Config.Event.Updated, { sections: ["*"] })
       yield* bus.publish(McpEvent.StatusChanged, { server: "example" })
       yield* bus.publish(UnlistedUpdated, {})
     }).pipe(

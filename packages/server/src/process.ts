@@ -2,18 +2,22 @@ export * as ServerProcess from "./process"
 
 import { NodeHttpServer } from "@effect/platform-node"
 import { Bus } from "@opencode/core/bus"
+import { SessionExecution } from "@opencode/core/session/execution"
 import { SessionRestart } from "@opencode/core/session/execution/restart"
+import { Config } from "@opencode/core/config"
 import { InstallationEvent } from "@opencode/schema/installation-event"
 import { hasPtyConnectTicketURL } from "@opencode/protocol/groups/pty"
 import { hasPersistentPtyConnectTicketURL } from "@opencode/protocol/groups/persistent-pty"
 import { isPairingConnectURL } from "@opencode/protocol/groups/server"
 import { Global } from "@opencode/util/global"
-import { Cause, Context, Effect, Exit, Latch, Layer, Option, Ref, Scope } from "effect"
+import { Cause, Context, Duration, Effect, Exit, Latch, Layer, Option, Ref, Scope } from "effect"
 import { HttpMiddleware, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { NetAddress } from "effect/net"
-import { createServer } from "node:http"
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
+import type { ListenOptions } from "node:net"
 import { ServerAuth } from "./auth"
 import { isAllowedCorsOrigin } from "./cors"
+import { adoptInheritedSocket } from "./inherited-socket"
 import { authorizedRequest, unauthorizedResponse } from "./middleware/authorization"
 import { withoutParentSpan } from "./request-tracing"
 import { createRoutes } from "./routes"
@@ -56,7 +60,18 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
   const port = Option.fromNullishOr(options.port)
   const shutdown = yield* Latch.make()
   const status = yield* Status.make()
-  const bound = yield* listen({ hostname, port })
+  const bound = yield* listen({ hostname, port, inheritedFd: options.inheritedListenFd })
+  // Requests still running when a drain starts keep the process up until they finish. Event streams are
+  // open-ended, so the drain does not wait for them; they end when the process exits.
+  const inFlight = new Set<ServerResponse>()
+  let draining = false
+  bound.server.on("request", (request: IncomingMessage, response: ServerResponse) => {
+    if (new URL(request.url ?? "/", "http://localhost").pathname === EVENT_STREAM_PATH) return
+    inFlight.add(response)
+    response.once("close", () => inFlight.delete(response))
+    // A draining process closes each connection after its current response, so clients reconnect to the successor.
+    if (draining) response.setHeader("connection", "close")
+  })
   const localURLs = () => {
     const address = bound.server.address()
     if (address === null || typeof address === "string") return []
@@ -112,12 +127,39 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
     yield* Ref.set(application, Option.some(Context.get(context, HttpRouter.HttpRouter).asHttpEffect()))
     yield* status.ready
     const bus = Context.get(context, Bus.Service)
+    const execution = Context.get(context, SessionExecution.Service)
+    const runningSessions = execution.active.pipe(Effect.map((sessions) => Array.from(sessions)))
+    const untilIdle = Effect.gen(function* () {
+      while ((yield* runningSessions).length > 0 || inFlight.size > 0) yield* Effect.sleep("250 millis")
+    })
     return {
       address: bound.http.address,
       shutdown: shutdown.await,
       updateAvailable: (version: string) =>
         bus.publish(InstallationEvent.UpdateAvailable, { version }).pipe(Effect.asVoid),
       updated: (version: string) => bus.publish(InstallationEvent.Updated, { version }).pipe(Effect.asVoid),
+      reload: () => bus.publish(Config.ReloadRequested, {}).pipe(Effect.asVoid),
+      drain: (grace: Duration.Input, cutNow: Effect.Effect<void>) =>
+        Effect.gen(function* () {
+          yield* status.beginStopping
+          draining = true
+          // Closing the server stops accepting. With an inherited socket this process only drops its own
+          // descriptor; the supervisor keeps the listener, so connections queue for the successor.
+          yield* Effect.sync(() => {
+            bound.server.close()
+          })
+          const sessions = yield* runningSessions
+          if (sessions.length === 0 && inFlight.size === 0) return
+          yield* Effect.logInfo("draining running sessions and requests", { sessions, requests: inFlight.size, grace })
+          // The interrupt that started this drain must not cancel the wait.
+          yield* untilIdle.pipe(Effect.timeoutOption(grace), Effect.raceFirst(cutNow), Effect.uninterruptible)
+          const remaining = yield* runningSessions
+          if (remaining.length > 0 || inFlight.size > 0)
+            yield* Effect.logWarning("shutdown ended with sessions or requests still running; interrupting them", {
+              sessions: remaining,
+              requests: inFlight.size,
+            })
+        }),
     }
   }).pipe(
     Effect.catchCause((cause) => {
@@ -139,22 +181,32 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
   return yield* Effect.raceFirst(boot, shutdown.await.pipe(Effect.andThen(Effect.interrupt)))
 })
 
-function listen(options: { readonly hostname: string; readonly port: Option.Option<number> }) {
-  if (Option.isSome(options.port)) return bind(options.hostname, options.port.value)
+const EVENT_STREAM_PATH = "/api/event"
+
+function listen(options: {
+  readonly hostname: string
+  readonly port: Option.Option<number>
+  readonly inheritedFd?: number | undefined
+}) {
+  if (options.inheritedFd !== undefined) return bind({ fd: options.inheritedFd })
+  if (Option.isSome(options.port)) return bind({ host: options.hostname, port: options.port.value })
   const next = (port: number): ReturnType<typeof bind> =>
-    bind(options.hostname, port).pipe(
+    bind({ host: options.hostname, port }).pipe(
       Effect.catch((error) => (port < 65_535 && addressInUse(error) ? next(port + 1) : Effect.fail(error))),
     )
   return next(4096)
 }
 
-function bind(hostname: string, port: number) {
+function bind(address: { readonly host: string; readonly port: number } | { readonly fd: number }) {
   return Effect.gen(function* () {
     const parentScope = yield* Scope.Scope
     const serverScope = yield* Scope.fork(parentScope)
     const server = createServer()
+    // Bun's node:http ignores `fd`, so an inherited socket is adopted through node:net there. Node takes `fd` directly.
+    const listening = "fd" in address && "Bun" in globalThis ? adoptInheritedSocket(server, address.fd) : server
     return yield* Effect.gen(function* () {
-      const http = yield* NodeHttpServer.make(() => server, { port, host: hostname })
+      // @types/node leaves `fd` off ListenOptions, but Node's server.listen accepts it.
+      const http = yield* NodeHttpServer.make(() => listening, address as ListenOptions)
       yield* Effect.addFinalizer(() => Effect.sync(() => server.closeAllConnections()))
       return { http, server, scope: serverScope }
     }).pipe(
@@ -185,17 +237,20 @@ function dispatch(
     const state = yield* status.current
     const app = yield* Ref.get(application)
     const ready = state.type === "ready" && Option.isSome(app)
+    // A draining server stops listening, but it still answers the requests already accepted on its connections:
+    // a 503 there would look like a failed request to a client that a successor is about to serve.
+    const serving = (state.type === "ready" || state.type === "stopping") && Option.isSome(app)
     if (request.method === "GET" && url.pathname === "/api/info" && !ready) {
       if (!(yield* authorizedRequest(request, auth))) return unauthorizedResponse(request)
       return yield* infoResponse(status, version, urls, tmp)
     }
     if (
       !isPairingConnectURL(url) &&
-      (!ready || (!hasPtyConnectTicketURL(url) && !hasPersistentPtyConnectTicketURL(url))) &&
+      (!serving || (!hasPtyConnectTicketURL(url) && !hasPersistentPtyConnectTicketURL(url))) &&
       !(yield* authorizedRequest(request, auth))
     )
       return unauthorizedResponse(request)
-    if (ready) return yield* app.value
+    if (serving) return yield* app.value
     return unavailable(state)
   })
 }

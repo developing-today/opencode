@@ -33,6 +33,12 @@ const schema = <const Definitions extends ReadonlyArray<Definition>>(definitions
             data: Schema.Struct({}),
           }).annotate({ identifier: "V2Event.server.connected" }),
         ]),
+    // Sent in place of a replay when Last-Event-ID cannot be honoured. Clients refetch their state.
+    Schema.Struct({
+      ...fields,
+      type: Schema.Literal("server.resync"),
+      data: Schema.Struct({}),
+    }).annotate({ identifier: "V2Event.server.resync" }),
   ]).annotate({ identifier: "V2Event" })
 
 const make = <const Definitions extends ReadonlyArray<Definition>>(definitions: Definitions) => {
@@ -42,13 +48,14 @@ const make = <const Definitions extends ReadonlyArray<Definition>>(definitions: 
     group: HttpApiGroup.make("server.event")
       .add(
         HttpApiEndpoint.get("event.subscribe", "/api/event", {
+          headers: Schema.Struct({ "last-event-id": Schema.optional(Schema.String) }),
           success: HttpApiSchema.StreamSse({ data: EventSchema }),
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "event.subscribe",
             summary: "Subscribe to events",
             description:
-              "Subscribe to native events and plugin RPC events across all server locations. Volatile by contract: a slow consumer overflows and fails the stream, and events during disconnection are missed.",
+              "Subscribe to native events and plugin RPC events across all server locations. Each frame carries an SSE id of the form `<instance>:<sequence>`. Reconnect with Last-Event-ID to receive the events after that id from the server's bounded in-process buffer. When the id belongs to another server process or has aged out of the buffer, the stream sends one server.resync event instead, and the client should refetch its state. Otherwise events are volatile: a slow consumer overflows and fails the stream.",
           }),
         ),
       )
@@ -65,4 +72,7 @@ export const OpenCodeEvent = event.schema
 export type OpenCodeEvent = typeof OpenCodeEvent.Type
 export type OpenCodeEventEncoded = typeof OpenCodeEvent.Encoded
 export const isOpenCodeEvent = (event: { readonly type: string }): event is OpenCodeEvent =>
-  event.type === "server.connected" || EventManifest.isServer(event) || event.type.startsWith("rpc.")
+  event.type === "server.connected" ||
+  event.type === "server.resync" ||
+  EventManifest.isServer(event) ||
+  event.type.startsWith("rpc.")

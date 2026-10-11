@@ -10,11 +10,11 @@ import { join } from "node:path"
 
 import { McpxSubagent } from "./mcpx-subagent.js"
 export * as McpxSubagent from "./mcpx-subagent.js"
-import { McpxDiagnose, interceptToolDiagnostic } from "./mcpx-diagnose.js"
+import { interceptToolDiagnostic } from "./mcpx-diagnose.js"
 export * as McpxDiagnose from "./mcpx-diagnose.js"
-import { McpxProjection, projectTools, retractTools, autoProjectFromScript, stepTurnTtl } from "./mcpx-projection.js"
+import { projectTools, projectedToolDefinitions, retractTools, autoProjectFromScript, stepTurnTtl } from "./mcpx-projection.js"
 export * as McpxProjection from "./mcpx-projection.js"
-import { McpxSecrets, callWithSecretPrompt } from "./mcpx-secrets.js"
+import { callWithSecretPrompt } from "./mcpx-secrets.js"
 export * as McpxSecrets from "./mcpx-secrets.js"
 
 export const name = "mcpx"
@@ -62,6 +62,12 @@ export const runCli = (args: string[], env?: Record<string, string | undefined>)
         }
       },
     )
+  })
+
+const cliOutput = (args: string[], env?: Record<string, string | undefined>) =>
+  Effect.tryPromise({
+    try: () => runCli(args, env),
+    catch: (error: any) => new ToolFailure({ message: error.message, error }),
   })
 
 export const callDaemon = async (
@@ -127,12 +133,17 @@ const ensureDaemon = async (): Promise<void> => {
       stdio: "ignore",
       env: process.env,
     })
-    child.on?.("error", () => {})
+    // A missing binary (ENOENT) is reported as an async 'error' event, not a thrown exception.
+    // Without a listener it crashes OpenCode for everyone who has not installed mcpx.
+    let spawnFailed = false
+    child.on?.("error", () => {
+      spawnFailed = true
+    })
     child.unref()
 
     // Give daemon up to 1.5s to answer /v1/health
     const deadline = Date.now() + 1500
-    while (Date.now() < deadline) {
+    while (Date.now() < deadline && !spawnFailed) {
       await new Promise((r) => setTimeout(r, 100))
       try {
         const health = await callDaemon("/v1/health")
@@ -171,24 +182,24 @@ export const Plugin = {
       }),
     )
 
-    // Intercept tool errors for mcpx_exec and projected MCP tools
-    yield* Effect.sync(() => {
-      try {
-        ctx.tool.hook("execute.before", () =>
-          Effect.sync(() => {
-            stepTurnTtl()
-          }),
-        )
-      } catch {}
-      try {
-        ctx.tool.hook("execute.after", (event) =>
-          interceptToolDiagnostic(event, {
-            callDaemon,
-            getTools: () => ctx.tool.list(),
-          }),
-        )
-      } catch {}
-    })
+    // Turn-based TTL: each assistant message that runs a tool is one turn. Expired projections are dropped and the
+    // registry is rebuilt so they leave the tool list.
+    let lastTurnMessageID: string | undefined
+    yield* ctx.tool.hook("execute.before", (event) =>
+      Effect.gen(function* () {
+        if (event.messageID === lastTurnMessageID) return
+        lastTurnMessageID = event.messageID
+        if (stepTurnTtl().length > 0) yield* ctx.tool.reload()
+      }),
+    )
+
+    // Self-healing: enrich failed mcpx_exec scripts and projected tool calls with typo and argument hints
+    yield* ctx.tool.hook("execute.after", (event) =>
+      interceptToolDiagnostic(event, {
+        callDaemon,
+        getTools: () => ctx.tool.list(),
+      }),
+    )
 
     yield* ctx.tool.transform((editor) => {
       // 1. mcpx_exec: TypeScript Code Mode across all MCP servers
@@ -210,49 +221,36 @@ export const Plugin = {
             const headers: Record<string, string> = {}
             if (sessionID) headers["x-mcpx-session-id"] = sessionID
             if (lease?.parentSessionID) headers["x-mcpx-parent-session-id"] = lease.parentSessionID
-            try {
-              const body: any = { source: input.source }
-              if (sessionID) body.session = sessionID
-              const res = yield* Effect.tryPromise(() =>
-                callDaemon("/v1/exec", "POST", body, Object.keys(headers).length > 0 ? headers : undefined),
-              ).pipe(Effect.mapError((err: any) => new ToolFailure({ message: err?.message || String(err), error: err })))
+            const body: any = { source: input.source }
+            if (sessionID) body.session = sessionID
+            // Only a daemon that cannot be reached falls back to the CLI. A script that ran and failed is reported, never run again.
+            const daemon = yield* Effect.tryPromise(() =>
+              callWithSecretPrompt({ path: "/v1/exec", method: "POST", body, headers, callDaemon }),
+            ).pipe(
+              Effect.map((res: any) => ({ res })),
+              Effect.catch(() => Effect.succeed(undefined)),
+            )
+            let output: string
+            if (daemon) {
+              const res = daemon.res
               if (res?.error || (typeof res?.exitCode === "number" && res.exitCode !== 0)) {
                 return yield* new ToolFailure({
                   message: res.error || res.stderr || `Execution exited with code ${res.exitCode}`,
                 })
               }
-              const output = res.output ?? JSON.stringify(res.result ?? res, null, 2)
-              // Auto-project tools used in script with a 3-turn TTL for subsequent review
-              try {
-                yield* Effect.promise(() =>
-                  autoProjectFromScript({
-                    source: input.source,
-                    callDaemon,
-                    editor,
-                    defaultTtl: 3,
-                  }),
-                )
-              } catch {}
-              return { output: { output: String(output) } }
-            } catch {
+              output = String(res.output ?? JSON.stringify(res.result ?? res, null, 2))
+            } else {
               const env: Record<string, string> = {}
               if (sessionID) env.MCPX_SESSION_ID = sessionID
               if (lease?.parentSessionID) env.MCPX_PARENT_SESSION_ID = lease.parentSessionID
-              const out = yield* Effect.tryPromise(() => runCli(["exec", input.source], env)).pipe(
-                Effect.mapError((err: any) => new ToolFailure({ message: err.message, error: err })),
-              )
-              try {
-                yield* Effect.promise(() =>
-                  autoProjectFromScript({
-                    source: input.source,
-                    callDaemon,
-                    editor,
-                    defaultTtl: 3,
-                  }),
-                )
-              } catch {}
-              return { output: { output: String(out) } }
+              output = yield* cliOutput(["exec", input.source], env)
             }
+            // Auto-project tools used in script with a 3-turn TTL for subsequent review
+            const projected = yield* Effect.tryPromise(() =>
+              autoProjectFromScript({ source: input.source, callDaemon, defaultTtl: 3 }),
+            ).pipe(Effect.catch(() => Effect.succeed([] as string[])))
+            if (projected.length > 0) yield* ctx.tool.reload()
+            return { output: { output } }
           }),
       })
 
@@ -270,28 +268,23 @@ export const Plugin = {
         }),
         execute: (input) =>
           Effect.gen(function* () {
-            try {
-              if (input.namespace) {
-                const res = yield* Effect.tryPromise(() =>
-                  callDaemon(`/v1/types?namespace=${encodeURIComponent(input.namespace!)}`),
-                ).pipe(Effect.mapError((err: any) => new ToolFailure({ message: err?.message || String(err), error: err })))
-                return { output: { output: typeof res === "string" ? res : JSON.stringify(res, null, 2) } }
-              }
-              const res = yield* Effect.tryPromise(() => callDaemon("/v1/namespaces")).pipe(
-                Effect.mapError((err: any) => new ToolFailure({ message: err?.message || String(err), error: err })),
-              )
-              const namespaces = Array.isArray(res) ? res : (res.namespaces ?? [])
-              const text = namespaces
-                .map((n: any) => `${n.namespace}  (${n.tools ?? 0} tools)${n.description ? "  " + n.description : ""}`)
-                .join("\n")
-              return { output: { output: text || "No MCP namespaces active." } }
-            } catch {
-              const args = input.namespace ? ["types", input.namespace] : ["ls"]
-              const out = yield* Effect.tryPromise(() => runCli(args)).pipe(
-                Effect.mapError((err: any) => new ToolFailure({ message: err.message, error: err })),
-              )
-              return { output: { output: String(out) } }
-            }
+            const namespace = input.namespace
+            const output = namespace
+              ? yield* Effect.tryPromise(() => callDaemon(`/v1/types?namespace=${encodeURIComponent(namespace)}`)).pipe(
+                  Effect.map((res: any) => (typeof res === "string" ? res : JSON.stringify(res, null, 2))),
+                  Effect.catch(() => cliOutput(["types", namespace])),
+                )
+              : yield* Effect.tryPromise(() => callDaemon("/v1/namespaces")).pipe(
+                  Effect.map((res: any) => {
+                    const namespaces = Array.isArray(res) ? res : (res.namespaces ?? [])
+                    const text = namespaces
+                      .map((n: any) => `${n.namespace}  (${n.tools ?? 0} tools)${n.description ? "  " + n.description : ""}`)
+                      .join("\n")
+                    return text || "No MCP namespaces active."
+                  }),
+                  Effect.catch(() => cliOutput(["ls"])),
+                )
+            return { output: { output } }
           }),
       })
 
@@ -312,33 +305,26 @@ export const Plugin = {
         }),
         execute: (input) =>
           Effect.gen(function* () {
-            try {
-              if (input.what === "log") {
-                const query = input.since ? `?since=${encodeURIComponent(input.since)}` : ""
-                const res = yield* Effect.tryPromise(() => callDaemon(`/v1/log${query}`)).pipe(
-                  Effect.mapError((err: any) => new ToolFailure({ message: err?.message || String(err), error: err })),
-                )
-                return { output: { output: JSON.stringify(res.records ?? res, null, 2) } }
-              }
-              const query = input.since ? `?since=${encodeURIComponent(input.since)}` : ""
-              const res = yield* Effect.tryPromise(() => callDaemon(`/v1/stats/${input.what}${query}`)).pipe(
-                Effect.mapError((err: any) => new ToolFailure({ message: err?.message || String(err), error: err })),
-              )
-              return { output: { output: JSON.stringify(res, null, 2) } }
-            } catch {
-              const args = input.what === "log" ? ["log", ...(input.since ? ["--since", input.since] : [])] : ["stats", input.what, ...(input.since ? ["--since", input.since] : [])]
-              const out = yield* Effect.tryPromise(() => runCli(args)).pipe(
-                Effect.mapError((err: any) => new ToolFailure({ message: err.message, error: err })),
-              )
-              return { output: { output: String(out) } }
-            }
+            const query = input.since ? `?since=${encodeURIComponent(input.since)}` : ""
+            const sinceArgs = input.since ? ["--since", input.since] : []
+            const output =
+              input.what === "log"
+                ? yield* Effect.tryPromise(() => callDaemon(`/v1/log${query}`)).pipe(
+                    Effect.map((res: any) => JSON.stringify(res.records ?? res, null, 2)),
+                    Effect.catch(() => cliOutput(["log", ...sinceArgs])),
+                  )
+                : yield* Effect.tryPromise(() => callDaemon(`/v1/stats/${input.what}${query}`)).pipe(
+                    Effect.map((res: any) => JSON.stringify(res, null, 2)),
+                    Effect.catch(() => cliOutput(["stats", input.what, ...sinceArgs])),
+                  )
+            return { output: { output } }
           }),
       })
 
       // 4. mcpx_project: Dynamic tool projection ("Ghost Tools")
       editor.add({
         name: "mcpx_project",
-        options: { namespace: "opencode" },
+        options: { codemode: false },
         description:
           "Dynamically project tools from specified mcpx namespaces directly into the tool registry for this session. Projected tools become available immediately as top-level tools named <namespace>_<tool>.",
         input: Schema.Struct({
@@ -358,9 +344,9 @@ export const Plugin = {
                 tools: input.tools,
                 ttl: input.ttl,
                 callDaemon,
-                editor,
               }),
             ).pipe(Effect.mapError((err: any) => new ToolFailure({ message: err?.message || String(err), error: err })))
+            if (result.added.length > 0) yield* ctx.tool.reload()
 
             const msg = `Projected ${result.added.length} tool(s): ${result.added.join(", ") || "none"}.${
               typeof input.ttl === "number" ? ` (TTL: ${input.ttl} turns)` : ""
@@ -377,7 +363,7 @@ export const Plugin = {
       // 5. mcpx_retract: Dynamic tool retraction
       editor.add({
         name: "mcpx_retract",
-        options: { namespace: "opencode" },
+        options: { codemode: false },
         description:
           "Retract previously projected MCP tools from the top-level tool registry to reduce schema context bloat.",
         input: Schema.Struct({
@@ -389,7 +375,8 @@ export const Plugin = {
         }),
         execute: (input) =>
           Effect.gen(function* () {
-            const retracted = retractTools(input.targets, editor)
+            const retracted = retractTools(input.targets)
+            if (retracted.length > 0) yield* ctx.tool.reload()
             const msg = `Retracted ${retracted.length} tool(s): ${retracted.join(", ") || "none"}.`
             return {
               output: {
@@ -399,6 +386,13 @@ export const Plugin = {
             }
           }),
       })
+
+      // Projected tools live in the projection module, not in this editor: re-add them on every rebuild
+      for (const tool of projectedToolDefinitions()) {
+        try {
+          editor.add(tool)
+        } catch {}
+      }
     })
   }),
 }

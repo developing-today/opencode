@@ -193,6 +193,7 @@ import type {
   SkillListOutput,
   RpcCallInput,
   RpcCallOutput,
+  EventSubscribeInput,
   EventSubscribeOutput,
   PtyListInput,
   PtyListOutput,
@@ -281,11 +282,21 @@ const mapClientError = <E>(error: E) =>
 
 const preserveEffect =
   <A>() =>
-  <E, R>(effect: Effect.Effect<A, E, R>) =>
+  <Actual extends A, E, R>(
+    effect: Effect.Effect<Actual, E, R> &
+      ([A] extends [Actual]
+        ? unknown
+        : { readonly __generatedOutputWiderThanContract: [expected: Actual, generated: A] }),
+  ): Effect.Effect<A, E, R> =>
     effect
 const preserveStream =
   <A>() =>
-  <E, R>(stream: Stream.Stream<A, E, R>) =>
+  <Actual extends A, E, R>(
+    stream: Stream.Stream<Actual, E, R> &
+      ([A] extends [Actual]
+        ? unknown
+        : { readonly __generatedOutputWiderThanContract: [expected: Actual, generated: A] }),
+  ): Stream.Stream<A, E, R> =>
     stream
 
 const EndpointServerInfo = (raw: RawClient["server.server"]) => () =>
@@ -1226,10 +1237,10 @@ const EndpointRpcCall = (raw: RawClient["server.rpc"]) => (input: RpcCallInput) 
 
 const adaptGroupRpc = (raw: RawClient["server.rpc"]) => ({ call: EndpointRpcCall(raw) })
 
-const EndpointEventSubscribe = (raw: RawClient["server.event"]) => () =>
+const EndpointEventSubscribe = (raw: RawClient["server.event"]) => (input?: EventSubscribeInput) =>
   preserveStream<EventSubscribeOutput>()(
     Stream.unwrap(
-      raw["event.subscribe"]({}).pipe(
+      raw["event.subscribe"]({ headers: { "last-event-id": input?.["last-event-id"] } }).pipe(
         Effect.mapError(mapClientError),
         Effect.map((stream) => stream.pipe(Stream.mapError(mapClientError))),
       ),

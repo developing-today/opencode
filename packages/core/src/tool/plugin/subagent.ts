@@ -201,7 +201,7 @@ export const Plugin = {
               yield* McpxSubagent.initializeSubagentSession({
                 parentSessionID: context.sessionID,
                 childID: child.id,
-              }).pipe(Effect.catchAll(() => Effect.void))
+              }).pipe(Effect.catch(() => Effect.void))
 
               const background = input.background === true
               yield* context.progress({ sessionID: child.id, status: "running" })
@@ -243,7 +243,7 @@ export const Plugin = {
                     [
                       sessions.interrupt(child.id),
                       jobs.cancel(child.id),
-                      McpxSubagent.releaseSubagentSession(child.id).pipe(Effect.catchAll(() => Effect.void)),
+                      McpxSubagent.releaseSubagentSession(child.id).pipe(Effect.catch(() => Effect.void)),
                     ],
                     {
                       discard: true,
@@ -255,7 +255,7 @@ export const Plugin = {
                 yield* subagents.notify(recovery, result.info.started_at)
                 return backgroundResult(child.id)
               }
-              yield* McpxSubagent.releaseSubagentSession(child.id).pipe(Effect.catchAll(() => Effect.void))
+              yield* McpxSubagent.releaseSubagentSession(child.id).pipe(Effect.catch(() => Effect.void))
               // Failure surfaces keep the sessionID visible so the model can continue the child.
               if (result?.info.status === "error")
                 return yield* new ToolFailure({

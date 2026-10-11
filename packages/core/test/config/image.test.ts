@@ -32,7 +32,7 @@ describe("ConfigImagePlugin.Plugin", () => {
       expect(yield* limits(image)).toEqual({ maxWidth: 1_200, maxHeight: 900, maxBytes: 1 })
 
       yield* config.setEntries([document({ auto_resize: false, max_width: 700, max_base64_bytes: 1 })])
-      yield* bus.publish(Event.Updated, {})
+      yield* bus.publish(Event.Updated, { sections: ["*"] })
       yield* waitUntil(
         limits(image).pipe(
           Effect.map((current) => current.maxWidth === 700 && current.maxHeight === 2_000 && current.maxBytes === 1),
@@ -55,6 +55,7 @@ describe("ConfigImagePlugin.Plugin", () => {
       let reads = 0
       const config = Config.Service.of({
         entries: () => Effect.sync(() => [document({ max_width: reads++ === 0 ? 1_200 : 700, max_base64_bytes: 1 })]),
+        reload: () => Effect.void,
         changes: () => Stream.empty,
       })
       yield* ConfigImagePlugin.Plugin.effect(yield* PluginHost.make(plugins)).pipe(

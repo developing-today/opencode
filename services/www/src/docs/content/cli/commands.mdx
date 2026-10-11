@@ -360,6 +360,20 @@ View all subcommands and flags.
 $ opencode serve --help
 ```
 
+### Stopping and replacing a server
+
+A `SIGTERM` closes the listener at once, so new connections are refused. Running sessions and
+their event streams continue until they finish or `OPENCODE_SHUTDOWN_GRACE_MS` elapses (30000
+by default). Sessions still running at the deadline are interrupted. A second `SIGTERM` during
+the drain ends the wait immediately and interrupts them.
+
+Pending questions and permission requests are held in memory, so they do not survive a
+restart. A successor server settles the tool call that asked for one as interrupted, with the
+message "the server was restarted", and the model continues from there.
+
+Stopping the server through the client waits the same grace period plus 5 seconds before it
+sends `SIGKILL`.
+
 ## pair
 
 Prints one-time links, plus a QR code of the first one, that sign a browser or

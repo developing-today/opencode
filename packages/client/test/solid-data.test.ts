@@ -1031,6 +1031,22 @@ test.each([
   }
 })
 
+test("a resync refetches activity like a fresh connection", async () => {
+  const reads: string[] = []
+  const setup = activityFixture(() => {
+    reads.push("active")
+    return Response.json({ data: { ses_resync: { type: "running" } } })
+  })
+
+  try {
+    setup.emit({ type: "server.resync", data: {} })
+    await wait(() => setup.data.session.status("ses_resync") === "running")
+    expect(reads).toEqual(["active"])
+  } finally {
+    setup.dispose()
+  }
+})
+
 test("ignores activity snapshots from an older connection", async () => {
   const reads: ReturnType<typeof Promise.withResolvers<Response>>[] = []
   const setup = activityFixture(() => {

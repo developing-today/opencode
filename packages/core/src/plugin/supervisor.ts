@@ -4,6 +4,7 @@ import { Event } from "@opencode/schema/config"
 import { Cause, Effect, Layer, Queue, Stream } from "effect"
 import path from "path"
 import { ConfigPluginSource } from "../config/plugin/source.js"
+import { reloadsSections } from "../config.js"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { ManagedPolicy } from "../managed-policy.js"
 import { Bus } from "../bus.js"
@@ -220,7 +221,11 @@ export const layer = Layer.effectDiscard(
     yield* watch(modules.changes())
     yield* watch(managed.changes())
     yield* watch(Stream.fromEffectRepeat(Effect.sleep("24 hours")))
-    yield* watch(bus.subscribe([Event.Updated, SdkPlugins.Updated]))
+    yield* watch(
+      bus.subscribe([Event.Updated, SdkPlugins.Updated]).pipe(
+        Stream.filter((event) => event.type !== "config.updated" || reloadsSections(event, ["plugins"])),
+      ),
+    )
     yield* watch(
       updates.changes().pipe(
         Stream.filter((update) => packages.has(update.target)),

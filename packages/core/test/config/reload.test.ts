@@ -29,7 +29,7 @@ import { Credential } from "@opencode/core/credential"
 import { WellKnown } from "@opencode/core/wellknown"
 import { Watcher } from "@opencode/core/filesystem/watcher"
 import { AppProcess } from "@opencode/util/process"
-import { Deferred, Effect, Layer, Schema } from "effect"
+import { Deferred, Effect, Layer, Queue, Schema, Stream } from "effect"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { AbsolutePath } from "@opencode/core/schema"
 import { testEffect } from "../lib/effect"
@@ -95,6 +95,29 @@ describe("config plugin reloads", () => {
       ),
     )
   }
+
+  it.live("publishes only the sections whose values changed", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          const file = path.join(tmp.path, "opencode.json")
+          yield* Effect.promise(() => Bun.write(file, JSON.stringify({ shell: "initial", default_agent: "build" })))
+          return yield* Effect.gen(function* () {
+            const config = yield* Config.Service
+            const bus = yield* Bus.Service
+            const published = yield* Queue.unbounded<readonly string[]>()
+            yield* bus.subscribe(Event.Updated).pipe(
+              Stream.runForEach((event) => Queue.offer(published, event.data.sections)),
+              Effect.forkScoped({ startImmediately: true }),
+            )
+            yield* Effect.promise(() => Bun.write(file, JSON.stringify({ shell: "changed", default_agent: "build" })))
+            yield* waitUntil(config.entries().pipe(Effect.map((entries) => Config.latest(entries, "shell") === "changed")))
+            expect(yield* Queue.take(published)).toEqual(["shell"])
+          }).pipe(Effect.provide(liveConfig(tmp.path)))
+        }),
+      ),
+    ),
+  )
 
   it.live("retains readiness signalled synchronously during initial config startup", () =>
     Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
@@ -297,7 +320,7 @@ describe("config plugin reloads", () => {
 
       yield* test.setEntries([config("second")])
       yield* Effect.yieldNow
-      yield* bus.publish(Event.Updated, {})
+      yield* bus.publish(Event.Updated, { sections: ["*"] })
       yield* waitUntil(
         Effect.gen(function* () {
           return (

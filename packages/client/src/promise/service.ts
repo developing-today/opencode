@@ -143,11 +143,12 @@ function stopped(pid: number) {
 }
 
 async function waitUntilStopped(pid: number, timing: EnsureTiming) {
-  for (let attempt = 0; attempt <= timing.stopPollAttempts; attempt++) {
+  const deadline = Date.now() + timing.stopTimeout
+  while (true) {
     if (stopped(pid)) return true
-    if (attempt < timing.stopPollAttempts) await delay(timing.stopPollInterval)
+    if (Date.now() >= deadline) return false
+    await delay(timing.stopPollInterval)
   }
-  return false
 }
 
 async function terminate(info: Info, options: { readonly file?: string }, timing: EnsureTiming) {

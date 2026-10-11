@@ -16,6 +16,13 @@
     "./run": "./src/run/index.ts",
     "./server-process": "./src/server-process.ts"
   },
+  "imports": {
+    "#systemd-datagram": {
+      "bun": "./src/systemd-datagram.bun.ts",
+      "node": "./src/systemd-datagram.node.ts",
+      "default": "./src/systemd-datagram.node.ts"
+    }
+  },
   "scripts": {
     "build": "bun run script/build.ts",
     "build:node": "bun run script/build-node.ts",

@@ -300,7 +300,7 @@ describe("OllamaPlugin", () => {
 
             const baseURL = `${configured.url.origin}/proxy/v1`
             yield* config.setEntries([configuration({ baseURL, apiKey: "old" }), configuration({ apiKey: "secret" })])
-            yield* bus.publish(Event.Updated, {})
+            yield* bus.publish(Event.Updated, { sections: ["*"] })
             yield* eventually(
               modelState.get(providerID, Model.ID.make("configured-model")),
               (model) => model !== undefined,
@@ -316,7 +316,7 @@ describe("OllamaPlugin", () => {
 
             requests.splice(0)
             yield* config.setEntries([configuration({ baseURL, apiKey: "secret" }), configuration({ apiKey: null })])
-            yield* bus.publish(Event.Updated, {})
+            yield* bus.publish(Event.Updated, { sections: ["*"] })
             yield* eventually(providers.get(providerID), (provider) => provider?.settings?.apiKey === "")
             expect(requests).toContainEqual({ authorization: null, method: "GET", path: "/proxy/api/tags" })
             expect(requests).toContainEqual({ authorization: null, method: "POST", path: "/proxy/api/show" })
@@ -324,7 +324,7 @@ describe("OllamaPlugin", () => {
             requests.splice(0)
             const apiBaseURL = `${configured.url.origin}/proxy/api`
             yield* config.setEntries([configuration({ baseURL: apiBaseURL, apiKey: "api-secret" })])
-            yield* bus.publish(Event.Updated, {})
+            yield* bus.publish(Event.Updated, { sections: ["*"] })
             yield* eventually(providers.get(providerID), (provider) => provider?.settings?.baseURL === apiBaseURL)
             expect(requests).toContainEqual({
               authorization: "Bearer api-secret",

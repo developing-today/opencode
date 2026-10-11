@@ -11,7 +11,7 @@ export const Plugin = define({
   effect: Effect.fn(function* (ctx) {
     const config = yield* Config.Service
     const compaction = yield* SessionCompaction.Service
-    const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, compaction.reload())
+    const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, ["compaction"], compaction.reload())
     yield* compaction.transform((editor) => {
       for (const entry of loaded.entries) {
         if (entry.type !== "document" || !entry.info.compaction) continue

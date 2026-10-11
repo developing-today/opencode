@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test"
-import { Effect } from "effect"
 import { findClosestTool, levenshteinDistance, analyzeArgumentMismatch, attemptParameterRepair } from "../src/tool/plugin/mcpx-diagnose.js"
 import { generateSubagentSessionID, registerLease, getLease, removeLease, clearLeases } from "../src/tool/plugin/mcpx-subagent.js"
 import { projectTools, retractTools, clearProjectedTools, getProjectedTools } from "../src/tool/plugin/mcpx-projection.js"

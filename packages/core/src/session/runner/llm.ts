@@ -353,7 +353,7 @@ const layer = Layer.effect(
             id: tool.id,
             error: {
               type: "aborted",
-              message: `Tool execution interrupted: ${tool.name}${childID ? ` (sessionID: ${childID})` : ""}`,
+              message: `Tool execution interrupted, the server was restarted: ${tool.name}${childID ? ` (sessionID: ${childID})` : ""}`,
             },
             ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
             executed: tool.executed === true,

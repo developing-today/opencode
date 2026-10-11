@@ -43,6 +43,6 @@ export const deliver = Effect.fnUntraced(function* (
     text: `<subagent sessionID="${recovery.childSessionID}" state="${input.status}" description="${recovery.description}">\n${text}\n</subagent>`,
     metadata: { source: "subagent", childID: recovery.childSessionID, agent: recovery.agent, state: input.status },
   })
-  yield* McpxSubagent.releaseSubagentSession(recovery.childSessionID).pipe(Effect.catchAll(() => Effect.void))
+  yield* McpxSubagent.releaseSubagentSession(recovery.childSessionID).pipe(Effect.catch(() => Effect.void))
   if (input.notificationID) yield* jobs.completeBackground(input.notificationID)
 })

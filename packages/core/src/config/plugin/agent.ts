@@ -6,7 +6,7 @@ import { ConfigAgent } from "@opencode/schema/config/agent"
 import path from "path"
 import { Effect, Option, PubSub, Schema, Stream } from "effect"
 import { Agent } from "../../agent.js"
-import { Config } from "../../config.js"
+import { Config, reloadsSections } from "../../config.js"
 import { ConfigMarkdown } from "../markdown.js"
 import { FSUtil } from "@opencode/util/fs-util"
 import { ConfigAgentV1 } from "../../v1/config/agent.js"
@@ -69,7 +69,7 @@ export const Plugin = define({
       Effect.forkScoped({ startImmediately: true }),
     )
     yield* ctx.event.subscribe().pipe(
-      Stream.filter((event) => event.type === "config.updated"),
+      Stream.filter((event) => reloadsSections(event, ["agents", "permissions"])),
       Stream.runForEach(notify),
       Effect.forkScoped({ startImmediately: true }),
     )

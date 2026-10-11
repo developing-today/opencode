@@ -132,7 +132,9 @@ export type Entry = typeof Entry.Type
 
 const Updated = ephemeral({
   type: "config.updated",
-  schema: {},
+  schema: {
+    sections: Schema.Array(Schema.String),
+  },
 })
 
 export const Event = { Updated, Definitions: inventory(Updated) }

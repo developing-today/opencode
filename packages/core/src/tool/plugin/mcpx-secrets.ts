@@ -1,8 +1,5 @@
 export * as McpxSecrets from "./mcpx-secrets.js"
 
-import { ToolFailure } from "@opencode/ai"
-import { Effect } from "effect"
-
 export interface SecretPromptRequest {
   readonly server: string
   readonly secretKey: string
@@ -13,11 +10,18 @@ export interface SecretPromptHandler {
   (request: SecretPromptRequest): Promise<string | undefined>
 }
 
+// A host that can ask the user (the TUI or the app) registers its prompt here.
 let promptHandler: SecretPromptHandler | undefined
 
 export const setSecretPromptHandler = (handler: SecretPromptHandler | undefined): void => {
   promptHandler = handler
 }
+
+/**
+ * With no host prompt, a secret can still come from the environment under its own name
+ * (for example OPENAI_API_KEY), so a headless run works when the variable is already set.
+ */
+const resolveSecretFromEnvironment: SecretPromptHandler = async (request) => process.env[request.secretKey] || undefined
 
 /**
  * Checks if a response error or status indicates a missing secret.
@@ -52,7 +56,7 @@ export const detectMissingSecret = (errorOrBody: any): { isSecretRequired: boole
 }
 
 /**
- * Executes a daemon call with just-in-time secret prompting and injection on HTTP 401 / secret_required.
+ * Executes a daemon call with just-in-time secret prompting and injection when the daemon reports a missing secret.
  */
 export const callWithSecretPrompt = async (
   options: {
@@ -64,33 +68,31 @@ export const callWithSecretPrompt = async (
     promptSecret?: (request: SecretPromptRequest) => Promise<string | undefined>
   },
 ): Promise<any> => {
-  const { path, method = "GET", body, headers = {}, callDaemon, promptSecret = promptHandler } = options
+  const { path, method = "GET", body, headers = {}, callDaemon, promptSecret = promptHandler ?? resolveSecretFromEnvironment } = options
 
   try {
     return await callDaemon(path, method, body, headers)
   } catch (err: any) {
-    const errorBody = err?.response || err
-    const missing = detectMissingSecret(errorBody)
+    const missing = detectMissingSecret(err?.response || err)
+    if (!missing.isSecretRequired || !missing.secretKey) throw err
 
-    if (missing.isSecretRequired && missing.secretKey && promptSecret) {
-      const server = missing.server || body?.server || "mcpx"
-      const secretVal = await promptSecret({
-        server,
-        secretKey: missing.secretKey,
-        message: `MCP server "${server}" requires secret key "${missing.secretKey}".`,
-      })
-
-      if (secretVal) {
-        // Inject into request headers or body and retry
-        const updatedHeaders = {
-          ...headers,
-          [`x-mcpx-secret-${missing.secretKey.toLowerCase()}`]: secretVal,
-          "x-mcpx-injected-secrets": JSON.stringify({ [missing.secretKey]: secretVal }),
-        }
-        return await callDaemon(path, method, body, updatedHeaders)
-      }
+    const server = missing.server || body?.server || "mcpx"
+    const secretVal = await promptSecret({
+      server,
+      secretKey: missing.secretKey,
+      message: `MCP server "${server}" requires secret key "${missing.secretKey}".`,
+    })
+    if (!secretVal) {
+      throw new Error(
+        `MCP server "${server}" requires the secret ${missing.secretKey}, and no value is available. Set ${missing.secretKey} in the environment, then retry.`,
+      )
     }
 
-    throw err
+    // Inject into request headers and retry once
+    return await callDaemon(path, method, body, {
+      ...headers,
+      [`x-mcpx-secret-${missing.secretKey.toLowerCase()}`]: secretVal,
+      "x-mcpx-injected-secrets": JSON.stringify({ [missing.secretKey]: secretVal }),
+    })
   }
 }

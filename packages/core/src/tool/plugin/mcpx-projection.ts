@@ -1,25 +1,34 @@
 export * as McpxProjection from "./mcpx-projection.js"
 
 import { ToolFailure } from "@opencode/ai"
-import { Schema } from "effect"
-import { Effect } from "effect"
-import type { Editor, Info } from "../../tool.js"
+import type { Tool } from "@opencode/schema/tool"
+import { Effect, Schema } from "effect"
+import type { Editor } from "../../tool.js"
+import { McpxSecrets } from "./mcpx-secrets.js"
 import { McpxSubagent } from "./mcpx-subagent.js"
+
+export type DaemonCall = (path: string, method?: string, body?: any, headers?: Record<string, string>) => Promise<any>
 
 export interface ProjectedToolRecord {
   readonly id: string
   readonly namespace: string
   readonly toolName: string
   readonly originalTool: any
+  /** What the tool registry receives. The stable transform re-adds it on every rebuild. */
+  readonly definition?: Tool.Info
   ttlRemaining?: number // turns remaining before auto-retract
 }
 
-// Active projected tools by tool ID / name
+// Active projected tools by tool ID / name. The tool registry is rebuilt from this map, so it lives at module scope.
 const projectedTools = new Map<string, ProjectedToolRecord>()
 
 export const getProjectedTools = (): ReadonlyMap<string, ProjectedToolRecord> => projectedTools
 
 export const isProjected = (name: string): boolean => projectedTools.has(name)
+
+/** Definitions for the stable registry transform to add on every rebuild. */
+export const projectedToolDefinitions = (): Tool.Info[] =>
+  [...projectedTools.values()].flatMap((record) => (record.definition ? [record.definition] : []))
 
 export const clearProjectedTools = (editor?: Editor): string[] => {
   const removed: string[] = []
@@ -35,7 +44,7 @@ export const clearProjectedTools = (editor?: Editor): string[] => {
   return removed
 }
 
-export const retractTools = (namesOrNamespaces: string[], editor?: Editor): string[] => {
+export const retractTools = (namesOrNamespaces: readonly string[], editor?: Editor): string[] => {
   const removed: string[] = []
   const targets = new Set(namesOrNamespaces.map((s) => s.toLowerCase()))
 
@@ -107,8 +116,8 @@ export const extractToolsFromScript = (source: string): Array<{ namespace: strin
  */
 export const autoProjectFromScript = async (options: {
   source: string
-  callDaemon: (path: string, method?: string, body?: any, headers?: Record<string, string>) => Promise<any>
-  editor: Editor
+  callDaemon: DaemonCall
+  editor?: Editor
   defaultTtl?: number
 }): Promise<string[]> => {
   const extracted = extractToolsFromScript(options.source)
@@ -131,17 +140,17 @@ export const autoProjectFromScript = async (options: {
 /**
  * Converts a raw JSON Schema or property definition into an Effect Schema struct.
  */
-function buildEffectSchema(inputSchema: any): Schema.Schema<any, any> {
+function buildEffectSchema(inputSchema: any): Schema.Top {
   if (!inputSchema || typeof inputSchema !== "object") {
     return Schema.Unknown
   }
 
   const props = inputSchema.properties || {}
   const required = new Set<string>(Array.isArray(inputSchema.required) ? inputSchema.required : [])
-  const fields: Record<string, Schema.Schema<any, any>> = {}
+  const fields: Record<string, Schema.Top> = {}
 
   for (const [key, propDef] of Object.entries<any>(props)) {
-    let fieldSchema: Schema.Schema<any, any> = Schema.Unknown
+    let fieldSchema: Schema.Top = Schema.Unknown
     const type = propDef?.type
 
     if (type === "string") {
@@ -153,7 +162,7 @@ function buildEffectSchema(inputSchema: any): Schema.Schema<any, any> {
     } else if (type === "array") {
       fieldSchema = Schema.Array(Schema.Unknown)
     } else if (type === "object") {
-      fieldSchema = Schema.Record({ key: Schema.String, value: Schema.Unknown })
+      fieldSchema = Schema.Record(Schema.String, Schema.Unknown)
     }
 
     if (propDef?.description) {
@@ -167,19 +176,20 @@ function buildEffectSchema(inputSchema: any): Schema.Schema<any, any> {
     fields[key] = fieldSchema
   }
 
-  return Schema.Struct(fields)
+  return Schema.Struct(fields as any)
 }
 
 /**
- * Projects tools from mcpx namespaces into OpenCode's top-level Tool.Editor.
+ * Projects tools from mcpx namespaces as top-level tools. The definitions are kept in this module, so they
+ * survive registry rebuilds. Pass an editor to add them immediately; otherwise the caller reloads the registry.
  */
 export const projectTools = async (
   options: {
-    namespaces?: string[]
-    tools?: string[]
+    namespaces?: readonly string[]
+    tools?: readonly string[]
     ttl?: number
-    callDaemon: (path: string, method?: string, body?: any, headers?: Record<string, string>) => Promise<any>
-    editor: Editor
+    callDaemon: DaemonCall
+    editor?: Editor
   },
 ): Promise<{ added: string[]; errors: string[] }> => {
   const added: string[] = []
@@ -223,9 +233,9 @@ export const projectTools = async (
           output: Schema.Unknown,
         })
 
-        const toolDef: Info = {
+        const toolDef: Tool.Info = {
           name: fullName,
-          options: { namespace: "mcpx" },
+          options: { codemode: false },
           description: item.description ? `[mcpx:${ns}] ${item.description}` : `[mcpx:${ns}] ${toolName}`,
           input: inputSchema as any,
           output: outputSchema as any,
@@ -244,32 +254,33 @@ export const projectTools = async (
               }
               if (sessionID) body.session = sessionID
 
-              try {
-                const res = yield* Effect.tryPromise(() =>
-                  options.callDaemon("/v1/call", "POST", body, Object.keys(headers).length > 0 ? headers : undefined),
-                ).pipe(Effect.mapError((err: any) => new ToolFailure({ message: err?.message || String(err), error: err })))
+              const res = yield* Effect.tryPromise({
+                try: () =>
+                  McpxSecrets.callWithSecretPrompt({
+                    path: "/v1/call",
+                    method: "POST",
+                    body,
+                    headers,
+                    callDaemon: options.callDaemon,
+                  }),
+                catch: (err: any) => new ToolFailure({ message: err?.message || String(err), error: err }),
+              })
 
-                if (res?.error) {
-                  return yield* new ToolFailure({ message: String(res.error) })
-                }
-
-                const result = res.result ?? res
-                return { output: { output: result } }
-              } catch (err: any) {
-                return yield* new ToolFailure({
-                  message: err?.message || String(err),
-                  error: err,
-                })
+              if (res?.error) {
+                return yield* new ToolFailure({ message: String(res.error) })
               }
+
+              return { output: { output: res.result ?? res } }
             }),
         }
 
-        options.editor.add(toolDef)
+        options.editor?.add(toolDef)
         projectedTools.set(fullName, {
           id: fullName,
           namespace: ns,
           toolName,
           originalTool: item,
+          definition: toolDef,
           ttlRemaining: options.ttl,
         })
         added.push(fullName)

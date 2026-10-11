@@ -6,6 +6,8 @@ import type { Workspace } from "@opencode/core/workspace"
 import { Context, Effect, Layer } from "effect"
 import type { Config, Scope } from "effect"
 import { FetchHttpClient, HttpClient } from "effect/http"
+import type { SessionNotFoundError } from "@opencode/protocol/errors"
+import { missingSession } from "@opencode/server/handlers/session-error"
 import { EmbeddedHost } from "../internal/host"
 import type { SdkInstances } from "../internal/instances"
 
@@ -19,7 +21,9 @@ export type InstanceConfiguration = SdkInstances.Configuration
 export type Interface = Omit<OpenCodeClient, "plugin" | "workspace"> & {
   readonly sessions: Omit<OpenCodeClient["session"], "create" | "get" | "move"> & {
     readonly create: Session.Interface["create"]
-    readonly get: (input: { readonly sessionID: Session.ID }) => ReturnType<Session.Interface["get"]>
+    readonly get: (input: {
+      readonly sessionID: Session.ID
+    }) => Effect.Effect<Effect.Success<ReturnType<Session.Interface["get"]>>, SessionNotFoundError>
     readonly move: Session.Interface["move"]
   }
   readonly events: OpenCodeClient["event"]
@@ -54,7 +58,9 @@ export const create: <R = never>(
     sessions: {
       ...client.session,
       create: host.sessions.create,
-      get: (input: { readonly sessionID: Session.ID }) => host.sessions.get(input.sessionID),
+      // Core reports Session.NotFoundError; map it to the HTTP contract every other session method exposes.
+      get: (input: { readonly sessionID: Session.ID }) =>
+        host.sessions.get(input.sessionID).pipe(Effect.catchTag("Session.NotFoundError", missingSession)),
       move: host.sessions.move,
     },
     events: client.event,

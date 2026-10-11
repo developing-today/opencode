@@ -13,6 +13,8 @@ export const ServerOptions = Schema.Struct({
   ),
   hostname: Schema.optional(Schema.String),
   port: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(65_535))),
+  // A listening socket a supervisor passed in (systemd socket activation), served instead of binding hostname:port.
+  inheritedListenFd: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   password: Schema.optional(Schema.String),
   cors: Schema.optional(Schema.Array(Schema.String)),
   simulation: Schema.optional(Schema.Boolean),

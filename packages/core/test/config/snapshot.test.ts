@@ -43,7 +43,7 @@ describe("ConfigSnapshotPlugin.Plugin", () => {
             expect(yield* snapshot.capture()).toBeUndefined()
 
             yield* config.setEntries([new Document({ type: "document", info: new Info({ snapshots: true }) })])
-            yield* bus.publish(Event.Updated, {})
+            yield* bus.publish(Event.Updated, { sections: ["*"] })
             for (let attempt = 0; attempt < 200; attempt++) {
               if ((yield* snapshot.capture()) !== undefined) return
               yield* Effect.sleep("10 millis")

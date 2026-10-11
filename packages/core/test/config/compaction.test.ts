@@ -115,7 +115,7 @@ describe("ConfigCompactionPlugin.Plugin", () => {
           info: new Info({ compaction: new ConfigCompaction.Info({ buffer: 10_000 }) }),
         }),
       ])
-      yield* bus.publish(Event.Updated, {})
+      yield* bus.publish(Event.Updated, { sections: ["*"] })
       yield* Effect.gen(function* () {
         for (let attempt = 0; attempt < 200; attempt++) {
           if (yield* due(nearInput)) return
@@ -131,7 +131,7 @@ describe("ConfigCompactionPlugin.Plugin", () => {
           info: new Info({ compaction: new ConfigCompaction.Info({ auto: true, buffer: 20_000 }) }),
         }),
       ])
-      yield* bus.publish(Event.Updated, {})
+      yield* bus.publish(Event.Updated, { sections: ["*"] })
       for (let attempt = 0; attempt < 200; attempt++) {
         if (yield* due(bufferedInput)) return
         yield* Effect.sleep("10 millis")

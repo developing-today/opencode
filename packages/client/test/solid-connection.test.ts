@@ -163,7 +163,18 @@ test.each([
   }
 })
 
-test("a reconnect does not ask the volatile event stream to replay", async () => {
+test("a first connection sends no Last-Event-ID", async () => {
+  const fake = server()
+  const ctx = setup(fake, 10_000)
+  try {
+    await until(() => fake.streams.length === 1)
+    expect(fake.streams[0].headers.get("last-event-id")).toBeNull()
+  } finally {
+    ctx.dispose()
+  }
+})
+
+test("a reconnect resumes after the last delivered event id", async () => {
   const fake = server()
   const ctx = setup(fake, 10_000)
   try {
@@ -174,7 +185,25 @@ test("a reconnect does not ask the volatile event stream to replay", async () =>
 
     fake.streams[0].error(new Error("retry with event id"))
     await until(() => fake.streams.length === 2)
-    expect(fake.streams[1].headers.get("last-event-id")).toBeNull()
+    expect(fake.streams[1].headers.get("last-event-id")).toBe("timeline-event-7")
+  } finally {
+    ctx.dispose()
+  }
+})
+
+test("a malformed frame does not advance the cursor past the last delivered event", async () => {
+  const fake = server()
+  const ctx = setup(fake, 10_000)
+  try {
+    await until(() => fake.streams.length === 1)
+    fake.streams[0].write(`data: ${JSON.stringify(connected)}\n\n`)
+    fake.streams[0].write(`id: timeline-event-7\ndata: ${JSON.stringify({ ...connected, id: "evt_2" })}\n\n`)
+    await until(() => ctx.events.length === 2)
+
+    // The id is reported only after its data parses, so this frame's id must never become the cursor.
+    fake.streams[0].write(`id: timeline-event-8\ndata: {not json\n\n`)
+    await until(() => fake.streams.length === 2)
+    expect(fake.streams[1].headers.get("last-event-id")).toBe("timeline-event-7")
   } finally {
     ctx.dispose()
   }

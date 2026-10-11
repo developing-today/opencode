@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util"
 import { applyEdits, modify, type ParseError, parse } from "jsonc-parser"
 import { Context, Effect, FiberMap, Layer, Option, PubSub, Ref, Schema, Semaphore, Stream } from "effect"
 import { Directory, Document, Info, type Patch, type Entry, Event } from "@opencode/schema/config"
+import { ephemeral } from "@opencode/schema/event"
 import { Credential } from "./credential.js"
 import { Bus } from "./bus.js"
 import { Watcher } from "./filesystem/watcher.js"
@@ -24,9 +25,47 @@ export function latest<K extends keyof Info>(entries: readonly Entry[], key: K):
     ?.info[key]
 }
 
+/** Process-internal request from the server's SIGHUP handler; not part of the public event manifest. */
+export const ReloadRequested = ephemeral({ type: "config.reload.requested", schema: {} })
+
+/** Section a reload carries when a change cannot be attributed to one top-level key. */
+export const UNATTRIBUTED_SECTION = "*"
+
+/** Whether a `config.updated` event touches any of the given top-level keys. */
+export function reloadsSections(event: { readonly type: string; readonly data: unknown }, keys: readonly string[]) {
+  if (event.type !== "config.updated" || !Schema.is(UpdatedData)(event.data)) return false
+  return event.data.sections.some((section) => section === UNATTRIBUTED_SECTION || keys.includes(section))
+}
+
+const UpdatedData = Schema.Struct({ sections: Schema.Array(Schema.String) })
+
+function directories(entries: readonly Entry[]) {
+  return entries.flatMap((entry) => (entry.type === "directory" ? [entry.path] : []))
+}
+
+/** Top-level keys whose values, in document order, differ between two entry lists. */
+export function changedSections(previous: readonly Entry[], next: readonly Entry[]) {
+  const before = documents(previous)
+  const after = documents(next)
+  const keys = new Set([...before, ...after].flatMap((document) => Object.keys(document.info) as Array<keyof Info>))
+  return Array.from(keys).filter(
+    (key) =>
+      !isDeepStrictEqual(
+        before.map((document) => document.info[key]),
+        after.map((document) => document.info[key]),
+      ),
+  )
+}
+
+function documents(entries: readonly Entry[]) {
+  return entries.filter((entry): entry is Document => entry.type === "document")
+}
+
 export interface Interface {
   /** Returns location config documents and discovery sources from lowest to highest priority. */
   readonly entries: () => Effect.Effect<Entry[]>
+  /** Requests a re-read of config sources; an update is published only when the resolved entries changed. */
+  readonly reload: () => Effect.Effect<void>
   /** Compatibility roots consumed by internal compatibility plugins. */
   readonly compatibility?: () => Effect.Effect<{
     readonly claude: readonly AbsolutePath[]
@@ -77,6 +116,7 @@ export const testLayer = (
       const updates = yield* PubSub.unbounded<Watcher.Update>()
       const service = Test.of({
         entries: () => Ref.get(entries),
+        reload: () => Effect.void,
         compatibility: () => Effect.succeed(compatibility),
         changes: () => Stream.fromPubSub(updates),
         setEntries: (next) => Ref.set(entries, next),
@@ -271,9 +311,15 @@ export const layer = (options?: Options) =>
             !isDeepStrictEqual(sources.claude, discovered.claude) ||
             !isDeepStrictEqual(sources.agents, discovered.agents)
           if (isDeepStrictEqual(configs, next) && !compatibilityChanged) return
+          const sections = changedSections(configs, next)
+          const unattributed =
+            compatibilityChanged || !isDeepStrictEqual(directories(configs), directories(next))
           sources = discovered
           configs = next
-          yield* bus.publish(Event.Updated, {})
+          yield* Effect.logInfo("configuration reloaded", { sections, unattributed })
+          yield* bus.publish(Event.Updated, {
+            sections: unattributed ? [...sections, UNATTRIBUTED_SECTION] : sections,
+          })
         },
         (effect) => reloadLock.withPermit(effect),
       )
@@ -302,6 +348,12 @@ export const layer = (options?: Options) =>
       yield* bus.subscribe(WellKnown.Event.Updated).pipe(
         Stream.runForEach(() =>
           reload().pipe(Effect.catchCause((cause) => Effect.logError("failed to reload wellknown sources", { cause }))),
+        ),
+        Effect.forkScoped({ startImmediately: true }),
+      )
+      yield* bus.subscribe(ReloadRequested).pipe(
+        Stream.runForEach(() =>
+          reload().pipe(Effect.catchCause((cause) => Effect.logError("failed to reload config", { cause }))),
         ),
         Effect.forkScoped({ startImmediately: true }),
       )
@@ -353,6 +405,7 @@ export const layer = (options?: Options) =>
         entries: Effect.fnUntraced(function* () {
           return configs
         }),
+        reload: () => requestReload,
         compatibility: () =>
           Effect.all({
             claude: Effect.filter(sources.claude, fs.isDir),

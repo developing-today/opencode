@@ -366,6 +366,7 @@ describe("LocationWatcher subscriptions", () => {
       Config.Service,
       Config.Service.of({
         entries: () => Effect.sync(() => entries.current),
+        reload: () => Effect.void,
         changes: () => Stream.never,
       }),
     )
@@ -392,7 +393,7 @@ describe("LocationWatcher subscriptions", () => {
             expect(counts.released).toBe(1)
 
             entries.current = []
-            yield* bus.publish(Event.Updated, {})
+            yield* bus.publish(Event.Updated, { sections: ["*"] })
             yield* Effect.sync(() => subscriptions.length).pipe(
               Effect.filterOrFail((count) => count === 2),
               Effect.retry(Schedule.spaced("10 millis")),

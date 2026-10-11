@@ -4,6 +4,7 @@ import { Bus } from "@opencode/core/bus"
 import { Credential } from "@opencode/schema/credential"
 import { Event } from "@opencode/schema/event"
 import { IntegrationID } from "@opencode/schema/integration-id"
+import type { OpenCodeEvent } from "@opencode/protocol/groups/event"
 import { Deferred, Effect, Exit, Fiber, Option, Schema, Stream } from "effect"
 import { it } from "../../core/test/lib/effect"
 import { EventFeed } from "../src/event-feed"
@@ -38,10 +39,36 @@ function makeSource() {
   }
 }
 
+// Encodes each frame as its wire id and records the ids in publish order, so tests can name events.
+function ids() {
+  const sent: string[] = []
+  return {
+    sent,
+    encode: (_event: OpenCodeEvent, id: string) => {
+      sent.push(id)
+      return id
+    },
+  }
+}
+
+function parse(text: string) {
+  const lines = text.split("\n")
+  const data = lines.find((line) => line.startsWith("data: "))
+  if (data === undefined) throw new Error(`no data line in ${JSON.stringify(text)}`)
+  const id = lines[0]?.startsWith("id: ") ? lines[0].slice(4) : undefined
+  const { type } = JSON.parse(data.slice(6)) as { readonly type: string }
+  return { id, type }
+}
+
 describe("EventFeed", () => {
   test("preserves the public SSE frame encoding", () => {
     const payload = event("wire")
     expect(EventFeed.frame(payload)).toBe(`data: ${JSON.stringify(payload)}\n\n`)
+  })
+
+  test("writes the wire id before the data line", () => {
+    const payload = event("wire")
+    expect(EventFeed.frame(payload, "instance:3")).toBe(`id: instance:3\ndata: ${JSON.stringify(payload)}\n\n`)
   })
 
   it.effect("encodes once and delivers the same frame to every subscriber", () =>
@@ -54,8 +81,8 @@ describe("EventFeed", () => {
           return event.type
         },
       })
-      const first = yield* feed.subscribe
-      const second = yield* feed.subscribe
+      const first = yield* feed.subscribe()
+      const second = yield* feed.subscribe()
       const left = yield* first.pipe(Stream.take(1), Stream.runCollect, Effect.forkScoped)
       const right = yield* second.pipe(Stream.take(1), Stream.runCollect, Effect.forkScoped)
 
@@ -76,8 +103,8 @@ describe("EventFeed", () => {
         capacity: 1,
         encode: (event) => event.id,
       })
-      const slow = yield* feed.subscribe
-      const fast = yield* feed.subscribe
+      const slow = yield* feed.subscribe()
+      const fast = yield* feed.subscribe()
       const first = yield* Deferred.make<void>()
       const second = yield* Deferred.make<void>()
       const received = new Array<string>()
@@ -117,7 +144,7 @@ describe("EventFeed", () => {
     Effect.gen(function* () {
       const source = makeSource()
       const feed = yield* EventFeed.make(source.observe, { encode: (event) => event.type })
-      const stream = yield* feed.subscribe
+      const stream = yield* feed.subscribe()
       const received = yield* stream.pipe(Stream.take(1), Stream.runCollect, Effect.forkScoped)
 
       yield* source.publish({
@@ -138,7 +165,7 @@ describe("EventFeed", () => {
     Effect.gen(function* () {
       const source = makeSource()
       const feed = yield* EventFeed.make(source.observe, { capacity: 1, encode: (event) => event.type })
-      const stream = yield* feed.subscribe
+      const stream = yield* feed.subscribe()
 
       yield* source.publish(internal("one"))
       yield* source.publish(internal("two"))
@@ -157,13 +184,13 @@ describe("EventFeed", () => {
           return event.id
         },
       })
-      const current = yield* feed.subscribe
+      const current = yield* feed.subscribe()
       const failed = yield* current.pipe(Stream.runCollect, Effect.exit, Effect.forkScoped)
 
       yield* source.publish(event("bad"))
       const exit = yield* Fiber.join(failed)
 
-      const next = yield* feed.subscribe
+      const next = yield* feed.subscribe()
       const received = yield* next.pipe(Stream.take(1), Stream.runCollect, Effect.forkScoped)
       yield* source.publish(event("good"))
 
@@ -171,6 +198,143 @@ describe("EventFeed", () => {
       if (Exit.isSuccess(exit)) return
       expect(Option.getOrUndefined(Exit.findErrorOption(exit))).toBeInstanceOf(EventFeed.EncodingError)
       expect(Array.from(yield* Fiber.join(received))).toEqual(["evt_good"])
+    }),
+  )
+
+  it.effect("replays the frames after a buffered id, then goes live", () =>
+    Effect.gen(function* () {
+      const source = makeSource()
+      const { sent, encode } = ids()
+      const feed = yield* EventFeed.make(source.observe, { encode })
+      // Published with no subscriber connected: the ring must still hold them.
+      yield* source.publish(event("one"))
+      yield* source.publish(event("two"))
+      yield* source.publish(event("three"))
+
+      const stream = yield* feed.subscribe(sent[0])
+      yield* source.publish(event("four"))
+
+      expect(Array.from(yield* stream.pipe(Stream.take(3), Stream.runCollect))).toEqual([sent[1], sent[2], sent[3]])
+    }),
+  )
+
+  it.effect("answers the newest id with live events only", () =>
+    Effect.gen(function* () {
+      const source = makeSource()
+      const { sent, encode } = ids()
+      const feed = yield* EventFeed.make(source.observe, { encode })
+      yield* source.publish(event("one"))
+
+      const stream = yield* feed.subscribe(sent[0])
+      yield* source.publish(event("two"))
+
+      expect(Array.from(yield* stream.pipe(Stream.take(1), Stream.runCollect))).toEqual([sent[1]])
+    }),
+  )
+
+  it.effect("keeps the frame just before the window replayable, since nothing after it is missing", () =>
+    Effect.gen(function* () {
+      const source = makeSource()
+      const { sent, encode } = ids()
+      const feed = yield* EventFeed.make(source.observe, { encode, replayFrames: 2 })
+      for (const name of ["one", "two", "three", "four"]) yield* source.publish(event(name))
+
+      // The window is [three, four]; `two` is just before it.
+      const stream = yield* feed.subscribe(sent[1])
+      expect(Array.from(yield* stream.pipe(Stream.take(2), Stream.runCollect))).toEqual([sent[2], sent[3]])
+    }),
+  )
+
+  it.effect("sends one resync frame with the head id when the cursor has aged out, then goes live", () =>
+    Effect.gen(function* () {
+      const source = makeSource()
+      const { sent, encode } = ids()
+      const feed = yield* EventFeed.make(source.observe, { encode, replayFrames: 2 })
+      for (const name of ["one", "two", "three", "four"]) yield* source.publish(event(name))
+
+      const stream = yield* feed.subscribe(sent[0])
+      yield* source.publish(event("five"))
+      const [resync, live] = Array.from(yield* stream.pipe(Stream.take(2), Stream.runCollect))
+
+      expect(parse(resync!)).toEqual({ id: sent[3], type: "server.resync" })
+      expect(live).toBe(sent[4])
+    }),
+  )
+
+  it.effect("resyncs on a malformed or future id, even from this process", () =>
+    Effect.gen(function* () {
+      const source = makeSource()
+      const { sent, encode } = ids()
+      const feed = yield* EventFeed.make(source.observe, { encode })
+      yield* source.publish(event("one"))
+      const future = sent[0]!.replace(/:\d+$/, ":999")
+
+      for (const cursor of ["not-a-cursor", future, `${sent[0]}x`]) {
+        const stream = yield* feed.subscribe(cursor)
+        expect(parse(Array.from(yield* stream.pipe(Stream.take(1), Stream.runCollect))[0]!).type).toBe("server.resync")
+      }
+    }),
+  )
+
+  it.effect("resyncs a cursor from a previous process instance", () =>
+    Effect.gen(function* () {
+      const before = makeSource()
+      const previous = ids()
+      yield* EventFeed.make(before.observe, { encode: previous.encode })
+      yield* before.publish(event("one"))
+
+      // A restart builds a new feed; its instance id differs, so the old cursor is foreign.
+      const restarted = makeSource()
+      const current = ids()
+      const feed = yield* EventFeed.make(restarted.observe, { encode: current.encode })
+      const stream = yield* feed.subscribe(previous.sent[0])
+      const [resync] = Array.from(yield* stream.pipe(Stream.take(1), Stream.runCollect))
+
+      const parsed = parse(resync!)
+      expect(parsed.type).toBe("server.resync")
+      // The new instance has produced nothing, so its head is sequence zero.
+      expect(parsed.id?.endsWith(":0")).toBeTrue()
+      expect(parsed.id?.split(":")[0]).not.toBe(previous.sent[0]?.split(":")[0])
+    }),
+  )
+
+  it.effect("keeps no frames when the ring is zero, so only the head cursor is accepted", () =>
+    Effect.gen(function* () {
+      const source = makeSource()
+      const { sent, encode } = ids()
+      const feed = yield* EventFeed.make(source.observe, { encode, replayFrames: 0 })
+      yield* source.publish(event("one"))
+      yield* source.publish(event("two"))
+
+      const head = yield* feed.subscribe(sent[1])
+      yield* source.publish(event("three"))
+      expect(Array.from(yield* head.pipe(Stream.take(1), Stream.runCollect))).toEqual([sent[2]])
+
+      const behind = yield* feed.subscribe(sent[0])
+      expect(parse(Array.from(yield* behind.pipe(Stream.take(1), Stream.runCollect))[0]!).type).toBe("server.resync")
+    }),
+  )
+
+  it.effect("drops the whole window when one frame exceeds the byte bound", () =>
+    Effect.gen(function* () {
+      const source = makeSource()
+      const { sent, encode } = ids()
+      const big = Event.ID.make("evt_big")
+      const feed = yield* EventFeed.make(source.observe, {
+        replayBytes: 50,
+        encode: (event, id) => (event.id === big ? `${encode(event, id)}${"x".repeat(60)}` : encode(event, id)),
+      })
+      yield* source.publish(event("one"))
+      yield* source.publish(event("big"))
+      yield* source.publish(event("three"))
+
+      // Replaying from `one` would skip `big`, so the window must not offer it.
+      const behind = yield* feed.subscribe(sent[0])
+      expect(parse(Array.from(yield* behind.pipe(Stream.take(1), Stream.runCollect))[0]!).type).toBe("server.resync")
+
+      // The frame before `three` is the oversized one, which is just outside the window, so it still replays.
+      const after = yield* feed.subscribe(sent[1])
+      expect(Array.from(yield* after.pipe(Stream.take(1), Stream.runCollect))).toEqual([sent[2]])
     }),
   )
 })
