@@ -539,6 +539,9 @@ ConvertTo-Json -InputObject @($results) -Depth 10 -Compress
 `
 
 // Run with SHELL_SCAN_PWSH=/path/to/pwsh bun run test test/shell-scan/powershell-runtime.test.ts.
+// The oracle parses and compiles every fixture in one pwsh process: about 30-45 s of CPU on an idle machine, so the
+// kill deadline is a hang guard with headroom over that, not a budget. A 45 s deadline failed on a loaded machine.
+const oracleDeadline = 180_000
 test.skipIf(!pwsh)(
   "successful PowerShell scans cover real parser boundaries and executed probe calls",
   async () => {
@@ -546,7 +549,7 @@ test.skipIf(!pwsh)(
       stdin: new Blob([JSON.stringify(fixtures)]),
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 45_000,
+      timeout: oracleDeadline,
     })
     const [output, error, code] = await Promise.all([
       new Response(process.stdout).text(),
@@ -600,5 +603,5 @@ test.skipIf(!pwsh)(
     expect(executed).toBeGreaterThan(100)
     expect(failures).toEqual([])
   },
-  60_000,
+  oracleDeadline + 30_000,
 )
