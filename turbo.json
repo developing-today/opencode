@@ -59,6 +59,13 @@
     "@opencode/httpapi-codegen#test": {
       "outputs": []
     },
+    "@opencode/protocol#test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "@opencode/schema#test": {
+      "outputs": []
+    },
     "@opencode/server#test": {
       "dependsOn": ["^build"],
       "outputs": []
