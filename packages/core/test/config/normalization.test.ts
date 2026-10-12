@@ -3,6 +3,7 @@ import { Arbitrary, Duration, Effect, Schema } from "effect"
 import { ConfigNormalize } from "@opencode/core/config/normalize"
 import { ModelRouteTuning } from "@opencode/core/model-route-tuning"
 import { Info } from "@opencode/schema/config"
+import { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
 
 const options = { errors: "all", onExcessProperty: "ignore" } as const
 
@@ -45,6 +46,14 @@ function withoutEmptyCompatibilityContainers(input: Record<string, unknown>) {
       delete compaction.keep
     if (!originallyEmpty && !Object.keys(compaction).length) delete result.compaction
   }
+  return result
+}
+
+/** Normalization drops each note line that does not match NOTE_LINE, so the expected config drops it too. */
+function withoutMalformedNotes(input: Record<string, unknown>) {
+  const result = structuredClone(input)
+  const tuning = (result.experimental as { model_route_tuning?: { notes?: string[] } } | undefined)?.model_route_tuning
+  if (tuning?.notes) tuning.notes = tuning.notes.filter((line) => ConfigModelRoutes.NOTE_LINE.test(line))
   return result
 }
 
@@ -116,7 +125,7 @@ describe("ConfigNormalize", () => {
           const source = JSON.parse(JSON.stringify(Schema.encodeSync(Info)(info)))
           const result = normalized(source)
           expect(Schema.decodeUnknownSync(Info)(result.encoded)).toEqual(
-            Schema.decodeUnknownSync(Info)(withoutEmptyCompatibilityContainers(source)),
+            Schema.decodeUnknownSync(Info)(withoutMalformedNotes(withoutEmptyCompatibilityContainers(source))),
           )
           return true
         },
