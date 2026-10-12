@@ -18,14 +18,15 @@ describe("client retry", () => {
   })
 
   test("retries a real network failure wrapped as the cause of a transport error", async () => {
+    // Drop the connection after the request arrives. Dropping it on accept can surface as a refused
+    // connection, which makes the attempt count depend on timing.
     const server = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
       socket: {
-        open(socket) {
+        data(socket) {
           socket.terminate()
         },
-        data() {},
       },
     })
     const failures: unknown[] = []
