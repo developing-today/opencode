@@ -10,8 +10,8 @@ export type FixtureMethods = {
   readonly spin: Method<number, ArrayBuffer>
   /** Runs until its caller aborts it. */
   readonly hold: Method<undefined, undefined>
-  /** A bitmap after `input` milliseconds. */
-  readonly paint: Method<number, ImageBitmap>
+  /** Runs until its caller aborts it, then finishes with a bitmap that no one takes. */
+  readonly paint: Method<undefined, ImageBitmap>
   readonly log: Method<
     undefined,
     { readonly ran: readonly string[]; readonly aborted: readonly string[]; readonly closed: number }
@@ -33,6 +33,10 @@ Object.assign(globalThis, { ImageBitmap: StandInBitmap })
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+// The worker answers one call at a time, so `log` cannot be read while a call runs. The handlers that a test waits on
+// announce their start instead.
+const started = (method: string) => self.postMessage({ started: method })
+
 serveWorker<FixtureMethods>({
   echo: (input) => {
     log.ran.push(`echo:${input}`)
@@ -47,6 +51,7 @@ serveWorker<FixtureMethods>({
   },
   spin: (input) => {
     log.ran.push("spin")
+    started("spin")
 
     const until = performance.now() + input
 
@@ -60,6 +65,7 @@ serveWorker<FixtureMethods>({
   },
   hold: (_, signal) => {
     log.ran.push("hold")
+    started("hold")
 
     return new Promise((resolve) =>
       signal.addEventListener("abort", () => {
@@ -68,9 +74,11 @@ serveWorker<FixtureMethods>({
       }),
     )
   },
-  paint: async (input) => {
+  paint: async (_, signal) => {
     log.ran.push("paint")
-    await sleep(input)
+    started("paint")
+
+    await new Promise((resolve) => signal.addEventListener("abort", () => resolve(undefined)))
 
     const bitmap = new ImageBitmap()
 
