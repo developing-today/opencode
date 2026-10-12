@@ -5,7 +5,8 @@ import { serveWorker, Transfer, type Method } from "./worker-rpc"
 /** The methods the test calls, each recording that it ran. */
 export type FixtureMethods = {
   readonly echo: Method<string, string>
-  readonly sleep: Method<number, undefined>
+  /** Runs until the test releases it, so the calls it queues wait behind it. */
+  readonly sleep: Method<undefined, undefined>
   /** Holds the worker for `input` milliseconds without yielding, so a cancel can only arrive after the reply left. */
   readonly spin: Method<number, ArrayBuffer>
   /** Runs until its caller aborts it. */
@@ -31,11 +32,20 @@ class StandInBitmap {
 
 Object.assign(globalThis, { ImageBitmap: StandInBitmap })
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
 // The worker answers one call at a time, so `log` cannot be read while a call runs. The handlers that a test waits on
 // announce their start instead.
 const started = (method: string) => self.postMessage({ started: method })
+
+// The test releases a held `sleep` with a message on the same port as its calls, so the release arrives after them.
+// This listener is registered before serveWorker's and stops the message there: serveWorker would read it as a request.
+const released = new Promise<void>((resolve) =>
+  self.addEventListener("message", (event) => {
+    if (!("release" in event.data)) return
+
+    event.stopImmediatePropagation()
+    resolve()
+  }),
+)
 
 serveWorker<FixtureMethods>({
   echo: (input) => {
@@ -43,9 +53,11 @@ serveWorker<FixtureMethods>({
 
     return input
   },
-  sleep: async (input) => {
+  sleep: async () => {
     log.ran.push("sleep")
-    await sleep(input)
+    started("sleep")
+
+    await released
 
     return undefined
   },

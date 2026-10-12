@@ -8,25 +8,31 @@ afterEach(() => clients.splice(0).forEach((client) => client.close()))
 
 describe("worker rpc", () => {
   test("a newer call with the same key replaces one still waiting to run", async () => {
-    const { client } = start()
-    const busy = client.call("sleep", 50)
+    const { client, started, release } = start()
+    const busy = client.call("sleep", undefined)
+    await started("sleep")
     const first = client.call("echo", "first", { key: "echo" })
     const second = client.call("echo", "second", { key: "echo" })
 
-    await expect(first).rejects.toBeInstanceOf(SupersededError)
+    // Capture the outcome: `expect(first).rejects` never settled on a worker-settled promise in Bun 1.4.2.
+    const superseded = await first.catch((error) => error)
+    release()
+    expect(superseded).toBeInstanceOf(SupersededError)
     expect(await second).toBe("second")
     await busy
     expect((await client.call("log", undefined)).ran).toEqual(["sleep", "echo:second"])
   })
 
   test("an aborted call rejects at once, and never runs while it waits", async () => {
-    const { client } = start()
+    const { client, started, release } = start()
     const controller = new AbortController()
-    const busy = client.call("sleep", 50)
+    const busy = client.call("sleep", undefined)
+    await started("sleep")
     const call = client.call("echo", "aborted", { signal: controller.signal })
 
     controller.abort()
     await expect(call).rejects.toBeInstanceOf(WorkerClosedError)
+    release()
     await busy
     expect(await client.call("echo", "next")).toBe("next")
     expect((await client.call("log", undefined)).ran).toEqual(["sleep", "echo:next"])
@@ -70,7 +76,7 @@ describe("worker rpc", () => {
 
   test("close rejects the pending calls and every later one", async () => {
     const { client } = start()
-    const pending = client.call("sleep", 1000)
+    const pending = client.call("sleep", undefined)
 
     client.close()
     await expect(pending).rejects.toBeInstanceOf(WorkerClosedError)
@@ -84,7 +90,11 @@ function start() {
 
   clients.push(client)
 
-  return { client, started: (method: string) => whenStarted(worker, method) }
+  return {
+    client,
+    started: (method: string) => whenStarted(worker, method),
+    release: () => worker.postMessage({ release: true }),
+  }
 }
 
 /**
