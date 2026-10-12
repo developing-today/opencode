@@ -77,6 +77,108 @@ export class Health extends Schema.Class<Health>("Config.ModelRoute.Health")({
   }),
 }) {}
 
+const DayOfWeek = Schema.Union([
+  Schema.Literals([
+    "sun",
+    "sunday",
+    "mon",
+    "monday",
+    "tue",
+    "tuesday",
+    "tues",
+    "wed",
+    "wednesday",
+    "thu",
+    "thursday",
+    "thur",
+    "thurs",
+    "fri",
+    "friday",
+    "sat",
+    "saturday",
+  ]),
+  Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 })),
+]).annotate({
+  description: "A weekday as a name or 0 (Sunday) to 6 (Saturday).",
+})
+
+const DayOfMonth = Schema.Union([
+  Schema.Literal(-1),
+  Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 31 })),
+]).annotate({ description: "A day of the month, 1 to 31, or -1 for the last day of the month." })
+
+/** A recurring local-time window. Days and time bounds all have to match when set, so
+ * `daysOfMonth: [1..7]` with `daysOfWeek: ["mon"]` is the first Monday of the month. */
+export class Window extends Schema.Class<Window>("Config.ModelRoute.Window")({
+  daysOfWeek: Schema.Array(DayOfWeek).pipe(optional).annotate({
+    description: "Weekdays the window is active on. Empty or unset means every day.",
+  }),
+  daysOfMonth: Schema.Array(DayOfMonth).pipe(optional).annotate({
+    description: "Days of the month the window is active on. Empty or unset means every day.",
+  }),
+  start: Schema.String.pipe(optional).annotate({
+    description:
+      'Local start of the daily window as "HH:mm". Unset means from the start of the day. A start later than the end runs past midnight into the following morning.',
+  }),
+  end: Schema.String.pipe(optional).annotate({
+    description: 'Local end of the daily window as "HH:mm", exclusive. Unset means to the end of the day.',
+  }),
+  timezone: Schema.String.pipe(optional).annotate({
+    description: 'IANA timezone such as "America/Chicago". Unset means the host\'s local timezone.',
+  }),
+  from: PositiveInt.pipe(optional).annotate({
+    description: "Epoch milliseconds before which the window never applies.",
+  }),
+  until: PositiveInt.pipe(optional).annotate({
+    description: "Epoch milliseconds after which the window never applies.",
+  }),
+}) {}
+
+/** A time-bound weight change inside one route. `factor` scales a target's weight; `weight` replaces
+ * it. Everything is unchanged outside the window. */
+export class Schedule extends Schema.Class<Schedule>("Config.ModelRoute.Schedule")({
+  id: Schema.String.pipe(optional).annotate({ description: "Name for the schedule, shown in decisions and editors." }),
+  targets: Schema.Array(Schema.String).pipe(optional).annotate({
+    description:
+      'Target references this change covers, `*` allowed, e.g. ["deepseek/*", "openai/gpt-6-*"]. Empty or unset means every target of the route.',
+  }),
+  when: Window,
+  factor: PositiveFinite.pipe(optional).annotate({
+    description:
+      "Multiplies the target's configured weight while the window is active. 0.8 makes a weight of 2 become 1.6; 1.2 makes it 2.4. Exactly one of factor and weight is expected.",
+  }),
+  weight: PositiveFinite.pipe(optional).annotate({
+    description:
+      "Sets the target's weight outright while the window is active, instead of scaling it. Applied before any user preference for the target.",
+  }),
+  note: Schema.String.pipe(optional).annotate({ description: "Why the schedule exists, kept for review." }),
+}) {}
+
+/** A scheduled weight change that applies across routes, optionally scoped to some of them. */
+export class GlobalSchedule extends Schema.Class<GlobalSchedule>("Config.ModelRoute.GlobalSchedule")({
+  id: Schema.String.pipe(optional),
+  providers: Schema.Array(Schema.String).pipe(optional).annotate({
+    description: "Provider IDs the change covers, compared case-insensitively.",
+  }),
+  models: Schema.Array(Schema.String).pipe(optional).annotate({
+    description: 'Model ID patterns the change covers, `*` allowed, e.g. ["*flash*"].',
+  }),
+  targets: Schema.Array(Schema.String).pipe(optional).annotate({
+    description: 'Full `provider/model` patterns, `*` allowed, e.g. ["deepseek/*", "openai/gpt-6-*"].',
+  }),
+  routes: Schema.Array(Schema.String).pipe(optional).annotate({
+    description: "Route IDs the change is limited to, including nested ones. Empty or unset means every route.",
+  }),
+  when: Window,
+  factor: PositiveFinite.pipe(optional).annotate({
+    description: "Multiplies the target's configured weight while the window is active.",
+  }),
+  weight: PositiveFinite.pipe(optional).annotate({
+    description: "Sets the target's weight outright while the window is active, instead of scaling it.",
+  }),
+  note: Schema.String.pipe(optional),
+}) {}
+
 export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
   name: Schema.String.pipe(optional),
   targets: Schema.Array(Target).annotate({
@@ -109,6 +211,10 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
       description:
         'Relative ratios for the weighted selection mode, keyed by target model reference, e.g. { "openai/gpt-6-luna": 3, "github-copilot/gpt-6-luna": 1 } sends about 3/4 of new sessions to the first target. Targets without a weight count as 1. A nested route is keyed as "opencode-route/<id>" and is chosen as one unit by this route; it then picks among its own members using its own selection and weights.',
     }),
+  schedules: Schema.Array(Schedule).pipe(optional).annotate({
+    description:
+      "Time-bound weight changes for this route's targets, e.g. peak hours that make a provider lighter. Weights order every selection mode: inside an active window the targets are ranked by effective weight, and equal weights keep their configured order.",
+  }),
 }) {}
 
 /** Periodic, automatic use of the routing history. Off by default. */

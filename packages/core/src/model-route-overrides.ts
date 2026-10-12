@@ -4,9 +4,11 @@ import fs from "node:fs"
 import path from "node:path"
 import { Global } from "@opencode/util/global"
 import { ModelRouteAutonomy } from "./model-route-autonomy.js"
+import { ModelRouteSchedule } from "./model-route-schedule.js"
 
 /** `avoid` takes a target out of rotation, `prefer` favours it, `allow-over-budget` lets it run past
- * its soft budget. Each one lasts until `until`, and applies only to the targets it names. */
+ * its soft budget. Each one lasts until `until` (or forever when a recurring `schedule` is set),
+ * and applies only to the targets it names. */
 export type Action = "avoid" | "prefer" | "allow-over-budget"
 
 export interface Override {
@@ -23,7 +25,14 @@ export interface Override {
   readonly fixed: boolean
   /** For `prefer`: the weight multiplier. Above 1 favours the target, below 1 makes it lighter. */
   readonly factor?: number
-  readonly until: number
+  /** For `prefer`: sets the target's weight outright instead of scaling it. Takes precedence over
+   * `factor` when both are present. */
+  readonly weight?: number
+  /** Recurring local-time window the override is confined to; unset means it applies whenever `until` allows. */
+  readonly schedule?: ModelRouteSchedule.Window
+  /** When the override stops applying, epoch milliseconds. Unset with a `schedule` means it recurs
+   * indefinitely; unset without one the entry is dropped. */
+  readonly until?: number
   readonly text: string
   readonly source: "user" | "interpreter"
   readonly createdAt: number
@@ -31,129 +40,109 @@ export interface Override {
 
 const ACTIONS: readonly Action[] = ["avoid", "prefer", "allow-over-budget"]
 
-const field = (value: unknown, name: string) =>
-  value && typeof value === "object" ? (value as Record<string, unknown>)[name] : undefined
-
-const strings = (value: unknown) =>
-  Array.isArray(value) && value.every((item) => typeof item === "string") ? (value as string[]) : []
-
-/** Keeps only well-formed entries. An entry must name at least one provider or model pattern, so a
- * malformed file can never silently apply to everything. */
-export const parse = (value: unknown): Override[] => {
-  const list = field(value, "overrides")
-  if (!Array.isArray(list)) return []
-  return list.flatMap((item): Override[] => {
-    const action = field(item, "action")
-    const id = field(item, "id")
-    const until = field(item, "until")
-    if (typeof id !== "string" || !ACTIONS.includes(action as Action)) return []
-    if (typeof until !== "number" || !Number.isFinite(until)) return []
-    const providers = strings(field(item, "providers"))
-    const models = strings(field(item, "models"))
-    if (providers.length === 0 && models.length === 0) return []
-    const routes = strings(field(item, "routes"))
-    const fixed = field(item, "fixed") !== false
-    const factorValue = field(item, "factor")
-    const factor =
-      typeof factorValue === "number" && Number.isFinite(factorValue) && factorValue > 0 ? factorValue : undefined
-    const text = field(item, "text")
-    const source = field(item, "source")
-    const createdAt = field(item, "createdAt")
-    return [
-      {
-        id,
-        action: action as Action,
-        providers,
-        models,
-        routes,
-        fixed,
-        ...(factor !== undefined ? { factor } : {}),
-        until,
-        text: typeof text === "string" ? text : "",
-        source: source === "interpreter" ? "interpreter" : "user",
-        createdAt: typeof createdAt === "number" ? createdAt : 0,
-      },
-    ]
-  })
-}
-
-const escape = (text: string) => text.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
-
-const glob = (pattern: string) => new RegExp(`^${pattern.split("*").map(escape).join(".*")}$`, "i")
-
-/** The route a request is being chosen for, and whether that route is set to `fixed`. Without a scope
- * an override applies to every route, as it did before routes had levels. */
-export interface Scope {
-  readonly routeID?: string
-  readonly fixed?: boolean
-  /** The route's autonomy level; learned adjustments apply only where it reaches their floor. */
-  readonly autonomy?: ModelRouteAutonomy.Level
-}
-
-/** Whether an override is in force for a target at `now`, on a given route. */
-export const applies = (
-  item: Override,
-  target: { readonly providerID: string; readonly id: string },
-  now: number,
-  scope: Scope = {},
-) =>
-  now < item.until &&
-  (item.providers.length === 0 || item.providers.some((id) => id.toLowerCase() === target.providerID.toLowerCase())) &&
-  (item.models.length === 0 || item.models.some((pattern) => glob(pattern).test(target.id))) &&
-  (item.routes.length === 0 || scope.routeID === undefined || item.routes.includes(scope.routeID)) &&
-  (item.fixed || scope.fixed !== true)
-
 let location: string | undefined
-let cache: { file: string; mtime: number; list: readonly Override[] } | undefined
+let cached: readonly Override[] | undefined
 
-/** Where overrides are kept: a separate file in OpenCode's data directory, so the user's config keys
- * are never rewritten and OpenChamber can read the same file. */
+/** Test hook: point the override file somewhere else; no argument restores the default. */
+export const setFilePathForTest = (next?: string) => {
+  location = next
+  cached = undefined
+}
+
 export const filePath = () => location ?? path.join(Global.Path.data, "route-overrides.json")
 
-/** Test seam: point the store at another file. */
-export const setFilePath = (file: string | undefined) => {
-  location = file
-  cache = undefined
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string") ? value : []
+
+const positive = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined
+
+export const parse = (item: unknown): Override | undefined => {
+  if (!item || typeof item !== "object") return
+  const record = item as Record<string, unknown>
+  if (typeof record.id !== "string" || !ACTIONS.includes(record.action as Action)) return
+  const hasUntil = typeof record.until === "number" && Number.isFinite(record.until)
+  const schedule = record.schedule === undefined ? undefined : ModelRouteSchedule.parse(record.schedule)
+  if (record.schedule !== undefined && schedule === undefined) return
+  if (!hasUntil && schedule === undefined) return
+  const providers = strings(record.providers)
+  const models = strings(record.models)
+  if (providers.length === 0 && models.length === 0) return
+  const factor = positive(record.factor)
+  const weight = positive(record.weight)
+  return {
+    id: record.id,
+    action: record.action as Action,
+    providers,
+    models,
+    routes: strings(record.routes),
+    fixed: record.fixed !== false,
+    ...(factor !== undefined ? { factor } : {}),
+    ...(weight !== undefined ? { weight } : {}),
+    ...(schedule !== undefined ? { schedule } : {}),
+    ...(hasUntil ? { until: record.until as number } : {}),
+    text: typeof record.text === "string" ? record.text : "",
+    source: record.source === "interpreter" ? "interpreter" : "user",
+    createdAt: typeof record.createdAt === "number" ? record.createdAt : Date.now(),
+  }
 }
 
-/** The overrides in force, re-read only when the file changes. A missing or unreadable file is no
- * overrides, never an error that would stop routing. */
-export const current = (): readonly Override[] => {
+export const readAll = (): readonly Override[] => {
   const file = filePath()
-  let mtime: number
   try {
-    mtime = fs.statSync(file).mtimeMs
+    if (!fs.existsSync(file)) return []
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"))
+    if (!Array.isArray(parsed?.overrides)) return []
+    return parsed.overrides.flatMap((item: unknown) => {
+      const value = parse(item)
+      return value ? [value] : []
+    })
   } catch {
     return []
   }
-  if (cache && cache.file === file && cache.mtime === mtime) return cache.list
-  let list: Override[] = []
-  try {
-    list = parse(JSON.parse(fs.readFileSync(file, "utf8")))
-  } catch {
-    list = []
+}
+
+export const active = (now = Date.now()): readonly Override[] =>
+  readAll().filter((item) => item.schedule !== undefined || item.until === undefined || item.until > now)
+
+export const current = (now = Date.now()): readonly Override[] => {
+  if (cached === undefined) cached = active(now)
+  return cached
+}
+
+export const invalidate = () => {
+  cached = undefined
+}
+
+export const matchesPattern = (pattern: string, value: string) => {
+  if (pattern === "*" || pattern === "") return true
+  const regex = new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "i")
+  return regex.test(value)
+}
+
+export interface Scope {
+  readonly routeID?: string
+  readonly fixed?: boolean
+  readonly autonomy?: ModelRouteAutonomy.Level
+}
+
+export const applies = (
+  item: Override,
+  target: { readonly providerID: string; readonly id: string },
+  now = Date.now(),
+  scope: Scope = {},
+) => {
+  if (item.schedule !== undefined && !ModelRouteSchedule.active(item.schedule, now)) return false
+  if (item.until !== undefined && item.until <= now) return false
+  if (scope.fixed && !item.fixed) return false
+  if (item.routes.length > 0) {
+    if (scope.routeID === undefined) return false
+    if (!item.routes.includes(scope.routeID)) return false
   }
-  cache = { file, mtime, list }
-  return list
+  const providerMatches =
+    item.providers.length === 0 ||
+    item.providers.some((provider) => provider.toLowerCase() === target.providerID.toLowerCase())
+  if (!providerMatches) return false
+  if (item.models.length === 0) return true
+  return item.models.some((pattern) => matchesPattern(pattern, target.id))
 }
-
-/** Replaces the stored overrides, dropping any that have already expired. */
-export const save = (overrides: readonly Override[], now = Date.now()) => {
-  const file = filePath()
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const live = overrides.filter((item) => item.until > now)
-  fs.writeFileSync(file, JSON.stringify({ version: 1, overrides: live }, null, 2))
-  cache = undefined
-  return live
-}
-
-/** Adds one override, replacing any with the same id. */
-export const add = (item: Override, now = Date.now()) =>
-  save([...current().filter((existing) => existing.id !== item.id), item], now)
-
-/** Removes one override, e.g. when the user says the interpretation was wrong. */
-export const remove = (id: string, now = Date.now()) =>
-  save(
-    current().filter((item) => item.id !== id),
-    now,
-  )

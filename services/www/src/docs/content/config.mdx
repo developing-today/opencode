@@ -281,6 +281,80 @@ warm; only failure, cooldown expiry, or a re-draw when the sticky target is
 cooling moves a session to another target, and failover still walks the
 remaining targets in order.
 
+Weights order every selection mode: at each decision the targets are ranked by
+their effective weight, and equal weights keep their configured relative order.
+With no other configuration every weight is 1, so `ordered` routes keep their
+order exactly.
+
+### Schedules: peak hours and recurring priorities
+
+A schedule shifts a target's weight by the clock. It names provider/model
+patterns, a local-time window, and either a `factor` that scales the target's
+configured weight or a `weight` that replaces it:
+
+```jsonc
+{
+  "experimental": {
+    "model_routes": {
+      "coding": {
+        "targets": ["deepseek/deepseek-chat", "anthropic/claude-opus-5"],
+        "selection": "weighted",
+        "weights": { "deepseek/deepseek-chat": 2 },
+        "schedules": [
+          {
+            "id": "deepseek-peak",
+            "targets": ["deepseek/*"],
+            "when": {
+              "daysOfWeek": ["mon", "tue", "wed", "thu", "fri"],
+              "start": "09:00",
+              "end": "17:00",
+              "timezone": "America/Chicago",
+            },
+            "factor": 0.4,
+          },
+        ],
+      },
+    },
+    "model_route_schedules": [
+      {
+        "id": "weekend-burst",
+        "providers": ["openai"],
+        "models": ["*luna*"],
+        "when": { "daysOfWeek": ["sat", "sun"] },
+        "weight": 4,
+      },
+    ],
+  },
+}
+```
+
+During peak hours the `deepseek/*` target in `coding` carries 2 x 0.4 = 0.8
+while the Claude target carries its 1, so new weighted sessions prefer Claude;
+outside the window the 2:1 split returns. A schedule on a route reaches that
+route's targets, including ones nested below it; `model_route_schedules` in
+`experimental` applies to every route unless `routes` names some, and its
+`targets`, `providers` and `models` matchers combine. Two schedules can overlap:
+every active `factor` multiplies in order, and an active `weight` replaces what
+came before it, so put the more specific rule later. A session that is already
+being answered by a target stays on it while it is healthy no matter what the
+schedule says; the schedule steers new sessions and the fallback order.
+
+`when` fields:
+
+| Field         | Meaning                                                                                                                       |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `daysOfWeek`  | Day names (`mon`, `tuesday`) or 0 (Sunday) to 6 (Saturday). Unset means every day.                                              |
+| `daysOfMonth` | 1 to 31, or -1 for the last day of the month. Unset means every day.                                                            |
+| `start`, `end` | Local `HH:mm` bounds; `end` is exclusive. Unset bounds mean from/to the edge of the day. A start later than the end runs past midnight into the following morning. |
+| `timezone`    | IANA name such as `America/Chicago`. Unset means the host's local timezone.                                                     |
+| `from`, `until` | Optional epoch-millisecond bounds for the whole schedule, e.g. a promotion that ends.                                          |
+
+When both day fields are set the date has to match both, so `daysOfMonth:
+[1..7]` with `daysOfWeek: ["mon"]` is the first Monday of the month, and an
+empty `when` means all the time. The same window shape is understood by
+`route_adjust` (the agent tool), so "weekdays 9 to 5 downweight deepseek" can be
+recorded as one adjustment instead of a config edit.
+
 Routes nest. Every route is a group with its own `selection` and `weights`: a
 parent picks a nested route as one unit (key it as `"opencode-route/<id>"` in
 `weights`), and the nested route then picks among its own members. A weighted
@@ -423,10 +497,13 @@ returns to full share by itself. Off by default.
 The `route_adjust` tool lets you tell the agent
 things like "my Anthropic promo credits expire in 3 days, favor Claude" or "skip
 glm today". Changing adjustments asks for permission like any other tool. It
-records an expiring adjustment: `weight` with a factor, or
-`skip`, matched by a case-insensitive substring of `provider/model`. Ordered
-groups try favored targets first, weighted groups scale their share, and a
-skipped target is only used when nothing else is available. Adjustments survive
+records an expiring adjustment: `weight` with a factor (or a `weight` that
+replaces the target's share outright), or `skip`, matched by a case-insensitive
+substring of `provider/model`. Ordered groups try favored targets first,
+weighted groups scale their share, and a skipped target is only used when
+nothing else is available. A sentence that names recurring hours ("weekdays 9
+to 5, downweight deepseek") becomes a `schedule` window instead, which stays in
+force until removed rather than expiring after a duration. Adjustments survive
 restarts until they expire.
 
 Every request is recorded, including background ones such as title generation and

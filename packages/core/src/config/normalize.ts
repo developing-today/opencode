@@ -475,6 +475,17 @@ function normalizeExperimental(
         )
           result.model_routes = value
       }
+      if (own(experimental, "model_route_schedules")) {
+        const value = decodeList(
+          experimental.model_route_schedules,
+          ConfigModelRoutes.GlobalSchedule,
+          ["experimental", "model_route_schedules"],
+          diagnostics,
+          decodeEncoded,
+        )
+        if (value.length || Array.isArray(experimental.model_route_schedules))
+          result.model_route_schedules = value
+      }
       native.push(
         ...decodeList(
           experimental.policies,

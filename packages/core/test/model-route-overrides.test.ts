@@ -162,3 +162,66 @@ describe("priority, lighter, and the fixed-route facet", () => {
     ModelRoute.setAdjustments([])
   })
 })
+
+describe("scheduled and absolute priorities", () => {
+  const sonnet = ModelRoute.ref({ providerID: "anthropic", model: "claude-sonnet-4" })
+  const day = 86_400_000
+  const today = { daysOfWeek: [new Date(now).getUTCDay()], timezone: "UTC" }
+
+  test("an override with a recurring window needs no end date and is kept on save", () => {
+    ModelRouteOverrides.save(
+      [
+        draft({ id: "recurring", action: "prefer", providers: ["anthropic"], factor: 0.8, schedule: today, until: undefined }),
+        draft({ id: "expired", providers: ["openai"], until: now - 1 }),
+      ],
+      now,
+    )
+    const stored = ModelRouteOverrides.current()
+    expect(stored.map((item) => item.id)).toEqual(["recurring"])
+    expect(stored[0].schedule).toEqual(today)
+    expect(stored[0].until).toBeUndefined()
+  })
+
+  test("a recurring override applies only inside its window", () => {
+    ModelRouteOverrides.add(
+      draft({ id: "peak", action: "prefer", providers: ["anthropic"], factor: 0.5, schedule: today, until: undefined }),
+      now,
+    )
+    expect(ModelRoute.weightFactor(sonnet, now)).toBeCloseTo(0.5)
+    expect(
+      ModelRouteOverrides.applies(ModelRouteOverrides.current()[0], sonnet, now + day),
+    ).toBe(false)
+  })
+
+  test("a static weight replaces the configured one, a factor scales it", () => {
+    ModelRouteOverrides.add(
+      draft({ id: "factor", action: "prefer", providers: ["anthropic"], factor: 0.8, schedule: today, until: undefined }),
+      now,
+    )
+    expect(ModelRoute.weightOf(sonnet, 2, now)).toBeCloseTo(1.6)
+    ModelRouteOverrides.remove("factor", now)
+    ModelRouteOverrides.add(
+      draft({ id: "static", action: "prefer", providers: ["anthropic"], weight: 0.25, schedule: today, until: undefined }),
+      now,
+    )
+    expect(ModelRoute.weightOf(sonnet, 2, now)).toBeCloseTo(0.25)
+  })
+
+  test("an unwindowed override still applies until it expires", () => {
+    ModelRouteOverrides.add(draft({ action: "prefer", providers: ["anthropic"], factor: 0.2 }), now)
+    expect(ModelRoute.weightFactor(sonnet, now)).toBeCloseTo(0.2)
+    expect(ModelRoute.weightFactor(sonnet, now + DAY + 1)).toBe(1)
+  })
+
+  test("malformed schedules are dropped rather than applied at the wrong time", () => {
+    expect(
+      ModelRouteOverrides.parse({
+        overrides: [
+          { id: "bad-zone", action: "prefer", providers: ["anthropic"], schedule: { timezone: "Mars/Olympus" } },
+          { id: "bad-time", action: "prefer", providers: ["anthropic"], schedule: { start: "25:00" } },
+          { id: "no-end", action: "prefer", providers: ["anthropic"] },
+        ],
+      }),
+    ).toEqual([])
+  })
+})

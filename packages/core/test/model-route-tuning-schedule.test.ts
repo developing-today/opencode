@@ -48,7 +48,7 @@ describe("scheduled tuning", () => {
       const applied = ModelRoute.activeAdjustments()
       expect(applied.map((item) => item.id)).toEqual(["auto:scheduled/m"])
       // Held for two intervals, so it bridges to the next review.
-      expect(applied[0].until - Date.now()).toBeGreaterThan(19 * 60_000 - 1_000)
+      expect((applied[0].until ?? 0) - Date.now()).toBeGreaterThan(19 * 60_000 - 1_000)
 
       settings = { enabled: false, intervalMinutes: 10 }
       ModelRoute.setAdjustments([])

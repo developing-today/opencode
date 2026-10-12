@@ -6,6 +6,7 @@ const target = ModelRoute.ref({ providerID: "openai", model: "gpt-6-luna" })
 afterEach(() => {
   ModelRoute.resetHealth()
   ModelRoute.resetSelection()
+  ModelRoute.setAdjustments([])
 })
 
 describe("ModelRoute health", () => {
@@ -540,5 +541,144 @@ describe("ModelRoute burst holds, quota demotion and escalation", () => {
     })
     ModelRoute.configure({ quota: { demoteAfter: 5 } })
     expect(ModelRoute.currentSettings().quota).toEqual({ demoteAfter: 5, windowMs: 4 * 3_600_000 })
+  })
+})
+
+describe("ModelRoute scheduled weights", () => {
+  const a = ModelRoute.ref({ providerID: "p", model: "a" })
+  const b = ModelRoute.ref({ providerID: "p", model: "b" })
+  const c = ModelRoute.ref({ providerID: "p", model: "c" })
+  const d = ModelRoute.ref({ providerID: "p", model: "d" })
+  const always = { timezone: "UTC" as const }
+  const definition = (
+    weights: number[],
+    schedules: ModelRoute.WeightRule[] = [],
+    targets = [a, b, c, d],
+    selection: "ordered" | "round-robin" | "weighted" = "ordered",
+  ) =>
+    ({
+      id: "r",
+      targets: targets.slice(0, weights.length),
+      targetVariants: [],
+      health: ModelRoute.policy(),
+      nodes: [
+        {
+          selection,
+          weights,
+          ...(schedules.length > 0 ? { schedules } : {}),
+          children: weights.map((_, index) => ({ leaf: index })),
+        },
+      ],
+    }) as unknown as ModelRoute.Definition
+  const fixed = (route: ModelRoute.Definition) => ({ ...route, autonomy: "fixed" }) as ModelRoute.Definition
+  const ready = (count: number) => new Set(Array.from({ length: count }, (_, index) => index))
+
+  test("equal weights keep the configured order; different weights rank first", () => {
+    const route = definition([1, 1, 1, 1], [
+      { window: always, match: { targets: ["p/a"] }, factor: 1.2 },
+      { window: always, match: { targets: ["p/c"] }, factor: 0.8 },
+    ])
+    // 1.2 first, then the 1s in configured order, then the 0.8s.
+    expect(ModelRoute.orderTargets(route, ready(4), undefined, false)).toEqual([0, 1, 3, 2])
+  })
+
+  test("a static weight replaces the configured weight, a factor scales it", () => {
+    const scaled = definition([2, 1], [{ window: always, match: { targets: ["p/a"] }, factor: 0.8 }], [a, b])
+    expect(ModelRoute.orderTargets(scaled, ready(2), undefined, false)).toEqual([0, 1]) // 1.6 vs 1
+    const replaced = definition([2, 1], [{ window: always, match: { targets: ["p/a"] }, weight: 0.5 }], [a, b])
+    expect(ModelRoute.orderTargets(replaced, ready(2), undefined, false)).toEqual([1, 0]) // 0.5 vs 1
+  })
+
+  test("a schedule outside its window leaves the order alone", () => {
+    const tomorrow = { daysOfWeek: [(new Date().getUTCDay() + 1) % 7], timezone: "UTC" }
+    const route = definition([1, 1], [{ window: tomorrow, match: { targets: ["p/b"] }, factor: 10 }], [a, b])
+    expect(ModelRoute.orderTargets(route, ready(2), undefined, false)).toEqual([0, 1])
+  })
+
+  test("configured weights order the remaining targets on every selection mode", () => {
+    const rr = definition([1, 2], [], [a, b], "round-robin")
+    expect(ModelRoute.orderTargets(rr, ready(2), undefined, false)).toEqual([1, 0])
+    const weighted = definition([1, 2], [], [a, b], "weighted")
+    expect(ModelRoute.orderTargets(weighted, ready(2), undefined, false)).toEqual([1, 0])
+  })
+
+  test("a session stays on the target answering it even when a schedule ranks it lower", () => {
+    ModelRoute.resetHealth()
+    const route = definition([1, 1], [{ window: always, match: { targets: ["p/b"] }, factor: 10 }], [a, b])
+    ModelRoute.moved("r", "s1", a)
+    ModelRoute.served("r", "s1", b)
+    expect(ModelRoute.orderTargets(route, ready(2), "s1", false)).toEqual([1, 0])
+    // A fresh session follows the schedule instead.
+    expect(ModelRoute.orderTargets(route, ready(2), "fresh", false)).toEqual([1, 0])
+  })
+
+  test("a global rule reaches only the routes it names", () => {
+    const base = {
+      id: "r",
+      targets: [a, b],
+      targetVariants: [],
+      health: ModelRoute.policy(),
+      nodes: [{ selection: "ordered" as const, weights: [1, 1], children: [{ leaf: 0 }, { leaf: 1 }] }],
+    }
+    const scoped: ModelRoute.WeightRule = {
+      window: always,
+      match: { targets: ["p/b"], routes: ["other"] },
+      factor: 10,
+    }
+    expect(
+      ModelRoute.orderTargets({ ...base, schedules: [scoped] } as unknown as ModelRoute.Definition, ready(2), undefined, false),
+    ).toEqual([0, 1])
+    expect(
+      ModelRoute.orderTargets(
+        { ...base, id: "other", schedules: [scoped] } as unknown as ModelRoute.Definition,
+        ready(2),
+        undefined,
+        false,
+      ),
+    ).toEqual([1, 0])
+  })
+
+  test("a schedule on a nested route applies inside it", () => {
+    const nested = {
+      id: "outer",
+      targets: [a, b, c],
+      targetVariants: [],
+      health: ModelRoute.policy(),
+      nodes: [
+        { routeID: "outer", selection: "ordered" as const, weights: [1, 1], children: [{ leaf: 0 }, { node: 1 }] },
+        {
+          routeID: "inner",
+          selection: "ordered" as const,
+          weights: [1, 1],
+          schedules: [{ window: always, match: { targets: ["p/b"] }, factor: 0.5 }],
+          children: [{ leaf: 1 }, { leaf: 2 }],
+        },
+      ],
+    } as unknown as ModelRoute.Definition
+    // Outer: leaf a (1) before the group (average 0.75); inside the group c (1) before b (0.5).
+    expect(ModelRoute.orderTargets(nested, ready(3), undefined, false)).toEqual([0, 2, 1])
+  })
+
+  test("a config schedule reorders a fixed route while a learned weight does not", () => {
+    const scheduled = fixed(definition([1, 1], [{ window: always, match: { targets: ["p/b"] }, factor: 10 }], [a, b]))
+    expect(ModelRoute.orderTargets(scheduled, ready(2), undefined, false)).toEqual([1, 0])
+    const learned = fixed(definition([1, 1], [], [a, b]))
+    ModelRoute.setAdjustments([{ id: "tuned", match: "p/b", action: "weight", factor: 10, until: Date.now() + 60_000 }])
+    expect(ModelRoute.orderTargets(learned, ready(2), undefined, false)).toEqual([0, 1])
+  })
+
+  test("a definition with schedules survives the settings round trip", () => {
+    const built = definition([2, 1], [{ window: always, match: { targets: ["p/a"] }, factor: 0.8 }], [a, b])
+    const info = {
+      providerID: ModelRoute.PROVIDER_ID,
+      id: "r",
+      settings: { [ModelRoute.SETTING]: built },
+    } as unknown as Parameters<typeof ModelRoute.definition>[0]
+    const decoded = ModelRoute.definition(info)
+    expect(decoded?.schedules).toBeUndefined()
+    expect(decoded?.nodes[0].schedules).toEqual([
+      { window: always, match: { targets: ["p/a"] }, factor: 0.8 },
+    ])
+    expect(ModelRoute.orderTargets(decoded!, ready(2), undefined, false)).toEqual([0, 1])
   })
 })

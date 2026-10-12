@@ -8,6 +8,7 @@ import { Effect } from "effect"
 import { Config } from "../../config.js"
 import { Model } from "../../model.js"
 import { ModelRoute } from "../../model-route.js"
+import { ModelRouteSchedule } from "../../model-route-schedule.js"
 import { Provider } from "../../provider.js"
 import { ConfigEntryObserver } from "./entry-observer.js"
 import { Permission } from "../../permission.js"
@@ -60,6 +61,7 @@ export const Plugin = define({
       if (providers.get(ModelRoute.PROVIDER_ID)) return
       const routes = configuredRoutes(loaded.entries)
       if (routes.size === 0) return
+      const globalSchedules = weightRulesAcross(configuredSchedules(loaded.entries))
       const definitions = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>(
         providers.list().map((record) => [record.provider.id, record.models] as const),
       )
@@ -85,6 +87,7 @@ export const Plugin = define({
               ...(route.hedgeAfterMs ? { hedgeAfterMs: route.hedgeAfterMs } : {}),
               ...(route.autonomy ? { autonomy: route.autonomy } : {}),
               budgets: expanded.map((target) => target.budget ?? {}),
+              ...(globalSchedules.length > 0 ? { schedules: globalSchedules } : {}),
             },
           },
           capabilities: {
@@ -145,6 +148,63 @@ function configuredRoutes(entries: readonly Entry[]) {
   return routes
 }
 
+function configuredSchedules(entries: readonly Entry[]) {
+  return entries
+    .filter((entry): entry is Document => entry.type === "document")
+    .flatMap((entry) => entry.info.experimental?.model_route_schedules ?? [])
+}
+
+/** The schedule rules a route declares for its own targets, in a shape the runtime can judge. An
+ * entry with an unreadable window, or with nothing to change, is dropped rather than applied. */
+export function routeWeightRules(route: ConfigModelRoutes.Route): ModelRoute.WeightRule[] {
+  return (route.schedules ?? []).flatMap((schedule) => {
+    if (schedule.factor === undefined && schedule.weight === undefined) return []
+    const window = ModelRouteSchedule.parse(schedule.when)
+    if (!window) return []
+    const targets = (schedule.targets ?? []).map((target) => target.trim()).filter(Boolean)
+    return [
+      {
+        ...(schedule.id ? { id: schedule.id } : {}),
+        ...(targets.length > 0 ? { match: { targets } } : {}),
+        window,
+        ...(schedule.factor !== undefined ? { factor: schedule.factor } : {}),
+        ...(schedule.weight !== undefined ? { weight: schedule.weight } : {}),
+        ...(schedule.note ? { note: schedule.note } : {}),
+      },
+    ]
+  })
+}
+
+/** The global schedule rules in a shape the runtime can judge. The route filter stays in the match,
+ * so one list serves every route and nested route. An entry with nothing to change is dropped. */
+export function weightRulesAcross(schedules: readonly ConfigModelRoutes.GlobalSchedule[]): ModelRoute.WeightRule[] {
+  return schedules.flatMap((schedule) => {
+    if (schedule.factor === undefined && schedule.weight === undefined) return []
+    const window = ModelRouteSchedule.parse(schedule.when)
+    if (!window) return []
+    const targets = (schedule.targets ?? []).map((target) => target.trim()).filter(Boolean)
+    const providers = (schedule.providers ?? []).map((provider) => provider.trim()).filter(Boolean)
+    const models = (schedule.models ?? []).map((model) => model.trim()).filter(Boolean)
+    const routes = (schedule.routes ?? []).map((route) => route.trim()).filter(Boolean)
+    const match = {
+      ...(targets.length > 0 ? { targets } : {}),
+      ...(providers.length > 0 ? { providers } : {}),
+      ...(models.length > 0 ? { models } : {}),
+      ...(routes.length > 0 ? { routes } : {}),
+    }
+    return [
+      {
+        ...(schedule.id ? { id: schedule.id } : {}),
+        ...(Object.keys(match).length > 0 ? { match } : {}),
+        window,
+        ...(schedule.factor !== undefined ? { factor: schedule.factor } : {}),
+        ...(schedule.weight !== undefined ? { weight: schedule.weight } : {}),
+        ...(schedule.note ? { note: schedule.note } : {}),
+      },
+    ]
+  })
+}
+
 export function expand(
   id: string,
   routes: ReadonlyMap<string, ConfigModelRoutes.Route>,
@@ -170,11 +230,13 @@ export function expand(
       routeID: string
       selection: ModelRoute.Node["selection"]
       weights: number[]
+      schedules: ModelRoute.WeightRule[]
       children: ModelRoute.Node["children"][number][]
     } = {
       routeID,
       selection: ModelRouteAutonomy.usesRules(current.autonomy) ? (current.selection ?? "ordered") : "ordered",
       weights: [],
+      schedules: routeWeightRules(current),
       children: [],
     }
     nodes.push(node)

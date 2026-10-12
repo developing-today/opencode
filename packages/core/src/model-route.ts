@@ -7,6 +7,7 @@ import { ModelRouteLimits } from "./model-route-limits.js"
 import { ModelRouteAutonomy } from "./model-route-autonomy.js"
 import { ModelRouteLog } from "./model-route-log.js"
 import { ModelRouteOverrides } from "./model-route-overrides.js"
+import { ModelRouteSchedule } from "./model-route-schedule.js"
 import { optional, PositiveInt } from "@opencode/schema/schema"
 
 export const PROVIDER_ID = Provider.ID.make("opencode-route")
@@ -30,6 +31,39 @@ const TargetVariant = Schema.Struct({
 
 const Mode = Schema.Literals(["ordered", "round-robin", "weighted"])
 
+/** Which targets a scheduled weight change covers. Empty matchers mean "everything in reach". */
+const ScheduleMatch = Schema.Struct({
+  /** `provider/model` targets, `*` allowed; matches a nested route as `opencode-route/<id>`. */
+  targets: Schema.Array(Schema.String).pipe(optional),
+  providers: Schema.Array(Schema.String).pipe(optional),
+  models: Schema.Array(Schema.String).pipe(optional),
+  /** Route ids the rule is limited to, for rules configured across every route. */
+  routes: Schema.Array(Schema.String).pipe(optional),
+})
+
+const ScheduleWindow = Schema.Struct({
+  daysOfWeek: Schema.Array(Schema.Finite).pipe(optional),
+  daysOfMonth: Schema.Array(Schema.Finite).pipe(optional),
+  start: Schema.String.pipe(optional),
+  end: Schema.String.pipe(optional),
+  timezone: Schema.String.pipe(optional),
+  from: Schema.Finite.pipe(optional),
+  until: Schema.Finite.pipe(optional),
+})
+
+/** One time-bound weight change. `factor` scales the target's configured weight, `weight` replaces it. */
+const WeightRule = Schema.Struct({
+  id: Schema.String.pipe(optional),
+  match: ScheduleMatch.pipe(optional),
+  window: ScheduleWindow.pipe(optional),
+  factor: Schema.Finite.check(Schema.isGreaterThan(0)).pipe(optional),
+  weight: Schema.Finite.check(Schema.isGreaterThan(0)).pipe(optional),
+  note: Schema.String.pipe(optional),
+})
+
+export type WeightRule = typeof WeightRule.Type
+export type ScheduleWindow = typeof ScheduleWindow.Type
+
 /** A group of targets with its own selection mode. Children are leaf target indexes or nested
  * groups; `weights` is parallel to `children`. Group 0 is the route itself. */
 const Node = Schema.Struct({
@@ -37,6 +71,8 @@ const Node = Schema.Struct({
   routeID: Schema.String.pipe(optional),
   selection: Mode,
   weights: Schema.Array(Schema.Finite.check(Schema.isGreaterThan(0))),
+  /** Weight changes declared on this route, in force while a target under this node is judged. */
+  schedules: Schema.Array(WeightRule).pipe(optional),
   children: Schema.Array(Schema.Struct({ leaf: Schema.Finite.pipe(optional), node: Schema.Finite.pipe(optional) })),
 })
 
@@ -61,6 +97,8 @@ const Definition = Schema.Struct({
   autonomy: Schema.Literals(["fixed", "rules", "adaptive", "predictive", "agent"]).pipe(optional),
   /** Parallel to `targets`; an empty object means unlimited. */
   budgets: Schema.Array(Budget).pipe(optional),
+  /** Weight changes in force across every route, from experimental.model_route_schedules. */
+  schedules: Schema.Array(WeightRule).pipe(optional),
   nodes: Schema.Array(Node),
 })
 
@@ -570,14 +608,20 @@ export const seedLimits = (
 }
 
 /** An expiring operator or agent instruction about which targets to use. `match` is a case-insensitive
- * substring of `provider/model`, so "anthropic" or "claude" covers every target that looks like it. */
+ * substring of `provider/model`, so "anthropic" or "claude" covers every target that looks like it.
+ * With `schedule` the instruction recurs inside a local-time window instead of living until a date. */
 export interface Adjustment {
   readonly id: string
   readonly match: string
-  /** `skip` removes matching targets unless nothing else is available; `weight` scales their share. */
+  /** `skip` removes matching targets unless nothing else is available; `weight` scales or sets their share. */
   readonly action: "skip" | "weight"
   readonly factor?: number
-  readonly until: number
+  /** Sets the target's weight outright instead of scaling it; takes precedence over `factor`. */
+  readonly weight?: number
+  /** Recurring local-time window the adjustment is confined to. */
+  readonly schedule?: ModelRouteSchedule.Window
+  /** When the adjustment lapses, epoch milliseconds; unset means only the schedule ends it. */
+  readonly until?: number
   readonly note?: string
   /** Set on learned adjustments: the least autonomy a route needs before this one applies to it. Unset
    * means an operator or agent instruction, which applies wherever a route uses rules. */
@@ -634,10 +678,16 @@ ModelRouteLog.onRestore((notes) => {
   adjustments = [...restored.values()]
 })
 
-export const activeAdjustments = (now = Date.now()) => adjustments.filter((item) => item.until > now)
+/** Adjustments whose overall lifetime has not lapsed; a recurring `schedule` narrows them further at
+ * the moment they are used. */
+export const activeAdjustments = (now = Date.now()) =>
+  adjustments.filter((item) => item.until === undefined || item.until > now)
 
 const matches = (item: Adjustment, target: Model.Ref) =>
   `${target.providerID}/${target.id}`.toLowerCase().includes(item.match.toLowerCase())
+
+const adjustmentOn = (item: Adjustment, now: number) =>
+  item.schedule === undefined || ModelRouteSchedule.active(item.schedule, now)
 
 const userOverrides = (
   action: ModelRouteOverrides.Action,
@@ -666,7 +716,7 @@ const appliesOn = (item: Adjustment, scope: ModelRouteOverrides.Scope) =>
 
 /** A target the route's learned adjustments skip. Only routes that let the tuner decide see these. */
 export const skipped = (target: Model.Ref, now = Date.now(), scope: ModelRouteOverrides.Scope = {}) =>
-  activeAdjustments(now).some((item) => item.action === "skip" && matches(item, target) && appliesOn(item, scope))
+  activeAdjustments(now).some((item) => item.action === "skip" && adjustmentOn(item, now) && matches(item, target) && appliesOn(item, scope))
 
 /** Weight multiplier for a target demoted by quota errors. */
 const DEMOTED_FACTOR = 0.01
@@ -674,21 +724,64 @@ const DEMOTED_FACTOR = 0.01
 /** How much a user's "prefer" lifts a target when they don't say by how much. */
 const PREFERRED_FACTOR = 3
 
-/** The weight a target carries on a route. The user's own priorities apply on every route; learned
- * weights apply only where the tuner is allowed to decide, so a `fixed` route keeps its order. */
-export const weightFactor = (target: Model.Ref, now = Date.now(), scope: ModelRouteOverrides.Scope = {}) => {
-  const preferred = userOverrides("prefer", target, now, scope).reduce(
-    (product, item) => product * (item.factor ?? PREFERRED_FACTOR),
-    1,
-  )
-  const learned =
-    scope.fixed === true
-      ? 1
-      : activeAdjustments(now)
-          .filter((item) => item.action === "weight" && matches(item, target) && appliesOn(item, scope))
-          .reduce((product, item) => product * (item.factor ?? 1), 1)
-  return preferred * learned * (demoted(target, now) ? DEMOTED_FACTOR : 1)
+/** The route path a request is being judged on, for `match.routes` schedule filters. `routeID` is the
+ * route being resolved; `routes` is that id plus the nested route ids reached on the way in. */
+export interface WeightScope extends ModelRouteOverrides.Scope {
+  readonly routes?: readonly string[]
+  /** Scheduled rules in force where this target is judged: global first, then the route's own. */
+  readonly schedules?: readonly WeightRule[]
 }
+
+const ruleMatches = (rule: WeightRule, target: Model.Ref, scope: WeightScope) => {
+  const match = rule.match
+  if (!match) return true
+  const ref = `${target.providerID}/${target.id}`
+  if (match.targets?.length && !match.targets.some((pattern) => ModelRouteOverrides.matchesPattern(pattern, ref)))
+    return false
+  if (match.providers?.length && !match.providers.some((id) => id.toLowerCase() === target.providerID.toLowerCase()))
+    return false
+  if (match.models?.length && !match.models.some((pattern) => ModelRouteOverrides.matchesPattern(pattern, target.id)))
+    return false
+  if (match.routes?.length) {
+    const path = scope.routes ?? (scope.routeID === undefined ? [] : [scope.routeID])
+    if (!match.routes.some((id) => path.includes(id))) return false
+  }
+  return true
+}
+
+const scheduled = (target: Model.Ref, weight: number, now: number, scope: WeightScope) => {
+  for (const rule of scope.schedules ?? []) {
+    if (rule.window !== undefined && !ModelRouteSchedule.active(rule.window, now)) continue
+    if (!ruleMatches(rule, target, scope)) continue
+    if (rule.weight !== undefined) weight = rule.weight
+    else if (rule.factor !== undefined) weight *= rule.factor
+  }
+  return weight
+}
+
+/** The weight a target carries on a route, given the weight its pool gives it. Scheduled rules
+ * apply first (global, then the route's own), the user's own preferences next, then learned
+ * adjustments and quota demotion. Learned weights apply only where the tuner may decide, so a
+ * `fixed` route keeps its order; explicit schedules and user overrides apply on every route. */
+export const weightOf = (target: Model.Ref, base: number, now = Date.now(), scope: WeightScope = {}) => {
+  let weight = scheduled(target, base, now, scope)
+  for (const item of userOverrides("prefer", target, now, scope)) {
+    if (item.weight !== undefined) weight = item.weight
+    else weight *= item.factor ?? PREFERRED_FACTOR
+  }
+  if (scope.fixed !== true) {
+    for (const item of activeAdjustments(now)) {
+      if (item.action !== "weight" || !adjustmentOn(item, now) || !matches(item, target) || !appliesOn(item, scope)) continue
+      if (item.weight !== undefined) weight = item.weight
+      else weight *= item.factor ?? 1
+    }
+  }
+  return weight * (demoted(target, now) ? DEMOTED_FACTOR : 1)
+}
+
+/** A target's pure weight multiplier, with its configured pool weight taken as 1. */
+export const weightFactor = (target: Model.Ref, now = Date.now(), scope: WeightScope = {}) =>
+  weightOf(target, 1, now, scope)
 
 /** A session already answered by this target keeps it through a burst rate-limit hold, as long as the
  * target is still working and not demoted. New sessions go elsewhere; current ones stay where their
@@ -699,11 +792,14 @@ export const keepsThrough = (routeID: string, sessionID: string | undefined, tar
   steady(target) &&
   !demoted(target, now)
 
-/** The scope overrides and weights are judged against: this route, and whether it is `fixed`. */
-export const scopeOf = (definition: Definition): ModelRouteOverrides.Scope => ({
+/** The scope overrides and weights are judged against: this route (and nested ids reached on the
+ * way in), whether it is `fixed`, and the route-level schedule rules. */
+export const scopeOf = (definition: Definition, path: readonly string[] = []): WeightScope => ({
   routeID: definition.id,
+  routes: [definition.id, ...path.filter((id) => id !== definition.id)],
   fixed: !ModelRouteAutonomy.usesRules(definition.autonomy),
   autonomy: definition.autonomy,
+  ...(definition.schedules?.length ? { schedules: definition.schedules } : {}),
 })
 
 /** Chooses one leaf lazily. Only groups on the chosen path draw their sticky/rotation entry; nested
@@ -734,14 +830,24 @@ export const nextTarget = (
       child.leaf !== undefined ? [child.leaf] : child.node !== undefined ? leaves(child.node) : [],
     )
   }
-  const factor = (nodeIndex: number) => {
+  const now = Date.now()
+  const scopeAt = (rules: readonly WeightRule[], path: readonly string[]): WeightScope => ({
+    routeID: definition.id,
+    routes: [definition.id, ...path.filter((id) => id !== definition.id)],
+    fixed: !ModelRouteAutonomy.usesRules(definition.autonomy),
+    schedules: [...(definition.schedules ?? []), ...rules],
+  })
+  /** The average weight multiplier of a nested group's leaves, judged with the schedules that reach
+   * into that group. The group's own weight stays in `weights`; a parent then scales the two. */
+  const factor = (nodeIndex: number, inherited: readonly WeightRule[], path: readonly string[]) => {
+    const node = definition.nodes[nodeIndex]
+    const nodePath = node?.routeID && !path.includes(node.routeID) ? [...path, node.routeID] : path
+    const rules = [...inherited, ...(node?.schedules ?? [])]
+    const scope = scopeAt(rules, nodePath)
     const eligible = leaves(nodeIndex).filter((index) => ready.has(index) && !tried.has(index))
     return eligible.length === 0
       ? 1
-      : eligible.reduce(
-          (sum, index) => sum + weightFactor(definition.targets[index], Date.now(), scopeOf(definition)),
-          0,
-        ) / eligible.length
+      : eligible.reduce((sum, index) => sum + weightOf(definition.targets[index], 1, now, scope), 0) / eligible.length
   }
   const label = (child: Node["children"][number]) =>
     child.leaf !== undefined
@@ -749,9 +855,12 @@ export const nextTarget = (
       : child.node !== undefined
         ? `opencode-route/${definition.nodes[child.node]?.routeID ?? child.node}`
         : "unknown"
-  const walk = (nodeIndex: number): number | undefined => {
+  const walk = (nodeIndex: number, inherited: readonly WeightRule[] = [], path: readonly string[] = []): number | undefined => {
     const node = definition.nodes[nodeIndex]
     if (!node) return undefined
+    const nodePath = node.routeID && !path.includes(node.routeID) ? [...path, node.routeID] : path
+    const rules = [...inherited, ...(node.schedules ?? [])]
+    const scope = scopeAt(rules, nodePath)
     const positions = node.children.flatMap((child, position) => {
       const available =
         child.leaf !== undefined
@@ -774,13 +883,14 @@ export const nextTarget = (
       })
       return undefined
     }
-    const factors = node.children.map((child) =>
-      child.leaf !== undefined
-        ? weightFactor(definition.targets[child.leaf], Date.now(), scopeOf(definition))
-        : child.node !== undefined
-          ? factor(child.node)
-          : 1,
-    )
+    // Every child's effective weight: its configured pool weight scaled or replaced by the schedules
+    // in force. Equal weights keep their configured relative order when the list is sorted.
+    const effective = node.children.map((child, position) => {
+      const base = node.weights[position] ?? 1
+      if (child.leaf !== undefined) return weightOf(definition.targets[child.leaf], base, now, scope)
+      if (child.node !== undefined) return base * factor(child.node, rules, nodePath)
+      return base
+    })
     const selectionKey = `${node.routeID ?? definition.id}#${nodeIndex}`
     const priorSticky = sessionID ? sessionTarget(selectionKey, sessionID) : undefined
     // A session stays on the target it is being answered by while that target is ready, so a recovered
@@ -795,14 +905,14 @@ export const nextTarget = (
             const target = definition.targets[leaf]
             return key(target) === current && !demoted(target)
           })
-    let ordered = positions
-    let decisionReason = "ordered"
+    const rank = (from: readonly number[]) =>
+      [...from].toSorted((left, right) => (effective[right] ?? 1) - (effective[left] ?? 1))
+    const sorted = rank(positions)
+    let ordered = sorted
+    let decisionReason = sorted.some((position, index) => position !== positions[index]) ? "adjusted" : "ordered"
     if (node.selection === "ordered" && currentPosition !== undefined) {
       ordered = [currentPosition, ...positions.filter((position) => position !== currentPosition)]
       decisionReason = "sticky"
-    } else if (node.selection === "ordered" && positions.some((position) => factors[position] !== 1)) {
-      ordered = positions.toSorted((left, right) => factors[right] - factors[left])
-      decisionReason = "adjusted"
     } else if (sessionID && sessionScoped(node.selection)) {
       const chosen =
         priorSticky !== undefined && positions.includes(priorSticky)
@@ -813,13 +923,13 @@ export const nextTarget = (
                 sessionID,
                 node.selection,
                 positions,
-                node.children.map((_, position) => (node.weights[position] ?? 1) * (factors[position] ?? 1)),
+                node.children.map((_, position) => effective[position] ?? 1),
                 random,
               )
             : undefined
-      if (chosen !== undefined) ordered = [chosen, ...positions.filter((position) => position !== chosen)]
+      if (chosen !== undefined) ordered = [chosen, ...rank(positions.filter((position) => position !== chosen))]
       decisionReason =
-        priorSticky !== undefined && positions.includes(priorSticky) ? "sticky" : draw ? "drawn" : "ordered"
+        priorSticky !== undefined && positions.includes(priorSticky) ? "sticky" : draw ? "drawn" : decisionReason
     }
     const chosen = ordered[0]
     const excluded = node.children.flatMap((child, position) => {
@@ -841,9 +951,7 @@ export const nextTarget = (
         chosen: chosen === undefined ? undefined : label(node.children[chosen]),
         reason: decisionReason,
         detail: {
-          weights: Object.fromEntries(
-            positions.map((position) => [label(node.children[position]), node.weights[position] * factors[position]]),
-          ),
+          weights: Object.fromEntries(positions.map((position) => [label(node.children[position]), effective[position]])),
           excluded,
         },
       },
@@ -851,7 +959,7 @@ export const nextTarget = (
     const selected = chosen === undefined ? undefined : node.children[chosen]
     if (!selected) return undefined
     if (selected.leaf !== undefined) return selected.leaf
-    return selected.node === undefined ? undefined : walk(selected.node)
+    return selected.node === undefined ? undefined : walk(selected.node, rules, nodePath)
   }
   return walk(0)
 }
