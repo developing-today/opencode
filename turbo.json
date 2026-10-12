@@ -94,6 +94,43 @@
       "dependsOn": ["^build"],
       "outputs": []
     },
+    "@opencode/client#test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "@opencode/gui-extensions#test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "@opencode/http-recorder#test": {
+      "outputs": []
+    },
+    "@opencode/merman#test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "@opencode/plugin#test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "@opencode/plugin-browser#test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "@opencode/sdk#test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "@opencode/simulation#test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "@opencode/theme#test": {
+      "outputs": []
+    },
+    "@opencode/util#test": {
+      "outputs": []
+    },
     "@opencode/sdk#verify:package": {
       "outputs": []
     }
