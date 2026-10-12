@@ -147,7 +147,7 @@ describe("ModelRouteTuning notes", () => {
     expect(ModelRouteTuning.parseNotes(undefined)).toEqual([])
   })
 
-  test("drops the lines the schema refuses, and keeps a later colon in the text", () => {
+  test("drops the lines that do not match the note rule, and keeps a later colon in the text", () => {
     expect(ModelRouteTuning.parseNotes([":x:y", "x::y", "x:", "match: text", "a: b\nc"])).toEqual([
       { match: "x", text: ":y" },
       { match: "match", text: "text" },

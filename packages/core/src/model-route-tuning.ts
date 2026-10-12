@@ -191,8 +191,8 @@ export interface Note {
   readonly text: string
 }
 
-/** Parses the `match: text` lines from the settings notes. A line the schema refuses is dropped, so the
- * parser reads exactly the lines the config validated. */
+/** Parses the `match: text` lines from the settings notes. Config loading reports and drops a line that does
+ * not match NOTE_LINE; any line that reaches here unchecked is skipped by the same rule. */
 export const parseNotes = (notes: readonly string[] | undefined): Note[] =>
   (notes ?? []).flatMap((line) => {
     if (!ConfigModelRoutes.NOTE_LINE.test(line)) return []

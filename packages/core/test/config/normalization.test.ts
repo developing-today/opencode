@@ -691,32 +691,65 @@ describe("model route tuning and log settings", () => {
     })
   })
 
-  test("a malformed note makes the tuning block invalid, and says so", () => {
+  test("a malformed note is dropped on its own, and the block and its other notes are kept", () => {
     const result = ConfigNormalize.normalize({
-      experimental: { model_route_tuning: { enabled: true, notes: ["no separator here"] } },
+      experimental: {
+        model_route_tuning: {
+          enabled: true,
+          notes: [
+            "openai/gpt-6-luna: out of quota, back in 3 hours",
+            "no separator here",
+            "anthropic/claude-opus-5: promo credits",
+          ],
+        },
+      },
     })
     expect(result.type).toBe("normalized")
     if (result.type !== "normalized") return
-    expect(result.diagnostics).toContainEqual({
-      kind: "invalid",
-      path: ["experimental", "model_route_tuning"],
-      message: "skipped malformed recognized value",
+    expect(result.diagnostics).toEqual([
+      {
+        kind: "invalid",
+        path: ["experimental", "model_route_tuning", "notes", "1"],
+        message:
+          "omitted malformed note: expected match: text, with a non-empty match before the first colon and non-empty text after it",
+      },
+    ])
+    expect(experimentalOf(result.encoded)?.model_route_tuning).toEqual({
+      enabled: true,
+      notes: ["openai/gpt-6-luna: out of quota, back in 3 hours", "anthropic/claude-opus-5: promo credits"],
     })
-    expect(experimentalOf(result.encoded)?.model_route_tuning).toBeUndefined()
   })
 
-  test("a note with nothing before its colon makes the tuning block invalid, like a note with no colon", () => {
+  test("each malformed shape is dropped with a diagnostic for its line: no match, no text, no colon, or a line break", () => {
     const result = ConfigNormalize.normalize({
-      experimental: { model_route_tuning: { enabled: true, notes: [":x:y"] } },
+      experimental: {
+        model_route_tuning: { enabled: true, notes: [":x:y", "x:", "no colon", "x: y\nz", "match: text"] },
+      },
     })
     expect(result.type).toBe("normalized")
     if (result.type !== "normalized") return
-    expect(result.diagnostics).toContainEqual({
-      kind: "invalid",
-      path: ["experimental", "model_route_tuning"],
-      message: "skipped malformed recognized value",
+    const message =
+      "omitted malformed note: expected match: text, with a non-empty match before the first colon and non-empty text after it"
+    expect(result.diagnostics).toEqual(
+      ["0", "1", "2", "3"].map((index) => ({
+        kind: "invalid",
+        path: ["experimental", "model_route_tuning", "notes", index],
+        message,
+      })),
+    )
+    expect(experimentalOf(result.encoded)?.model_route_tuning).toEqual({ enabled: true, notes: ["match: text"] })
+  })
+
+  test("a second colon belongs to the text, so x::y is kept", () => {
+    const result = ConfigNormalize.normalize({
+      experimental: { model_route_tuning: { notes: ["x::y"] } },
     })
-    expect(experimentalOf(result.encoded)?.model_route_tuning).toBeUndefined()
+    expect(result.type).toBe("normalized")
+    if (result.type !== "normalized") return
+    expect(result.diagnostics).toEqual([])
+    expect(ModelRouteTuning.parseNotes(experimentalOf(result.encoded)?.model_route_tuning?.notes)).toEqual([
+      { match: "x", text: ":y" },
+    ])
   })
 
   test("an unknown key under the tuning block is named in a diagnostic and the rest is kept", () => {
