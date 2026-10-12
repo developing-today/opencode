@@ -1,8 +1,8 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite"
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Predicate } from "effect"
 import { Reactivity } from "effect/reactivity"
 import { SqlClient } from "effect/sql"
-import { classifySqliteError, SqlError } from "effect/sql/SqlError"
+import { classifySqliteError, LockTimeoutError, SqlError } from "effect/sql/SqlError"
 import { Sqlite } from "./sqlite.js"
 
 const TypeId = "~@opencode/core/database/SqliteNode" as const
@@ -87,10 +87,24 @@ const nativeLayer = (config: Config) =>
         open: true,
       })
       yield* Effect.addFinalizer(() => Effect.sync(() => native.close()))
-      if (config.disableWAL !== true && config.readonly !== true) native.exec("PRAGMA journal_mode = WAL;")
+      if (config.disableWAL !== true && config.readonly !== true)
+        yield* Effect.try({
+          try: () => native.exec("PRAGMA journal_mode = WAL;"),
+          catch: (cause) =>
+            new SqlError({
+              reason: nodeLocked(cause)
+                ? new LockTimeoutError({ cause, message: "Failed to set WAL journal mode", operation: "execute" })
+                : classifySqliteError(cause, { message: "Failed to set WAL journal mode", operation: "execute" }),
+            }),
+        }).pipe(Sqlite.retryBusy, Effect.orDie)
       return native
     }),
   )
+
+// effect's classifier reads errno, but node:sqlite reports the SQLite result code (5 busy, 6 locked) as errcode, so a
+// busy or locked node error would otherwise classify as unknown and never be retried.
+const nodeLocked = (cause: unknown) =>
+  Predicate.hasProperty(cause, "errcode") && (cause.errcode === 5 || cause.errcode === 6)
 
 const clientLayer = (config: Config) => Layer.effect(SqlClient.SqlClient, make(config))
 

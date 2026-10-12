@@ -90,7 +90,14 @@ const nativeLayer = (config: Config) =>
         create: config.create ?? true,
       })
       yield* Effect.addFinalizer(() => Effect.sync(() => native.close()))
-      if (config.disableWAL !== true) native.run("PRAGMA journal_mode = WAL;")
+      if (config.disableWAL !== true)
+        yield* Effect.try({
+          try: () => native.run("PRAGMA journal_mode = WAL;"),
+          catch: (cause) =>
+            new SqlError({
+              reason: classifySqliteError(cause, { message: "Failed to set WAL journal mode", operation: "execute" }),
+            }),
+        }).pipe(Sqlite.retryBusy, Effect.orDie)
       return native
     }),
   )
