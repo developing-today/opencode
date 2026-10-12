@@ -119,6 +119,19 @@ describe("ModelRouteTuning predictions", () => {
   })
 })
 
+describe("ModelRouteTuning.parseQuotaReset", () => {
+  const at = Date.UTC(2026, 0, 1, 14)
+
+  test("reads absolute and relative reset times", () => {
+    expect(ModelRouteTuning.parseQuotaReset("quota exhausted; resets at 2026-01-01T18:00:00Z", at)).toBe(
+      Date.UTC(2026, 0, 1, 18),
+    )
+    expect(ModelRouteTuning.parseQuotaReset("rate limit reached, back in 30 minutes", at)).toBe(at + 1_800_000)
+    expect(ModelRouteTuning.parseQuotaReset("try in 5 minutes", at)).toBeUndefined()
+    expect(ModelRouteTuning.parseQuotaReset(undefined, at)).toBeUndefined()
+  })
+})
+
 describe("ModelRouteTuning notes", () => {
   const at = Date.UTC(2026, 0, 1, 14)
 

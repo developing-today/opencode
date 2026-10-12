@@ -251,11 +251,38 @@ export const slow = (target: Model.Ref, policy: Policy, now = Date.now()) => {
   }
 }
 
-/** Give-ups among a target's recent requests at which a route stops retrying it and races its next target. */
-const GIVE_UPS_BEFORE_RACE = 2
-/** Quota errors within `QUOTA_WINDOW_MS` that move a target to the end of every order. */
-const QUOTA_DEMOTE_AFTER = 3
-const QUOTA_WINDOW_MS = 4 * 3_600_000
+/** Tunable behaviour. Users never need to set these; they exist so the thresholds can be changed
+ * without a code change. Defaults are what a route does when nothing is configured. */
+export interface Settings {
+  readonly escalation: {
+    /** After this many give-ups in the recent window, a route races its next target at once. */
+    readonly enabled: boolean
+    readonly afterGiveUps: number
+  }
+  readonly quota: {
+    /** Quota errors within `windowMs` that move a target to the end of the route's order. */
+    readonly demoteAfter: number
+    readonly windowMs: number
+  }
+}
+
+const DEFAULT_SETTINGS: Settings = {
+  escalation: { enabled: true, afterGiveUps: 2 },
+  quota: { demoteAfter: 3, windowMs: 4 * 3_600_000 },
+}
+
+let settings: Settings = DEFAULT_SETTINGS
+
+export const configure = (
+  next: Partial<{ escalation: Partial<Settings["escalation"]>; quota: Partial<Settings["quota"]> }>,
+) => {
+  settings = {
+    escalation: { ...settings.escalation, ...next.escalation },
+    quota: { ...settings.quota, ...next.quota },
+  }
+}
+
+export const currentSettings = () => settings
 
 /** Give-ups among a target's recent requests. */
 export const giveUps = (target: Model.Ref) => {
@@ -264,11 +291,11 @@ export const giveUps = (target: Model.Ref) => {
 }
 
 /** A target is steady while it has fewer give-ups than the race threshold among its recent requests. */
-export const steady = (target: Model.Ref) => giveUps(target) < GIVE_UPS_BEFORE_RACE
+export const steady = (target: Model.Ref) => giveUps(target) < settings.escalation.afterGiveUps
 
 /** A route should race its next target immediately when its current target keeps giving up. Whether a
  * route races at all depends on its autonomy level; see ModelRouteAutonomy.races. */
-export const escalates = (target: Model.Ref) => !steady(target)
+export const escalates = (target: Model.Ref) => settings.escalation.enabled && !steady(target)
 
 // Quota errors are recorded per target so a provider that keeps saying "out of quota" drops to the end
 // of every order, instead of being retried first on each new session.
@@ -276,13 +303,13 @@ const quotaEvents = new Map<string, number[]>()
 
 /** True when a target has hit its quota errors often enough recently to be put last. */
 export const demoted = (target: Model.Ref, now = Date.now()) => {
-  const recent = (quotaEvents.get(key(target)) ?? []).filter((at) => now - at <= QUOTA_WINDOW_MS)
-  return recent.length >= QUOTA_DEMOTE_AFTER
+  const recent = (quotaEvents.get(key(target)) ?? []).filter((at) => now - at <= settings.quota.windowMs)
+  return recent.length >= settings.quota.demoteAfter
 }
 
 const recordQuota = (target: Model.Ref, now: number) => {
   const id = key(target)
-  const recent = (quotaEvents.get(id) ?? []).filter((at) => now - at <= QUOTA_WINDOW_MS)
+  const recent = (quotaEvents.get(id) ?? []).filter((at) => now - at <= settings.quota.windowMs)
   quotaEvents.set(id, [...recent, now].slice(-50))
 }
 
@@ -322,13 +349,13 @@ export const resetHealth = () => {
 
 /** Per-route selection state: rotation counters for round-robin, sticky session choices, both
  * process-local like health. */
-const selection = new Map<string, { sessions: Map<string, number>; scores: Map<number, number> }>()
+const selection = new Map<string, { cursor: number; sessions: Map<string, number>; scores: Map<number, number> }>()
 const SESSION_LIMIT = 5_000
 
 const selectionEntry = (routeID: string) => {
   let current = selection.get(routeID)
   if (!current) {
-    current = { sessions: new Map(), scores: new Map() }
+    current = { cursor: 0, sessions: new Map(), scores: new Map() }
     selection.set(routeID, current)
   }
   return current
@@ -378,6 +405,7 @@ export const selectSessionTarget = (
       }
     }
     state.scores.set(chosen, (state.scores.get(chosen) ?? 0) - total)
+    state.cursor = (state.cursor + 1) % Number.MAX_SAFE_INTEGER
   } else {
     const total = candidateIndexes.reduce((sum, index) => sum + (weights[index] ?? 1), 0)
     let draw = random() * total

@@ -148,6 +148,31 @@ export const predict = (input: {
   return result
 }
 
+/**
+ * When a provider says a quota comes back, from the text of its error. Two forms are read: an
+ * absolute time ("resets at 2026-01-01T00:00:00Z", "back at 2026-01-01") and a relative one
+ * ("in 3 hours", "in 30 minutes", "in 45s"). Nothing else is guessed at.
+ */
+export const parseQuotaReset = (message: string | undefined, now: number): number | undefined => {
+  if (!message) return undefined
+  const text = message.toLowerCase()
+  if (!/(?:quota|limit|rate limit)/.test(text)) return undefined
+  const absolute =
+    /(?:reset|resume|back|available|return)[a-z ]{0,20}(?:at|on)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2})?)?)/.exec(
+      text,
+    )?.[1]
+  if (absolute) {
+    const date = Date.parse(absolute)
+    if (!Number.isNaN(date)) return date
+  }
+  const relative = /in\s+(\d+)\s*(second|minute|hour|day)s?/.exec(text)
+  if (relative) {
+    const unit = { second: 1_000, minute: 60_000, hour: 3_600_000, day: 86_400_000 } as Record<string, number>
+    return now + Number(relative[1]) * (unit[relative[2]] ?? 1_000)
+  }
+  return undefined
+}
+
 export interface Settings {
   readonly enabled?: boolean
   readonly intervalMinutes?: number
