@@ -48,6 +48,25 @@ describe("client retry", () => {
     expect(failures.every((cause) => cause instanceof TypeError)).toBe(true)
   })
 
+  test("retries a refused connection to a closed port", async () => {
+    const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } })
+    const port = probe.port
+    probe.stop(true)
+    const failures: unknown[] = []
+    await expect(
+      retry(
+        () =>
+          fetch(`http://127.0.0.1:${port}/api/project`).catch((cause) => {
+            failures.push(cause)
+            throw new Error("Transport", { cause })
+          }),
+        { delay: 0 },
+      ),
+    ).rejects.toThrow("Transport")
+    expect(failures).toHaveLength(3)
+    expect(failures.every((cause) => cause instanceof TypeError)).toBe(true)
+  })
+
   test("does not retry a transport error whose cause is not transient", async () => {
     const failures: string[] = []
     await expect(

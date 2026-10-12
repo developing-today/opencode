@@ -13,6 +13,8 @@ const transientMessages = [
   "failed to fetch",
   "econnreset",
   "econnrefused",
+  // Bun names a refused connection ConnectionRefused rather than ECONNREFUSED.
+  "connectionrefused",
   "etimedout",
   "socket hang up",
 ]
