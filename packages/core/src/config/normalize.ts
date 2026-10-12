@@ -440,7 +440,7 @@ function normalizeExperimental(
         )
         const value = decodeEncoded(
           ConfigExperimental.Info.fields.model_route_tuning,
-          experimental.model_route_tuning,
+          withValidNotes(experimental.model_route_tuning, ["experimental", "model_route_tuning"], diagnostics),
           ["experimental", "model_route_tuning"],
           diagnostics,
         )
@@ -833,6 +833,25 @@ function unknownKeys(value: unknown, fields: object, path: string[], diagnostics
     if (!Object.keys(fields).includes(key))
       diagnostics.push({ kind: "invalid", path: [...path, key], message: "omitted unknown setting" })
   })
+}
+
+/** A note is one `match: text` line. A line that does not fit is dropped alone; the rest of the block still
+ * decodes. */
+function withValidNotes(value: unknown, path: string[], diagnostics: Diagnostic[]) {
+  if (!isRecord(value) || !Array.isArray(value.notes)) return value
+  return {
+    ...value,
+    notes: value.notes.filter((line, index) => {
+      if (typeof line === "string" && ConfigModelRoutes.NOTE_LINE.test(line)) return true
+      diagnostics.push({
+        kind: "invalid",
+        path: [...path, "notes", String(index)],
+        message:
+          "omitted malformed note: expected match: text, with a non-empty match before the first colon and non-empty text after it",
+      })
+      return false
+    }),
+  }
 }
 
 function conflict(path: string[], diagnostics: Diagnostic[]) {

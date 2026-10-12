@@ -402,8 +402,8 @@ matching targets until then. The rest is left for the agent to read: `route_stat
 returns the notes with the history it covers. The tuner also reads a stated reset
 time out of a provider's own error message when the headers say nothing. Each note
 is one line with a non-empty match before the first colon and non-empty text after
-it. A malformed note makes the whole `model_route_tuning` block invalid, which is
-reported and skipped, and an unknown key in the block is reported and ignored.
+it. A malformed note is reported and skipped on its own; the other notes and the rest
+of the block are kept. An unknown key in the block is reported and ignored.
 
 To have that review happen on its own, enable scheduled tuning:
 

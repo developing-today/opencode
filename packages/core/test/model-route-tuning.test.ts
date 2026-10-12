@@ -119,6 +119,19 @@ describe("ModelRouteTuning predictions", () => {
   })
 })
 
+describe("ModelRouteTuning.parseQuotaReset", () => {
+  const at = Date.UTC(2026, 0, 1, 14)
+
+  test("reads absolute and relative reset times", () => {
+    expect(ModelRouteTuning.parseQuotaReset("quota exhausted; resets at 2026-01-01T18:00:00Z", at)).toBe(
+      Date.UTC(2026, 0, 1, 18),
+    )
+    expect(ModelRouteTuning.parseQuotaReset("rate limit reached, back in 30 minutes", at)).toBe(at + 1_800_000)
+    expect(ModelRouteTuning.parseQuotaReset("try in 5 minutes", at)).toBeUndefined()
+    expect(ModelRouteTuning.parseQuotaReset(undefined, at)).toBeUndefined()
+  })
+})
+
 describe("ModelRouteTuning notes", () => {
   const at = Date.UTC(2026, 0, 1, 14)
 
@@ -134,7 +147,7 @@ describe("ModelRouteTuning notes", () => {
     expect(ModelRouteTuning.parseNotes(undefined)).toEqual([])
   })
 
-  test("drops the lines the schema refuses, and keeps a later colon in the text", () => {
+  test("drops the lines that do not match the note rule, and keeps a later colon in the text", () => {
     expect(ModelRouteTuning.parseNotes([":x:y", "x::y", "x:", "match: text", "a: b\nc"])).toEqual([
       { match: "x", text: ":y" },
       { match: "match", text: "text" },

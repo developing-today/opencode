@@ -10,7 +10,6 @@ const PositiveFinite = Schema.Finite.check(Schema.isGreaterThan(0))
 /** One note per line: `match: text`, with a non-empty match before the first colon and non-empty text after it.
  * The match cannot hold a colon, so the first colon is the separator. */
 export const NOTE_LINE = /^[^:\r\n]*[^\s:][^:\r\n]*:[^\r\n]*\S[^\r\n]*$/
-const NoteLine = Schema.String.check(Schema.isPattern(NOTE_LINE))
 
 /** An ordered model target: either `provider/model`, `provider/model#variant`, or an object with
  * per-target variant defaults and remaps. */
@@ -124,7 +123,7 @@ export class Tuning extends Schema.Class<Tuning>("Config.ModelRoute.Tuning")({
   windowHours: PositiveInt.check(Schema.isLessThanOrEqualTo(336)).pipe(optional).annotate({
     description: "How much history each review looks at. Defaults to 24.",
   }),
-  notes: Schema.Array(NoteLine).pipe(optional).annotate({
+  notes: Schema.Array(Schema.String).pipe(optional).annotate({
     description:
       'What the history cannot say, one note per line as "match: text". match is a case-insensitive substring of provider/model; text may state when a limit returns, e.g. "anthropic/claude-opus-5: promo credits, reset at 2026-01-04T00:00:00Z".',
   }),

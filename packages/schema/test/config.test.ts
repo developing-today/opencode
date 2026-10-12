@@ -143,11 +143,14 @@ describe("Config.Entry", () => {
 })
 
 describe("ConfigModelRoutes.Tuning notes", () => {
-  test("accepts match: text lines and refuses a line with nothing before its colon, nothing after it, or a line break", () => {
+  test("accepts any string as a note, so one bad line does not refuse the block; a non-string is refused", () => {
     const decode = Schema.decodeUnknownSync(ConfigModelRoutes.Tuning)
-    expect(decode({ notes: ["match: text", "x::y"] }).notes).toEqual(["match: text", "x::y"])
-    expect(() => decode({ notes: [":x:y"] })).toThrow()
-    expect(() => decode({ notes: ["x:"] })).toThrow()
-    expect(() => decode({ notes: ["x: y\nz"] })).toThrow()
+    expect(decode({ notes: ["match: text", "x::y", ":x:y", "x:"] }).notes).toEqual([
+      "match: text",
+      "x::y",
+      ":x:y",
+      "x:",
+    ])
+    expect(() => decode({ notes: [5] })).toThrow()
   })
 })
