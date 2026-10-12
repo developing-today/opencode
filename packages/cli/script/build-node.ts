@@ -46,6 +46,9 @@ const targets = requested
 
 process.chdir(dir)
 if (!skipInstall) run(process.execPath, ["install", "--os=*", "--cpu=*"])
+// The Node bundle is a production artifact. With NODE_ENV=test, which bun test sets for the process that spawns this
+// script, Vite stubs the uninstalled optional peer utf-8-validate with a throw, so the bundle fails at startup.
+process.env.NODE_ENV = "production"
 if (appArchiveOnly) {
   if (!archivePath) throw new Error("--app-archive-only requires --app-archive=<path>")
   await mkdir(path.dirname(archivePath), { recursive: true })
