@@ -1,12 +1,23 @@
 export * as Sqlite from "./sqlite.js"
 
-import { Context, Effect, Fiber, Scope, Semaphore, Stream } from "effect"
+import { Context, Effect, Fiber, Schedule, Scope, Semaphore, Stream } from "effect"
 import { identity } from "effect/Function"
 import { SqlClient, Statement } from "effect/sql"
 import type { Connection } from "effect/sql/SqlConnection"
 import type { SqlError } from "effect/sql/SqlError"
 
 export class Native extends Context.Service<Native, unknown>()("@opencode/core/database/SqliteNative") {}
+
+// The first statements on a connection run before its busy_timeout is set, which defaults to 0, so a lock another
+// connection holds (a predecessor still closing, say) fails them at once. Retry only those busy results, within the
+// five-second budget busy_timeout gives the statements after them.
+export const retryBusy = <A, R>(self: Effect.Effect<A, SqlError, R>) =>
+  self.pipe(
+    Effect.retry({
+      while: (error) => error.reason._tag === "LockTimeoutError",
+      schedule: Schedule.exponential("50 millis", 2).pipe(Schedule.upTo({ duration: "5 seconds" })),
+    }),
+  )
 
 export interface ClientConfig {
   readonly spanAttributes?: Record<string, unknown>
