@@ -8,7 +8,7 @@ afterEach(() => clients.splice(0).forEach((client) => client.close()))
 
 describe("worker rpc", () => {
   test("a newer call with the same key replaces one still waiting to run", async () => {
-    const client = start()
+    const { client } = start()
     const busy = client.call("sleep", 50)
     const first = client.call("echo", "first", { key: "echo" })
     const second = client.call("echo", "second", { key: "echo" })
@@ -20,7 +20,7 @@ describe("worker rpc", () => {
   })
 
   test("an aborted call rejects at once, and never runs while it waits", async () => {
-    const client = start()
+    const { client } = start()
     const controller = new AbortController()
     const busy = client.call("sleep", 50)
     const call = client.call("echo", "aborted", { signal: controller.signal })
@@ -33,22 +33,22 @@ describe("worker rpc", () => {
   })
 
   test("an aborted running call aborts its handler's signal", async () => {
-    const client = start()
+    const { client, started } = start()
     const controller = new AbortController()
     const call = client.call("hold", undefined, { signal: controller.signal })
 
-    await Bun.sleep(30)
+    await started("hold")
     controller.abort()
     await expect(call).rejects.toBeInstanceOf(WorkerClosedError)
     expect(await client.call("log", undefined)).toEqual({ ran: ["hold"], aborted: ["hold"], closed: 0 })
   })
 
   test("a handler that finishes after its call was aborted closes its bitmaps instead of replying", async () => {
-    const client = start()
+    const { client, started } = start()
     const controller = new AbortController()
-    const call = client.call("paint", 50, { signal: controller.signal })
+    const call = client.call("paint", undefined, { signal: controller.signal })
 
-    await Bun.sleep(20)
+    await started("paint")
     controller.abort()
     await expect(call).rejects.toBeInstanceOf(WorkerClosedError)
     // The stand-in bitmap cannot be posted, so a reply would fail in the worker before it counted a close.
@@ -56,11 +56,11 @@ describe("worker rpc", () => {
   })
 
   test("a reply that crosses its call's cancel is dropped", async () => {
-    const client = start()
+    const { client, started } = start()
     const controller = new AbortController()
     const call = client.call("spin", 100, { signal: controller.signal })
 
-    await Bun.sleep(30)
+    await started("spin")
     controller.abort()
     await expect(call).rejects.toBeInstanceOf(WorkerClosedError)
     // The worker replied before it read the cancel, and the window's next calls still settle with their own replies.
@@ -69,7 +69,7 @@ describe("worker rpc", () => {
   })
 
   test("close rejects the pending calls and every later one", async () => {
-    const client = start()
+    const { client } = start()
     const pending = client.call("sleep", 1000)
 
     client.close()
@@ -79,11 +79,25 @@ describe("worker rpc", () => {
 })
 
 function start() {
-  const client = createWorkerClient<FixtureMethods>(
-    new Worker(new URL("./worker-rpc.fixture.ts", import.meta.url), { type: "module" }),
-  )
+  const worker = new Worker(new URL("./worker-rpc.fixture.ts", import.meta.url), { type: "module" })
+  const client = createWorkerClient<FixtureMethods>(worker)
 
   clients.push(client)
 
-  return client
+  return { client, started: (method: string) => whenStarted(worker, method) }
+}
+
+/**
+ * Resolves once the worker reports that its handler for `method` has started. Call it in the same tick as the call, so
+ * the listener is attached before the worker can report.
+ */
+function whenStarted(worker: Worker, method: string) {
+  return new Promise<void>((resolve) => {
+    worker.addEventListener("message", function onStarted(event) {
+      if (event.data.started !== method) return
+
+      worker.removeEventListener("message", onStarted)
+      resolve()
+    })
+  })
 }
