@@ -33,7 +33,7 @@
   },
   "scripts": {
     "build": "bun run script/build.ts",
-    "test": "bun test --only-failures",
+    "test": "bun test --path-ignore-patterns 'dist/**' --only-failures",
     "typecheck": "tsgo --noEmit",
     "typecheck:dist": "bun run build && bun typecheck --project tsconfig.dist.json"
   },
