@@ -1,6 +1,6 @@
 export * as ModelRouteLog from "./model-route-log.js"
 
-import { and, asc, count, desc, eq, gt, gte, isNull, ne, or, sql } from "drizzle-orm"
+import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm" 
 import { Effect, Layer, Queue } from "effect"
 import type { AIError, HttpContext } from "@opencode/ai"
 import { RequestExecutor, type StreamOptions } from "@opencode/ai/route"
@@ -634,3 +634,101 @@ export const decisionRows = (db: Database.Interface["db"], since: number, routeI
     .orderBy(desc(RouteDecisionTable.time))
     .limit(ROW_LIMIT)
     .all()
+
+/** The usage columns every rollup below shares: request and failure counts, tokens by kind, and cost. */
+const usageColumns = {
+  requests: count(),
+  failures: sql<number>`coalesce(sum(case when ${RouteAttemptTable.outcome} in ('failure','timeout') then 1 else 0 end), 0)`,
+  input: sql<number>`coalesce(sum(${RouteAttemptTable.tokens_input}), 0)`,
+  output: sql<number>`coalesce(sum(${RouteAttemptTable.tokens_output}), 0)`,
+  reasoning: sql<number>`coalesce(sum(${RouteAttemptTable.tokens_reasoning}), 0)`,
+  cacheRead: sql<number>`coalesce(sum(${RouteAttemptTable.tokens_cache_read}), 0)`,
+  cacheWrite: sql<number>`coalesce(sum(${RouteAttemptTable.tokens_cache_write}), 0)`,
+  costUsd: sql<number>`coalesce(sum(${RouteAttemptTable.cost_usd}), 0)`,
+}
+
+/** Totals per session that made a request since `since`, most recently active first. */
+export const sessionUsage = (db: Database.Interface["db"], since: number, limit: number, sessionID?: string) =>
+  db
+    .select({
+      sessionID: RouteAttemptTable.session_id,
+      first: sql<number>`min(${RouteAttemptTable.time_started})`,
+      last: sql<number>`max(${RouteAttemptTable.time_ended})`,
+      ...usageColumns,
+    })
+    .from(RouteAttemptTable)
+    .where(
+      and(
+        gte(RouteAttemptTable.time_started, since),
+        isNotNull(RouteAttemptTable.session_id),
+        sessionID === undefined ? undefined : eq(RouteAttemptTable.session_id, sessionID),
+      ),
+    )
+    .groupBy(RouteAttemptTable.session_id)
+    .orderBy(desc(sql`max(${RouteAttemptTable.time_ended})`))
+    .limit(limit)
+    .all()
+
+/** Totals per session, pool and target, for the sessions named. */
+export const sessionTargetUsage = (db: Database.Interface["db"], sessionIDs: readonly string[]) =>
+  sessionIDs.length === 0
+    ? Effect.succeed([])
+    : db
+        .select({
+          sessionID: RouteAttemptTable.session_id,
+          routeID: RouteAttemptTable.route_id,
+          providerID: RouteAttemptTable.provider_id,
+          modelID: RouteAttemptTable.model_id,
+          ...usageColumns,
+        })
+        .from(RouteAttemptTable)
+        .where(inArray(RouteAttemptTable.session_id, [...sessionIDs]))
+        .groupBy(
+          RouteAttemptTable.session_id,
+          RouteAttemptTable.route_id,
+          RouteAttemptTable.provider_id,
+          RouteAttemptTable.model_id,
+        )
+        .all()
+
+/** Totals per provider and model since `since`, with how many sessions used each. */
+export const targetUsage = (db: Database.Interface["db"], since: number) =>
+  db
+    .select({
+      providerID: RouteAttemptTable.provider_id,
+      modelID: RouteAttemptTable.model_id,
+      sessions: sql<number>`count(distinct ${RouteAttemptTable.session_id})`,
+      first: sql<number>`min(${RouteAttemptTable.time_started})`,
+      last: sql<number>`max(${RouteAttemptTable.time_ended})`,
+      ...usageColumns,
+    })
+    .from(RouteAttemptTable)
+    .where(gte(RouteAttemptTable.time_started, since))
+    .groupBy(RouteAttemptTable.provider_id, RouteAttemptTable.model_id)
+    .all()
+
+const DAY = sql`strftime('%Y-%m-%d', ${RouteAttemptTable.time_started} / 1000, 'unixepoch')`
+
+/** Totals per UTC day, provider and model since `since`, oldest day first. */
+export const dailyUsage = (db: Database.Interface["db"], since: number) =>
+  db
+    .select({
+      day: sql<string>`${DAY}`,
+      providerID: RouteAttemptTable.provider_id,
+      modelID: RouteAttemptTable.model_id,
+      ...usageColumns,
+    })
+    .from(RouteAttemptTable)
+    .where(gte(RouteAttemptTable.time_started, since))
+    .groupBy(DAY, RouteAttemptTable.provider_id, RouteAttemptTable.model_id)
+    .orderBy(asc(DAY))
+    .all()
+
+/** How often each route offered each target in its selections since `since`, and how often it chose it. The
+ * candidates of every selection are read from its JSON list, so a target that was never chosen still shows. */
+export const offerUsage = (db: Database.Interface["db"], since: number, routeID?: string) =>
+  db.all(
+    sql`select d.route_id as "routeID", j.value as "target", count(*) as "offered", sum(case when d.chosen = j.value then 1 else 0 end) as "chosen" from route_decision as d, json_each(d.candidates) as j where d.time >= ${since}${
+      routeID === undefined ? sql`` : sql` and d.route_id = ${routeID}`
+    } group by d.route_id, j.value`,
+  )

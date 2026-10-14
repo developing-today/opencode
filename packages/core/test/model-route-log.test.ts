@@ -145,6 +145,79 @@ describe("per-pool history", () => {
   )
 })
 
+describe("usage history", () => {
+  it.live("keeps cost with each attempt and rolls usage up by session, target, day and offer", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      ModelRouteLog.record({
+        kind: "decision",
+        row: {
+          time: 1_000,
+          session_id: "ses_usage",
+          route_id: "usage-pool",
+          selection: "weighted",
+          candidates: ["openai/gpt-6-luna", "azure/gpt-6-luna"],
+          chosen: "openai/gpt-6-luna",
+          reason: "drawn",
+          detail: { weights: { "openai/gpt-6-luna": 3, "azure/gpt-6-luna": 1 } },
+        },
+      })
+      ModelRouteLog.record({
+        kind: "attempt",
+        row: attempt({
+          route_id: "usage-pool",
+          session_id: "ses_usage",
+          time_started: 1_000,
+          time_ended: 2_000,
+          tokens_input: 1_000,
+          tokens_output: 200,
+          cost_usd: 0.25,
+        }),
+      })
+      ModelRouteLog.record({
+        kind: "attempt",
+        row: attempt({
+          route_id: "usage-pool",
+          session_id: "ses_usage",
+          time_started: 3_000,
+          time_ended: 4_000,
+          outcome: "failure",
+          output_started: false,
+          error_tag: "QuotaExceeded",
+          tokens_input: 500,
+          cost_usd: 0.1,
+        }),
+      })
+      yield* Effect.sleep("100 millis")
+
+      const session = (yield* ModelRouteLog.sessionUsage(db, 0, 50)).find((row) => row.sessionID === "ses_usage")
+      expect(session).toMatchObject({ requests: 2, failures: 1, input: 1_500, output: 200 })
+      expect(session?.costUsd).toBeCloseTo(0.35)
+
+      const sessionTargets = yield* ModelRouteLog.sessionTargetUsage(db, ["ses_usage"])
+      expect(sessionTargets).toEqual([
+        expect.objectContaining({ routeID: "usage-pool", providerID: "openai", modelID: "gpt-6-luna", requests: 2 }),
+      ])
+
+      const target = (yield* ModelRouteLog.targetUsage(db, 0)).find(
+        (row) => row.providerID === "openai" && row.modelID === "gpt-6-luna" && row.sessions === 1,
+      )
+      expect(target).toMatchObject({ requests: 2, failures: 1 })
+
+      const days = yield* ModelRouteLog.dailyUsage(db, 0)
+      expect(days.some((row) => row.day === "1970-01-01" && row.providerID === "openai")).toBe(true)
+
+      const offers = (yield* ModelRouteLog.offerUsage(db, 0, "usage-pool")) as Array<{
+        target: string
+        offered: number
+        chosen: number
+      }>
+      expect(offers.find((row) => row.target === "openai/gpt-6-luna")).toMatchObject({ offered: 1, chosen: 1 })
+      expect(offers.find((row) => row.target === "azure/gpt-6-luna")).toMatchObject({ offered: 1, chosen: 0 })
+    }),
+  )
+})
+
 describe("route note restore", () => {
   it.live("restores active adjustments, drops expired and removed ones", () =>
     Effect.gen(function* () {

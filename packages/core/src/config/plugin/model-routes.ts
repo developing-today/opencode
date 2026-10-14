@@ -17,6 +17,7 @@ import { ModelRouteAutonomy } from "../../model-route-autonomy.js"
 import { ModelRouteLog } from "../../model-route-log.js"
 import { RouteAdjustTool } from "../../tool/plugin/route-adjust.js"
 import { RouteStatsTool } from "../../tool/plugin/route-stats.js"
+import { RouteUsageTool } from "../../tool/plugin/route-usage.js"
 
 type SourceModel = {
   readonly ref: Model.Ref
@@ -52,6 +53,8 @@ export const Plugin = define({
     yield* ctx.tool.transform((editor) => {
       const routes = configuredRoutes(loaded.entries)
       if (routes.size === 0) return
+      // Usage is read-only, so it is offered at every autonomy level.
+      RouteUsageTool.add(editor, () => ({ routes: configuredRoutes(loaded.entries) }))
       if (!ModelRouteAutonomy.offersTools(Array.from(routes.values(), (route) => route.autonomy))) return
       RouteAdjustTool.add(editor, permission)
       RouteStatsTool.add(editor, permission, () => ({
