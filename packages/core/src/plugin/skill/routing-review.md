@@ -97,7 +97,7 @@ Start from the configured weight, then apply in order:
 ### Plans, tiers and notes
 
 - Plan records and their quota windows: see `plan-tracking`.
-- Model tiers (`plan`, `common`, `medium`, `high`) say what a model costs the user
+- Model tiers (`cheap`, `standard`, `frontier`) say what a model costs the user, its speed/capabilities,
   and whether a plan covers it. Pool purposes say what each pool is for.
 - Notes are the user's experiences and expectations, dated and never rewritten.
 
@@ -147,8 +147,8 @@ categories that use it. Compare each member with the pool's median member:
 - Undersized: failures such as `ContextLengthExceeded` on a member, while the pool's
   `inputTokens` p90 is well above that member's context.
 - Costly for the pool's purpose: compare the member's cost per request (from
-  `route_usage`) with its tier in the plan store. A `common` model that costs like a
-  `high` one is a misclassification.
+  `route_usage`) with its tier in the plan store. A `cheap` pool with a `frontier`
+  model or an unmanaged high-cost model is a misclassification.
 
 Recommend moving a member only when two signals agree and the evidence meets the
 minimums. A single bad hour is not evidence: check `predictions` first. Quality is
@@ -206,17 +206,17 @@ A mismatch is a proposal, not a fact. Route data cannot show answer quality, so 
 what the user should check. When several categories share one pool, its numbers mix
 their traffic.
 
-### 3.6 Cost tiers
+### 3.6 Cost and Capability tiers
 
 Use the model tiers in the plan store, and the cost per request from `route_usage`.
 
-- A `high` model that a `plan` covers, with headroom in that plan's window, can take
-  work that a metered `common` model does now. Propose moving the work, and say which
+- A `frontier` model that a subscription covers, with headroom in that plan's window, can take
+  work that a metered `standard` model does now. Propose moving the work, and say which
   window has the headroom.
-- A `high` model with no covering plan, used for `trivial` or `research` work, is
-  the usual cause of an unexpected bill. Propose moving that work to a `common`
+- A `frontier` model with no covering plan, used for `trivial` or `research` work, is
+  the usual cause of an unexpected bill. Propose moving that work to a `cheap` or `standard`
   member.
-- A `plan` model whose window is spent (`percent` at or near 100) should drop to a
+- A subscription-covered model whose window is spent (`percent` at or near 100) should drop to a
   metered fallback until the window resets. Give the reset time from `resetRule` or
   `resetAt`.
 - An expectation note ("I always have GPT left at month end") is a reason to spend

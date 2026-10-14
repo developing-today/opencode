@@ -47,16 +47,16 @@ describe("plan_info", () => {
   test("a tier is recorded for a model, and a pool records its purpose", () => {
     const dataDir = dir()
     const tiered = PlanInfoTool.apply(
-      { action: "tier", model: "openai/gpt-6-astra", tier: "high", coveredBy: ["openai-plus"] },
+      { action: "tier", model: "openai/gpt-6-astra", tier: "frontier", coveredBy: ["openai-plus"] },
       { dataDir, now },
     )
-    expect(tiered.content).toContain("Set openai/gpt-6-astra to the high tier")
+    expect(tiered.content).toContain("Set openai/gpt-6-astra to the frontier tier")
     const pooled = PlanInfoTool.apply(
-      { action: "pool", id: "hard", tier: "high", purpose: "debugging with an unknown cause" },
+      { action: "pool", id: "hard", tier: "frontier", purpose: "debugging with an unknown cause" },
       { dataDir, now },
     )
-    expect(pooled.content).toContain("Pool hard: high, debugging with an unknown cause")
-    expect(PlanInfoTool.apply({ action: "list" }, { dataDir, now }).content).toContain("openai/gpt-6-astra: high")
+    expect(pooled.content).toContain("Pool hard: frontier, debugging with an unknown cause")
+    expect(PlanInfoTool.apply({ action: "list" }, { dataDir, now }).content).toContain("openai/gpt-6-astra: frontier")
   })
 
   test("a damaged plan file stops writes, with a message that says what to fix", () => {
@@ -67,7 +67,7 @@ describe("plan_info", () => {
 
   test("a request missing what it needs is refused with the reason", () => {
     const dataDir = dir()
-    expect(PlanInfoTool.apply({ action: "tier", tier: "high" }, { dataDir, now }).content).toContain("needs model")
+    expect(PlanInfoTool.apply({ action: "tier", tier: "frontier" }, { dataDir, now }).content).toContain("needs model")
     expect(PlanInfoTool.apply({ action: "note" }, { dataDir, now }).content).toContain("needs text")
   })
 })

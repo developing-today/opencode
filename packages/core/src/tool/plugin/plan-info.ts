@@ -14,7 +14,7 @@ Actions:
 - list: every plan with the days since it was last verified, the model tiers, the pool tiers and the latest notes.
 - get: one plan by id, or the first plan for providerID, with guidance on where to find its current details.
 - upsert: create or update a plan. Give providerID, and any of label, plan, coverage, fee, quotas, expiresOn, status, verifiedAt, verifiedFrom, howToCheck, details. A quota window is { name, unit, limit, windowHours, resetRule }.
-- tier: set a model's cost tier. model is "provider/model"; tier is plan, common, medium or high; coveredBy lists the plan ids that cover it.
+- tier: set a model's cost tier. model is "provider/model"; tier is cheap, standard or frontier; coveredBy lists the plan ids that cover it.
 - pool: set what a pool is for and its tier. id is the pool id.
 - note: record what the user said, as text, with a kind (experience, expectation, plan-change, correction, other) and the provider, plan, model or pool it is about. Notes are never rewritten.
 - notes: list notes, filtered by providerID, planID, modelID, poolID, kind or since.

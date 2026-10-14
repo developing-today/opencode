@@ -13,7 +13,7 @@ import { Schema } from "effect"
  */
 
 export const Coverage = Schema.Literals(["subscription", "credits", "metered", "free", "trial"])
-export const Tier = Schema.Literals(["plan", "common", "medium", "high"])
+export const Tier = Schema.Literals(["cheap", "standard", "frontier"])
 export const Unit = Schema.Literals(["requests", "messages", "tokens", "usd", "percent", "other"])
 export const Status = Schema.Literals(["active", "expired", "cancelled", "unknown"])
 export const Period = Schema.Literals(["monthly", "yearly", "once"])
@@ -195,7 +195,7 @@ export const setModel = (
 ): Store => {
   const existing = store.models[model]
   const tier = patch.tier ?? existing?.tier
-  if (!tier) throw new Error(`${model} needs a tier: plan, common, medium or high.`)
+  if (!tier) throw new Error(`${model} needs a tier: cheap, standard or frontier.`)
   const entry = Schema.decodeUnknownSync(ModelEntry)(merge(existing ?? {}, { ...patch, tier, updatedAt: now }))
   return { ...store, models: { ...store.models, [model]: entry } }
 }

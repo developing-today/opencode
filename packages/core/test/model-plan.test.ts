@@ -74,14 +74,14 @@ describe("ModelPlan store", () => {
     const store = ModelPlan.setModel(
       ModelPlan.emptyStore(),
       "openai/gpt-6-astra",
-      { tier: "high", coveredBy: ["openai-plus"] },
+      { tier: "frontier", coveredBy: ["openai-plus"] },
       NOW,
     )
-    expect(store.models["openai/gpt-6-astra"]).toMatchObject({ tier: "high", coveredBy: ["openai-plus"] })
-    const moved = ModelPlan.setModel(store, "openai/gpt-6-astra", { tier: "plan" }, NOW)
-    expect(moved.models["openai/gpt-6-astra"]).toMatchObject({ tier: "plan", coveredBy: ["openai-plus"] })
-    const pooled = ModelPlan.setPool(moved, "hard", { tier: "high", purpose: "debugging with an unknown cause" }, NOW)
-    expect(pooled.pools.hard).toMatchObject({ tier: "high", purpose: "debugging with an unknown cause" })
+    expect(store.models["openai/gpt-6-astra"]).toMatchObject({ tier: "frontier", coveredBy: ["openai-plus"] })
+    const moved = ModelPlan.setModel(store, "openai/gpt-6-astra", { tier: "cheap" }, NOW)
+    expect(moved.models["openai/gpt-6-astra"]).toMatchObject({ tier: "cheap", coveredBy: ["openai-plus"] })
+    const pooled = ModelPlan.setPool(moved, "hard", { tier: "frontier", purpose: "debugging with an unknown cause" }, NOW)
+    expect(pooled.pools.hard).toMatchObject({ tier: "frontier", purpose: "debugging with an unknown cause" })
   })
 
   test("notes are appended, filtered and kept in order, and a damaged line is skipped and counted", () => {

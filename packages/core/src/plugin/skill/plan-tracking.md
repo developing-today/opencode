@@ -22,9 +22,12 @@ give you. The records live in the plan store, read and written with `plan_info`.
   `tokens`, `usd`, `percent` or `other`), `limit`, `windowHours` (how long the window
   is, rolling), `resetRule` (for example "rolling", "daily 00:00 UTC", "monthly on the
   14th") and `resetAt` (the next known reset).
-- Model tiers: `plan`, `common`, `medium` or `high`, per `provider/model`, with
-  `coveredBy` (the plan ids that cover it). `plan` means a flat plan covers the model,
-  so its marginal cost is zero while quota remains.
+- Model tiers: `cheap`, `standard` or `frontier`, per `provider/model`, with
+  `coveredBy` (the plan ids that cover it). `cheap` describes models with negligible
+  per-token costs or high-throughput fast models. `standard` covers everyday balanced
+  engineering workhorses. `frontier` covers maximum-capability, heavy reasoning, or
+  expensive frontier models. Models covered by an active subscription plan have
+  marginal per-token cost zero while within quota limits.
 - Pool purposes: a pool's `tier` and a `purpose` in words.
 - Notes: dated, append-only, each with a `kind` (`experience`, `expectation`,
   `plan-change`, `correction` or `other`), and optionally the provider, plan, model
