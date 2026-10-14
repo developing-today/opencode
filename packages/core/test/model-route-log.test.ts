@@ -4,6 +4,7 @@ import { Database } from "@opencode/core/database/database"
 import { ModelRoute } from "@opencode/core/model-route"
 import { Permission } from "@opencode/core/permission"
 import { ModelRouteLog } from "@opencode/core/model-route-log"
+import { ModelRouteReview } from "@opencode/core/model-route-review"
 import { AIError, QuotaExceededError } from "@opencode/ai"
 import { RouteStatsTool } from "@opencode/core/tool/plugin/route-stats"
 import { RouteAttemptTable, RouteDecisionTable, RouteHealthTable } from "@opencode/core/model-route-log/sql"
@@ -79,6 +80,67 @@ describe("ModelRouteLog", () => {
       expect(stats).toHaveLength(1)
       expect(stats[0]).toMatchObject({ attempts: 2, failures: 1, avgFirstTokenMs: 100 })
       expect(yield* ModelRouteLog.recentFailures(db, 0)).toHaveLength(1)
+    }),
+  )
+})
+
+describe("per-pool history", () => {
+  it.live("reads a pool's attempts and selections back for the review", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      ModelRouteLog.record({
+        kind: "decision",
+        row: {
+          time: 1_000,
+          session_id: "ses_pool",
+          route_id: "pool-cheap",
+          selection: "weighted",
+          candidates: ["openai/gpt-6-luna", "azure/gpt-6-luna"],
+          chosen: "openai/gpt-6-luna",
+          reason: "drawn",
+          detail: {
+            weights: { "openai/gpt-6-luna": 3, "azure/gpt-6-luna": 1 },
+            excluded: [{ candidate: "azure/gpt-6-luna", reason: "cooldown-until:9000" }],
+          },
+        },
+      })
+      ModelRouteLog.record({
+        kind: "attempt",
+        row: attempt({ route_id: "pool-cheap", session_id: "ses_pool", first_token_ms: 300, tokens_input: 4_000 }),
+      })
+      ModelRouteLog.record({ kind: "attempt", row: attempt({ route_id: "pool-other", session_id: "ses_other" }) })
+      yield* Effect.sleep("100 millis")
+
+      const attempts = yield* ModelRouteLog.attemptRows(db, 0, "pool-cheap")
+      expect(attempts).toEqual([
+        expect.objectContaining({
+          routeID: "pool-cheap",
+          providerID: "openai",
+          modelID: "gpt-6-luna",
+          sessionID: "ses_pool",
+          firstTokenMs: 300,
+          tokensInput: 4_000,
+        }),
+      ])
+      const decisions = yield* ModelRouteLog.decisionRows(db, 0, "pool-cheap")
+      expect(decisions).toEqual([
+        expect.objectContaining({
+          routeID: "pool-cheap",
+          candidates: ["openai/gpt-6-luna", "azure/gpt-6-luna"],
+          chosen: "openai/gpt-6-luna",
+          reason: "drawn",
+        }),
+      ])
+      const [summary] = ModelRouteReview.summarize({ attempts, decisions, configured: new Map() })
+      const members = Object.fromEntries((summary?.members ?? []).map((member) => [member.target, member]))
+      expect(members["openai/gpt-6-luna"]).toMatchObject({
+        attempts: 1,
+        draws: 1,
+        drawsWon: 1,
+        takeRate: 1,
+        firstTokenMs: 300,
+      })
+      expect(members["azure/gpt-6-luna"]).toMatchObject({ attempts: 0, excluded: { cooldown: 1 } })
     }),
   )
 })

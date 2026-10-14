@@ -17,7 +17,7 @@ export const RouteDecisionTable = sqliteTable(
     /** Eligible `provider/model` targets in the order they would be tried. */
     candidates: text({ mode: "json" }).$type<string[]>().notNull(),
     chosen: text(),
-    /** `ordered`, `sticky`, `drawn`, `redrawn` or `all-cooling`. */
+    /** `ordered`, `adjusted`, `sticky`, `drawn` or `no-candidates`. */
     reason: text().notNull(),
     /** Overrides and cooldowns that shaped this decision. */
     detail: text({ mode: "json" }).$type<Record<string, unknown>>(),

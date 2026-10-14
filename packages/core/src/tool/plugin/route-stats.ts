@@ -2,11 +2,13 @@ export * as RouteStatsTool from "./route-stats.js"
 
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
 import { ToolFailure } from "@opencode/ai"
+import type { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
 import { Effect, Option, Schema } from "effect"
 import type { Permission } from "../../permission.js"
 import { ModelRoute } from "../../model-route.js"
 import { ModelRouteLimits } from "../../model-route-limits.js"
 import { ModelRouteLog } from "../../model-route-log.js"
+import { ModelRouteReview } from "../../model-route-review.js"
 import { ModelRouteTuning } from "../../model-route-tuning.js"
 
 export const name = "route_stats"
@@ -14,10 +16,14 @@ export const name = "route_stats"
 export const description = `Read how routed models (opencode-route/*) have actually performed, to explain a routing problem or tune it.
 
 Returns, for the last \`hours\` (default 24): attempts, failures, timeouts and average first-output latency and speed per provider/model; failures grouped by exact error tag, code and HTTP status with the latest provider message; current cooldowns; request and token usage; and the adjustments in force.
-It also lists suggested adjustments derived from that history (a high failure rate, repeated quota errors, unusually slow first output). Set \`apply\` to true to put the suggestions in force; they only lower a target's share or skip it, expire in 30 minutes, and are replaced by the next run. Apply them only when asked to tune routing or when the data clearly shows a problem.`
+It also returns each pool: its configuration, and per member how often it was offered and chosen, how often its new-session draws matched its weight, why it was left out (cooldown, provider limit, budget, user skip), and its latency, speed, errors and request sizes. Set \`route\` to one pool id to narrow that view. The tuner's notes come back too.
+It lists suggested adjustments derived from that history (a high failure rate, repeated quota errors, unusually slow first output). Set \`apply\` to true to put the suggestions in force; they only lower a target's share or skip it, expire in 30 minutes, and are replaced by the next run. Apply them only when asked to tune routing or when the data clearly shows a problem.`
 
 export const Input = Schema.Struct({
   hours: Schema.Finite.check(Schema.isBetween({ minimum: 0.1, maximum: 24 * 14 })).pipe(Schema.optional),
+  route: Schema.String.pipe(Schema.optional).annotate({
+    description: "A pool id, such as cheap-fast, to narrow the per-pool view to.",
+  }),
   apply: Schema.Boolean.pipe(Schema.optional),
 })
 export type Input = typeof Input.Type
@@ -29,7 +35,17 @@ export const Output = Schema.Struct({
   errors: Schema.Array(Schema.Unknown),
   suggestions: Schema.Array(Schema.Unknown),
   adjustments: Schema.Array(Schema.Unknown),
+  routes: Schema.Array(Schema.Unknown),
+  notes: Schema.Array(Schema.String),
 })
+
+/** What the configuration says about pools and tuning. Read when the tool runs, so edits apply without a restart. */
+export interface Source {
+  readonly routes: ReadonlyMap<string, ConfigModelRoutes.Route>
+  readonly notes: readonly string[]
+}
+
+const NO_SOURCE: Source = { routes: new Map(), notes: [] }
 
 const MESSAGE_LIMIT = 300
 
@@ -45,7 +61,7 @@ export const summarizeRateLimit = (snapshot: ModelRouteLimits.Snapshot | undefin
     })),
   }
 
-export const collect = (input: Input) =>
+export const collect = (input: Input, source: Source = NO_SOURCE) =>
   Effect.gen(function* () {
     const now = Date.now()
     const since = now - (input.hours ?? 24) * 3_600_000
@@ -55,13 +71,17 @@ export const collect = (input: Input) =>
         errors: ModelRouteLog.errorBreakdown(db, since),
         hedges: ModelRouteLog.hedgeAccuracy(db, since),
         hourly: ModelRouteLog.hourlyStats(db, since),
+        attempts: ModelRouteLog.attemptRows(db, since, input.route),
+        decisions: ModelRouteLog.decisionRows(db, since, input.route),
       }).pipe(Effect.orDie),
     )
-    const { stats, errors, hedges, hourly } = Option.getOrElse(read, () => ({
+    const { stats, errors, hedges, hourly, attempts, decisions } = Option.getOrElse(read, () => ({
       stats: [],
       errors: [],
       hedges: [],
       hourly: [],
+      attempts: [],
+      decisions: [],
     }))
     const targets = stats.map((row) => {
       const ref = ModelRoute.ref({ providerID: row.providerID, model: row.modelID })
@@ -78,6 +98,10 @@ export const collect = (input: Input) =>
     })
     const predictions = ModelRouteTuning.predict({ hourly, errors, now })
     const suggestions = ModelRouteTuning.suggest({ stats, errors, now })
+    const pools = new Map<string, ModelRouteReview.Configured>()
+    for (const [id, route] of source.routes) {
+      if (input.route === undefined || id === input.route) pools.set(id, ModelRouteReview.configured(route))
+    }
     return {
       targets,
       hedges,
@@ -85,6 +109,8 @@ export const collect = (input: Input) =>
       errors: errors.map((error) => ({ ...error, lastMessage: error.lastMessage?.slice(0, MESSAGE_LIMIT) ?? null })),
       suggestions,
       adjustments: ModelRoute.activeAdjustments(now),
+      routes: ModelRouteReview.summarize({ attempts, decisions, configured: pools }),
+      notes: [...source.notes],
       noDatabase: Option.isNone(read),
     }
   })
@@ -99,8 +125,59 @@ const rateLimitText = (summary: ReturnType<typeof summarizeRateLimit>) =>
         .join(", ")} ${summary.ageSeconds}s ago`
     : ""
 
-const describe = (report: Effect.Success<ReturnType<typeof collect>>, applied: number) => {
-  if (report.noDatabase) return "Routing history is unavailable: no database is attached."
+const counts = (values: Readonly<Record<string, number>>) =>
+  Object.entries(values)
+    .map(([key, count]) => `${key} ${count}`)
+    .join(", ") || "none"
+
+const describeRoute = (route: ModelRouteReview.RouteSummary) => {
+  const pool = route.configured
+  const settings = pool
+    ? [
+        pool.selection,
+        pool.autonomy ? `autonomy ${pool.autonomy}` : undefined,
+        pool.hedgeAfterMs ? `hedge after ${pool.hedgeAfterMs}ms` : undefined,
+      ]
+        .filter((item) => item !== undefined)
+        .join(", ")
+    : "not in the configuration"
+  const header = `pool ${route.id} (${settings}): ${route.attempts} attempts, ${route.sessions} sessions, ${route.decisions} selections; input tokens p50 ${route.inputTokens.p50 ?? "n/a"}, p90 ${route.inputTokens.p90 ?? "n/a"}; selections by reason: ${counts(route.reasons)}`
+  return [header, ...route.members.map(describeMember)]
+}
+
+const describeMember = (member: ModelRouteReview.Member) => {
+  const parts: string[] = []
+  if (member.configuredWeight !== null) parts.push(`weight ${member.configuredWeight}`)
+  if (member.attempts === 0 && member.offered === 0 && Object.keys(member.excluded).length === 0) {
+    return `  ${member.target}: ${parts.join(", ") || "not listed"}, no traffic in this window`
+  }
+  parts.push(`${member.attempts} attempts`)
+  if (member.failureRate !== null)
+    parts.push(
+      `${Math.round(member.failureRate * 100)}% failed${member.timeouts ? `, ${member.timeouts} timed out` : ""}`,
+    )
+  if (member.firstTokenMs !== null) parts.push(`first output ${member.firstTokenMs}ms`)
+  if (member.tokensPerSecond !== null) parts.push(`${member.tokensPerSecond} tok/s`)
+  if (member.inputTokens !== null) parts.push(`median input ${member.inputTokens} tokens`)
+  parts.push(`offered ${member.offered}, chosen ${member.chosen}`)
+  if (member.takeRate !== null)
+    parts.push(
+      `won ${member.drawsWon} of ${member.draws} new-session draws (${Math.round(member.takeRate * 100)}%, weight promised ${member.expectedShare === null ? "n/a" : `${Math.round(member.expectedShare * 100)}%`})`,
+    )
+  if (Object.keys(member.excluded).length > 0) parts.push(`excluded: ${counts(member.excluded)}`)
+  if (Object.keys(member.errorTags).length > 0) parts.push(`errors: ${counts(member.errorTags)}`)
+  return `  ${member.target}: ${parts.join(", ")}`
+}
+
+const describe = (report: Effect.Success<ReturnType<typeof collect>>, applied: number, requested?: string) => {
+  const routes = report.routes.flatMap(describeRoute)
+  const notes = report.notes.length > 0 ? [`Tuner notes: ${report.notes.join("; ")}`] : []
+  const missing =
+    requested !== undefined && report.routes.length === 0
+      ? [`No pool named ${requested} is in the configuration or has traffic in this window.`]
+      : []
+  if (report.noDatabase)
+    return ["Routing history is unavailable: no database is attached.", ...routes, ...missing, ...notes].join("\n")
   const lines = [`${report.targets.length} targets with attempts in the window.`]
   for (const row of report.targets)
     lines.push(
@@ -131,11 +208,11 @@ const describe = (report: Effect.Success<ReturnType<typeof collect>>, applied: n
       ? "No adjustments suggested."
       : `${applied > 0 ? "Applied" : "Suggested"}: ${report.suggestions.map((item) => `${item.action} ${item.match}${item.factor ? ` x${item.factor}` : ""} (${item.note})`).join("; ")}`,
   )
-  return lines.join("\n")
+  return [...lines, ...missing, ...routes, ...notes].join("\n")
 }
 
 /** Reading is free; putting suggestions in force needs the same approval as `route_adjust`. */
-export const add = (editor: ToolEditor, permission: Permission.Interface) =>
+export const add = (editor: ToolEditor, permission: Permission.Interface, source: () => Source = () => NO_SOURCE) =>
   editor.add({
     name,
     options: { codemode: false },
@@ -144,7 +221,7 @@ export const add = (editor: ToolEditor, permission: Permission.Interface) =>
     output: Output,
     execute: (input, context) =>
       Effect.gen(function* () {
-        const report = yield* collect(input)
+        const report = yield* collect(input, source())
         const apply = input.apply === true && report.suggestions.length > 0
         if (apply) {
           yield* permission
@@ -166,8 +243,10 @@ export const add = (editor: ToolEditor, permission: Permission.Interface) =>
             errors: report.errors,
             suggestions: report.suggestions,
             adjustments: ModelRoute.activeAdjustments(),
+            routes: report.routes,
+            notes: report.notes,
           },
-          content: describe(report, apply ? report.suggestions.length : 0),
+          content: describe(report, apply ? report.suggestions.length : 0, input.route),
         }
       }),
   })

@@ -592,3 +592,45 @@ export const errorBreakdown = (db: Database.Interface["db"], since: number) =>
     )
     .orderBy(desc(count()))
     .all()
+
+/** Most rows a per-pool read takes. The newest rows are the ones a review needs, so older ones are dropped. */
+const ROW_LIMIT = 20_000
+
+/** Request attempts in the window, newest first, with what the per-pool view needs. */
+export const attemptRows = (db: Database.Interface["db"], since: number, routeID?: string) =>
+  db
+    .select({
+      routeID: RouteAttemptTable.route_id,
+      providerID: RouteAttemptTable.provider_id,
+      modelID: RouteAttemptTable.model_id,
+      sessionID: RouteAttemptTable.session_id,
+      outcome: RouteAttemptTable.outcome,
+      errorTag: RouteAttemptTable.error_tag,
+      firstTokenMs: RouteAttemptTable.first_token_ms,
+      tokensPerSecond: RouteAttemptTable.tokens_per_second,
+      tokensInput: RouteAttemptTable.tokens_input,
+    })
+    .from(RouteAttemptTable)
+    .where(
+      and(gte(RouteAttemptTable.time_started, since), routeID ? eq(RouteAttemptTable.route_id, routeID) : undefined),
+    )
+    .orderBy(desc(RouteAttemptTable.time_started))
+    .limit(ROW_LIMIT)
+    .all()
+
+/** Selections in the window, newest first: who was eligible, the weights and exclusions behind each, and who was chosen. */
+export const decisionRows = (db: Database.Interface["db"], since: number, routeID?: string) =>
+  db
+    .select({
+      routeID: RouteDecisionTable.route_id,
+      sessionID: RouteDecisionTable.session_id,
+      candidates: RouteDecisionTable.candidates,
+      chosen: RouteDecisionTable.chosen,
+      reason: RouteDecisionTable.reason,
+      detail: RouteDecisionTable.detail,
+    })
+    .from(RouteDecisionTable)
+    .where(and(gte(RouteDecisionTable.time, since), routeID ? eq(RouteDecisionTable.route_id, routeID) : undefined))
+    .orderBy(desc(RouteDecisionTable.time))
+    .limit(ROW_LIMIT)
+    .all()

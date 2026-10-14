@@ -54,7 +54,10 @@ export const Plugin = define({
       if (routes.size === 0) return
       if (!ModelRouteAutonomy.offersTools(Array.from(routes.values(), (route) => route.autonomy))) return
       RouteAdjustTool.add(editor, permission)
-      RouteStatsTool.add(editor, permission)
+      RouteStatsTool.add(editor, permission, () => ({
+        routes: configuredRoutes(loaded.entries),
+        notes: configuredTuning(loaded.entries)?.notes ?? [],
+      }))
     })
 
     yield* ctx.provider.transform((providers) => {
