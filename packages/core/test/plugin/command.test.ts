@@ -78,6 +78,10 @@ describe("CommandPlugin.Plugin", () => {
         name: "review",
         description: "review changes [commit|branch|pr], defaults to uncommitted",
       })
+      expect(yield* command.get("routing-review")).toMatchObject({
+        name: "routing-review",
+        description: "review model pools, categories and plan use (read-only)",
+      })
       yield* command.execute({
         name: "init",
         invocation: {

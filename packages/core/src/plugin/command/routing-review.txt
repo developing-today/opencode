@@ -1,0 +1,5 @@
+Review my model pools and routing with the routing-review skill.
+
+Load the routing-review skill first and follow it. Start with route_stats for the last 168 hours, then the configuration and the categories, then decide. Stay read-only: recommend changes and wait for my approval before changing anything.
+
+Anything I write after this command is context from me, such as plan facts, prices, or what a pool is for. Use it as I stated it, and check it against the data wherever the data can speak to it. If the question needs plan facts I have not given, ask for them in the plan facts table from the skill.

@@ -448,9 +448,17 @@ likely your network than any one target, so no target is cooled.
 While routes are configured, the `route_stats` tool lets the agent read how targets
 have performed: attempts, failures, first-output latency, speed, current cooldowns
 and usage, and failures grouped by exact error code and HTTP status with the latest
-provider message. It also suggests adjustments from that history (a high failure
-rate, repeated quota errors, unusually slow first output); with `apply` they are put
-in force for 30 minutes, only ever lowering a target's share or skipping it.
+provider message. For each pool it also sets the configuration beside what happened:
+how often each member was offered and chosen, how often its new-session draws matched
+the share its weight promised, why it was left out (cooldown, provider limit, budget,
+user skip), and its request sizes. Pass `route` to narrow that to one pool. It
+suggests adjustments from that history (a high failure rate, repeated quota errors,
+unusually slow first output); with `apply` they are put in force for 30 minutes, only
+ever lowering a target's share or skipping it.
+
+To review pools, weights and plan use together, run `/routing-review`. It loads the
+`routing-review` skill, which explains what each signal means and the thresholds for
+acting on it, and recommends changes without making any until you approve one.
 
 The review also looks at _when_ each target tends to fail. A target that has been
 unreliable at the current hour is down-weighted for a while, while one that only

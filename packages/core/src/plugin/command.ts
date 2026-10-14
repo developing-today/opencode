@@ -7,6 +7,7 @@ import { Location } from "../location.js"
 import { Mcp } from "../mcp/index.js"
 import PROMPT_INITIALIZE from "./command/initialize.txt"
 import PROMPT_REVIEW from "./command/review.txt"
+import PROMPT_ROUTING_REVIEW from "./command/routing-review.txt"
 
 export const Plugin = define({
   id: "opencode.command",
@@ -48,6 +49,19 @@ export const Plugin = define({
               ...input.prompt,
               sessionID: input.sessionID,
               text: append(PROMPT_REVIEW.replace("${path}", location.project.directory), input.prompt.text),
+              delivery: input.delivery,
+            })
+            .pipe(Effect.asVoid),
+      })
+      editor.add({
+        name: "routing-review",
+        description: "review model pools, categories and plan use (read-only)",
+        execute: (input) =>
+          ctx.session
+            .prompt({
+              ...input.prompt,
+              sessionID: input.sessionID,
+              text: append(PROMPT_ROUTING_REVIEW, input.prompt.text),
               delivery: input.delivery,
             })
             .pipe(Effect.asVoid),

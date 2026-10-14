@@ -11,14 +11,18 @@ import { Config } from "../config.js"
 import os from "os"
 import opencodeContent from "./skill/opencode.md" with { type: "text" }
 import reportContent from "./skill/report.md" with { type: "text" }
+import routingReviewContent from "./skill/routing-review.md" with { type: "text" }
 
 export const OpencodeContent = opencodeContent
 export const ReportContent = reportContent
+export const RoutingReviewContent = routingReviewContent
 
 export const OpencodeDescription =
   "Use this skill for any question about OpenCode itself, including how OpenCode works, using or configuring it, migrating from V1 to V2, troubleshooting it, developing plugins or integrations, using the OpenCode SDK, clients, server, or API, and contributing to the OpenCode codebase. Also use it for OpenCode agents, commands, skills, tools, permissions, MCP servers, providers, models, themes, keybinds, formatters, the CLI, TUI, desktop app, and web app."
 const REPORT_DESCRIPTION =
   "Use when the user wants to report an opencode issue or bug. Collect standard diagnostics, add user-specific reproduction context, and publish the issue with GitHub CLI."
+export const RoutingReviewDescription =
+  "Use when the user asks to review, audit, tune or explain their model pools (opencode-route/*), pool weights, schedules or failover, OpenChamber categories and classification, which providers or models to use or turn off, or how to make their plans and quotas last. Reads route history and the configuration, recommends changes, and changes nothing without approval."
 
 export const Plugin = define({
   id: "opencode.skill",
@@ -41,6 +45,15 @@ export const Plugin = define({
           description: REPORT_DESCRIPTION,
           path: AbsolutePath.make("/builtin/report.md"),
           content: reportContent,
+        }),
+      )
+      editor.add(
+        Skill.Info.make({
+          id: Skill.ID.make("routing-review"),
+          name: Skill.Name.make("Routing Review"),
+          description: RoutingReviewDescription,
+          path: AbsolutePath.make("/builtin/routing-review.md"),
+          content: RoutingReviewContent,
         }),
       )
     })

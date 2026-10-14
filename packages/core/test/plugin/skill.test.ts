@@ -52,6 +52,14 @@ describe("SkillPlugin.Plugin", () => {
       )
       expect(report?.content).toContain("- opencode version: 1.2.3")
       expect(report?.content).toContain("- install/channel: beta")
+      expect(skills).toContainEqual(
+        expect.objectContaining({
+          id: "routing-review",
+          name: "Routing Review",
+          description: expect.stringContaining("model pools"),
+        }),
+      )
+      expect(skills.find((item) => item.id === "routing-review")?.content).toContain("route_stats")
     }),
   )
 
