@@ -846,6 +846,12 @@ describe("Config", () => {
     expect(migrateV1({ experimental: { model_route_tuning: { intervalMinutes: 0 } } }).experimental).toBeUndefined()
   })
 
+  test("keeps the tuner's notes, which the configuration docs describe under model_route_tuning", () => {
+    const notes = ["openai/gpt-6-luna: out of quota, back in 3 hours"]
+    const migrated = migrateV1({ experimental: { model_route_tuning: { enabled: true, notes } } })
+    expect(migrated.experimental?.model_route_tuning).toEqual({ enabled: true, notes })
+  })
+
   test("normalizes ordered model routes inside experimental config", () => {
     const migrated = migrateV1({
       experimental: {

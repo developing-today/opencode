@@ -231,7 +231,7 @@ export class Tuning extends Schema.Class<Tuning>("Config.ModelRoute.Tuning")({
   }),
   notes: Schema.Array(Schema.String).pipe(optional).annotate({
     description:
-      'What the history cannot say, one note per line as "match: text". match is a case-insensitive substring of provider/model; text may state when a limit returns, e.g. "anthropic/claude-opus-5: promo credits, reset at 2026-01-04T00:00:00Z".',
+      "What the history cannot say, one note per line as `match: text`, where `match` is a case-insensitive substring of provider/model. A text that states when a limit returns, such as `reset at 2026-01-01` or `back in 3 hours`, skips the matching targets until then. The rest is shown to the agent by route_stats.",
   }),
 }) {}
 
