@@ -212,7 +212,8 @@ report in its rate-limit headers or quota messages.
    `routing.json` or the user), and, only if the question needs them, the plan
    facts. Ask for the plan facts in the table in section 5.
 3. For each pool, apply section 3 in order: members that do not fit, splitting or
-   merging, underused members, and then the plan order of operations.
+   merging, underused members, category fit (3.6), and then the plan order of
+   operations (3.5).
 4. Write the report in the format of section 4. Recommend only what the data
    supports.
 5. After approval, make exactly the approved change, the smallest one that works:
@@ -317,6 +318,24 @@ Order the actions by time:
 
 Present a timeline (now, next reset, expiry) with the change at each step. Mark
 every number that came from the user, or from a single reading, as an estimate.
+
+### 3.6 Categories and their pools
+
+Each category points at one model or pool. Check that the pool does what the
+category's description asks for:
+
+- `trivial` and `research`: fast, cheap members. Judge by first-output latency,
+  speed and cost.
+- `implement`: reliable mid-tier members. Judge by failure rate and errors.
+- `review`: careful members that finish. Judge by failure rate and timeouts.
+- `hard`: the strongest members, however slow. Judge by reach and reliability,
+  since latency matters less.
+
+Use the pool's latency, reliability and error data to test that the pool fits.
+Use its member list to see what it can actually reach. A mismatch is a proposal,
+not a fact: route data cannot show answer quality, so recommend the remap and
+name what the user should check. When several categories share one pool, its
+numbers mix their traffic, so say so.
 
 ## 4. Report
 
