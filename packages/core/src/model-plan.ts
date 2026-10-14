@@ -1,0 +1,302 @@
+export * as ModelPlan from "./model-plan.js"
+
+import fs from "node:fs"
+import path from "node:path"
+import { Global } from "@opencode/util/global"
+import { Schema } from "effect"
+
+/**
+ * The plan store: subscriptions and their quota windows, the cost tier of each model, what each pool is for,
+ * and the notes the user has given about how usage has felt. Plain JSON in OpenCode's data directory, so the
+ * tools here and OpenChamber read and write the same file. Notes are an append-only log beside it. Nothing is
+ * removed: a plan that ends is marked `expired` or `cancelled`, and the history stays.
+ */
+
+export const Coverage = Schema.Literals(["subscription", "credits", "metered", "free", "trial"])
+export const Tier = Schema.Literals(["plan", "common", "medium", "high"])
+export const Unit = Schema.Literals(["requests", "messages", "tokens", "usd", "percent", "other"])
+export const Status = Schema.Literals(["active", "expired", "cancelled", "unknown"])
+export const Period = Schema.Literals(["monthly", "yearly", "once"])
+export const NoteKind = Schema.Literals(["experience", "expectation", "plan-change", "correction", "other"])
+export const NoteSource = Schema.Literals(["user", "model", "ui"])
+
+export const Fee = Schema.Struct({
+  amount: Schema.Finite,
+  currency: Schema.String,
+  period: Period,
+  renewsOn: Schema.optional(Schema.String),
+})
+
+/** One limit a plan puts on usage: a count, a token budget or a dollar amount, over a window that resets. */
+export const QuotaWindow = Schema.Struct({
+  name: Schema.String,
+  unit: Unit,
+  limit: Schema.optional(Schema.Finite),
+  windowHours: Schema.optional(Schema.Finite),
+  resetRule: Schema.optional(Schema.String),
+  resetAt: Schema.optional(Schema.String),
+  note: Schema.optional(Schema.String),
+})
+
+export const Plan = Schema.Struct({
+  id: Schema.String,
+  providerID: Schema.String,
+  label: Schema.String,
+  plan: Schema.optional(Schema.String),
+  coverage: Coverage,
+  fee: Schema.optional(Fee),
+  quotas: Schema.Array(QuotaWindow),
+  expiresOn: Schema.optional(Schema.String),
+  status: Status,
+  verifiedAt: Schema.optional(Schema.String),
+  verifiedFrom: Schema.optional(Schema.String),
+  howToCheck: Schema.optional(Schema.String),
+  notes: Schema.optional(Schema.String),
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+})
+
+/** The cost tier the user puts a model in. `plan` means a flat plan covers it, so its marginal cost is zero within quota. */
+export const ModelEntry = Schema.Struct({
+  tier: Tier,
+  coveredBy: Schema.optional(Schema.Array(Schema.String)),
+  note: Schema.optional(Schema.String),
+  updatedAt: Schema.String,
+})
+
+export const PoolEntry = Schema.Struct({
+  tier: Schema.optional(Tier),
+  purpose: Schema.optional(Schema.String),
+  updatedAt: Schema.String,
+})
+
+export const Store = Schema.Struct({
+  version: Schema.Literal(1),
+  plans: Schema.Array(Plan),
+  models: Schema.Record(Schema.String, ModelEntry),
+  pools: Schema.Record(Schema.String, PoolEntry),
+})
+
+export const Note = Schema.Struct({
+  id: Schema.String,
+  at: Schema.String,
+  kind: NoteKind,
+  text: Schema.String,
+  source: NoteSource,
+  providerID: Schema.optional(Schema.String),
+  planID: Schema.optional(Schema.String),
+  modelID: Schema.optional(Schema.String),
+  poolID: Schema.optional(Schema.String),
+})
+
+export type Fee = typeof Fee.Type
+export type QuotaWindow = typeof QuotaWindow.Type
+export type Plan = typeof Plan.Type
+export type ModelEntry = typeof ModelEntry.Type
+export type PoolEntry = typeof PoolEntry.Type
+export type Store = typeof Store.Type
+export type Note = typeof Note.Type
+export type Tier = typeof Tier.Type
+export type Coverage = typeof Coverage.Type
+export type Status = typeof Status.Type
+export type NoteKind = typeof NoteKind.Type
+
+export const emptyStore = (): Store => ({ version: 1, plans: [], models: {}, pools: {} })
+
+const directory = (dataDir?: string) => dataDir ?? Global.Path.data
+
+/** Reads the store. A missing file is an empty store; a malformed one is an error, so a bad write cannot
+ * silently erase the user's plans. */
+export const readStore = (dataDir?: string): Store => {
+  const file = path.join(directory(dataDir), "plans.json")
+  if (!fs.existsSync(file)) return emptyStore()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, "utf8"))
+  } catch {
+    throw new Error(`${file} is not valid JSON. Fix or move it before recording plan information.`)
+  }
+  return Schema.decodeUnknownSync(Store)(parsed)
+}
+
+/** Writes the store atomically: a temporary file in the same directory, then a rename over the old one. */
+export const writeStore = (store: Store, dataDir?: string) => {
+  const dir = directory(dataDir)
+  fs.mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, "plans.json")
+  const valid = Schema.decodeUnknownSync(Store)(store)
+  const temporary = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
+  fs.writeFileSync(temporary, `${JSON.stringify(valid, null, 2)}\n`)
+  fs.renameSync(temporary, file)
+}
+
+/** A stable id from a provider and a name: `anthropic-max-20x`. */
+export const slug = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64)
+
+/** Fields to change on a plan. A field left out is kept; a field set to null is removed. */
+export interface PlanPatch {
+  readonly id?: string
+  readonly providerID?: string
+  readonly label?: string
+  readonly plan?: string | null
+  readonly coverage?: Coverage
+  readonly fee?: Fee | null
+  readonly quotas?: readonly QuotaWindow[]
+  readonly expiresOn?: string | null
+  readonly status?: Status
+  readonly verifiedAt?: string | null
+  readonly verifiedFrom?: string | null
+  readonly howToCheck?: string | null
+  readonly notes?: string | null
+}
+
+const merge = <T extends object>(base: T, patch: object): T => {
+  const next = { ...base } as Record<string, unknown>
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue
+    if (value === null) delete next[key]
+    else next[key] = value
+  }
+  return next as T
+}
+
+/** Creates or updates a plan. A new plan starts as an active subscription with no quota until one is given. */
+export const upsertPlan = (store: Store, patch: PlanPatch, now: string): { store: Store; plan: Plan } => {
+  const providerID = patch.providerID ?? store.plans.find((plan) => plan.id === patch.id)?.providerID
+  if (!providerID) throw new Error("A plan needs a providerID, such as anthropic or openai.")
+  const id = patch.id ?? slug(`${providerID}-${patch.plan ?? patch.label ?? "plan"}`)
+  const existing = store.plans.find((plan) => plan.id === id)
+  const base = existing ?? {
+    id,
+    providerID,
+    label: providerID,
+    coverage: "subscription",
+    quotas: [],
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+  }
+  const plan = Schema.decodeUnknownSync(Plan)(merge(base, { ...patch, id, providerID, updatedAt: now }))
+  const plans = existing ? store.plans.map((item) => (item.id === id ? plan : item)) : [...store.plans, plan]
+  return { store: { ...store, plans }, plan }
+}
+
+/** Sets the cost tier of a model (`provider/model`), and optionally the plans that cover it. */
+export const setModel = (
+  store: Store,
+  model: string,
+  patch: { tier?: Tier; coveredBy?: readonly string[] | null; note?: string | null },
+  now: string,
+): Store => {
+  const existing = store.models[model]
+  const tier = patch.tier ?? existing?.tier
+  if (!tier) throw new Error(`${model} needs a tier: plan, common, medium or high.`)
+  const entry = Schema.decodeUnknownSync(ModelEntry)(merge(existing ?? {}, { ...patch, tier, updatedAt: now }))
+  return { ...store, models: { ...store.models, [model]: entry } }
+}
+
+/** Sets what a pool is for, and the tier it sits at. */
+export const setPool = (
+  store: Store,
+  poolID: string,
+  patch: { tier?: Tier | null; purpose?: string | null },
+  now: string,
+): Store => {
+  const entry = Schema.decodeUnknownSync(PoolEntry)(merge(store.pools[poolID] ?? {}, { ...patch, updatedAt: now }))
+  return { ...store, pools: { ...store.pools, [poolID]: entry } }
+}
+
+export interface NoteInput {
+  readonly text: string
+  readonly kind?: NoteKind
+  readonly source?: typeof NoteSource.Type
+  readonly providerID?: string
+  readonly planID?: string
+  readonly modelID?: string
+  readonly poolID?: string
+}
+
+const noteFile = (dataDir?: string) => path.join(directory(dataDir), "plan-notes.jsonl")
+
+/** Appends a note. Notes are never rewritten, so what the user said stays as they said it. */
+export const addNote = (input: NoteInput, now: string, dataDir?: string): Note => {
+  const text = input.text.trim()
+  if (!text) throw new Error("A note needs some text.")
+  const note = Schema.decodeUnknownSync(Note)({
+    id: `note_${Date.parse(now).toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    at: now,
+    kind: input.kind ?? "other",
+    text,
+    source: input.source ?? "user",
+    ...(input.providerID ? { providerID: input.providerID } : {}),
+    ...(input.planID ? { planID: input.planID } : {}),
+    ...(input.modelID ? { modelID: input.modelID } : {}),
+    ...(input.poolID ? { poolID: input.poolID } : {}),
+  })
+  fs.mkdirSync(directory(dataDir), { recursive: true })
+  fs.appendFileSync(noteFile(dataDir), `${JSON.stringify(note)}\n`)
+  return note
+}
+
+export interface NoteFilter {
+  readonly providerID?: string
+  readonly planID?: string
+  readonly modelID?: string
+  readonly poolID?: string
+  readonly kind?: NoteKind
+  readonly since?: string
+  readonly limit?: number
+}
+
+/** The notes that match, oldest first, keeping the newest `limit`. A line that does not parse is skipped and
+ * counted, so one damaged line cannot hide the rest. */
+export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: Note[]; skipped: number } => {
+  const file = noteFile(dataDir)
+  if (!fs.existsSync(file)) return { notes: [], skipped: 0 }
+  let skipped = 0
+  const parsed: Note[] = []
+  for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+    if (line.trim() === "") continue
+    try {
+      parsed.push(Schema.decodeUnknownSync(Note)(JSON.parse(line)))
+    } catch {
+      skipped += 1
+    }
+  }
+  const since = filter.since === undefined ? undefined : Date.parse(filter.since)
+  const matching = parsed
+    .filter((note) => filter.providerID === undefined || note.providerID === filter.providerID)
+    .filter((note) => filter.planID === undefined || note.planID === filter.planID)
+    .filter((note) => filter.modelID === undefined || note.modelID === filter.modelID)
+    .filter((note) => filter.poolID === undefined || note.poolID === filter.poolID)
+    .filter((note) => filter.kind === undefined || note.kind === filter.kind)
+    .filter((note) => since === undefined || Date.parse(note.at) >= since)
+    .sort((left, right) => left.at.localeCompare(right.at))
+  return { notes: filter.limit === undefined ? matching : matching.slice(-filter.limit), skipped }
+}
+
+/** Whole days since a date the user or the model recorded, or null when there is no usable date. */
+export const daysSince = (date: string | undefined, now: number) => {
+  if (date === undefined) return null
+  const at = Date.parse(date)
+  return Number.isNaN(at) ? null : Math.floor((now - at) / 86_400_000)
+}
+
+const GENERAL_GUIDANCE = [
+  "Open the provider's billing or usage page and read the plan name, the included quota, and when it resets.",
+  "In OpenChamber, Settings → Usage shows the windows a provider reports for accounts with saved credentials.",
+  "Record the date you checked (verifiedAt) and where the numbers came from (verifiedFrom).",
+  "If a number cannot be found, record the plan name and the reset rule, and leave the limit empty.",
+  "Check again after a renewal, a plan change, or when the user reports running out or having quota left over.",
+]
+
+/** Where to look for a provider's current plan details. The steps are rough and say when a number is unknown. */
+export const guidance = (providerID: string): readonly string[] =>
+  providerID === "opencode" || providerID === "opencode-go"
+    ? [...GENERAL_GUIDANCE, "OpenCode's console at opencode.ai/console shows the account's billing and usage status."]
+    : GENERAL_GUIDANCE
