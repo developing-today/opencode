@@ -158,6 +158,15 @@ export const targetReports = (
   })
 }
 
+/** One session's share of a plan window's limit: what the session used of the window, in the window's unit. */
+export interface SessionWindowUse {
+  readonly plan: string
+  readonly window: string
+  readonly unit: string
+  readonly used: number | null
+  readonly percent: number | null
+}
+
 export interface SessionReport extends SessionRow {
   readonly pools: readonly string[]
   readonly targets: readonly {
@@ -167,9 +176,14 @@ export interface SessionReport extends SessionRow {
     readonly metered: number
     readonly costUsd: number
   }[]
+  readonly windows: readonly SessionWindowUse[]
 }
 
-export const sessionReports = (sessions: readonly SessionRow[], rows: readonly SessionTargetRow[]): SessionReport[] =>
+export const sessionReports = (
+  sessions: readonly SessionRow[],
+  rows: readonly SessionTargetRow[],
+  windows: readonly { readonly plan: ModelPlan.Plan; readonly window: ModelPlan.QuotaWindow }[] = [],
+): SessionReport[] =>
   sessions.map((session) => {
     const own = rows.filter((row) => row.sessionID === session.sessionID)
     return {
@@ -182,6 +196,16 @@ export const sessionReports = (sessions: readonly SessionRow[], rows: readonly S
         metered: metered(row),
         costUsd: row.costUsd,
       })),
+      windows: windows.map(({ plan, window }) => {
+        const used = usedOf(window.unit, sum(own.filter((row) => row.providerID === plan.providerID)))
+        return {
+          plan: plan.id,
+          window: window.name,
+          unit: window.unit,
+          used,
+          percent: percentOf(used, window.limit),
+        }
+      }),
     }
   })
 

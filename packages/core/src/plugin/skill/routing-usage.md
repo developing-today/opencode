@@ -41,8 +41,10 @@ much of a plan's quota is gone.
   but never eligible). The last usually means failover, a cooldown or budget, a
   disabled provider, or a typo in the config. Look at the pool's `route_stats` view
   before you conclude which.
-- Percent of a plan window: the window's unit used in its last `windowHours`, over
-  the limit the user recorded. Usage counts against every plan of the provider, so
+- Percent of a plan window: for `plans`, the window's unit used in its last
+  `windowHours`, over the limit the user recorded. For `sessions`, the share of that
+  same limit that one session used, so a session's `used` shows how much of the
+  window a piece of work took. Usage counts against every plan of the provider, so
   keep one plan record per provider, or say in notes which plan is which.
 - Days: UTC days. A day that straddles the user's local midnight is split.
 

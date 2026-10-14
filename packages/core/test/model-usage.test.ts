@@ -89,6 +89,38 @@ describe("ModelUsage", () => {
     ])
   })
 
+  test("a session reports its share of each plan window it drew on, in the window's unit", () => {
+    const plan = {
+      id: "anthropic-max",
+      providerID: "anthropic",
+      label: "Personal",
+      coverage: "subscription",
+      quotas: [],
+      status: "active",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    } as ModelPlan.Plan
+    const window = { name: "5-hour", unit: "messages", limit: 200, windowHours: 5 } as ModelPlan.QuotaWindow
+    const rows = [
+      {
+        sessionID: "s1",
+        routeID: "hard",
+        providerID: "anthropic",
+        modelID: "claude-opus-5",
+        ...totals({ requests: 50 }),
+      },
+      { sessionID: "s1", routeID: "cheap", providerID: "openai", modelID: "gpt-6-luna", ...totals({ requests: 10 }) },
+    ]
+    const [report] = ModelUsage.sessionReports(
+      [{ sessionID: "s1", first: 1, last: 2, ...totals({ requests: 60 }) }],
+      rows,
+      [{ plan, window }],
+    )
+    expect(report?.windows).toEqual([
+      { plan: "anthropic-max", window: "5-hour", unit: "messages", used: 50, percent: 25 },
+    ])
+  })
+
   test("days group by date and keep each provider's share", () => {
     const days = ModelUsage.dayReports([
       { day: "2026-10-13", providerID: "openai", modelID: "a", ...totals({ requests: 2, costUsd: 0.5 }) },

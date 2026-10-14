@@ -114,6 +114,7 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
       (history?.sessionTargets ?? []).flatMap((row) =>
         row.sessionID === null ? [] : [{ ...row, sessionID: row.sessionID }],
       ),
+      windows,
     ).filter(
       (session) =>
         (input.provider === undefined && input.model === undefined) ||
@@ -154,8 +155,11 @@ const describe = (report: Effect.Success<ReturnType<typeof collect>>) => {
     )
   }
   for (const session of report.sessions) {
+    const shares = session.windows
+      .filter((item) => item.percent !== null)
+      .map((item) => `${item.percent}% of ${item.plan} ${item.window}`)
     lines.push(
-      `session ${session.sessionID} last ${new Date(session.last).toISOString().slice(0, 16)}: ${session.requests} requests, ${ModelUsage.metered(session)} metered tokens, ${money(session.costUsd)}; pools ${session.pools.join(", ") || "none"}; models ${session.targets.map((item) => `${item.target} x${item.requests}`).join(", ") || "none"}`,
+      `session ${session.sessionID} last ${new Date(session.last).toISOString().slice(0, 16)}: ${session.requests} requests, ${ModelUsage.metered(session)} metered tokens, ${money(session.costUsd)}; pools ${session.pools.join(", ") || "none"}; models ${session.targets.map((item) => `${item.target} x${item.requests}`).join(", ") || "none"}${shares.length > 0 ? `; used ${shares.join(", ")}` : ""}`,
     )
   }
   for (const day of report.days.slice(-14)) {
