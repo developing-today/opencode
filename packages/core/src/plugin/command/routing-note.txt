@@ -1,0 +1,3 @@
+Record the note below as a routing note with plan_info, using the notes action to check for duplicates first.
+
+Choose the kind that fits: experience (something that happened, such as running out of a plan or having quota left over), expectation (how I expect a plan or model to behave), plan-change (a plan I joined, left or changed), correction (an earlier record or note that is wrong), or other. Link the note to the provider, plan, model or pool it is about when that is clear. If it is not clear, ask me one question. Store my words as I wrote them. Then confirm what was recorded, and say which plan or tier record, if any, it might need updating.

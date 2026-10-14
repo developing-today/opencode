@@ -1,0 +1,5 @@
+Update my plan records with the plan-tracking skill.
+
+Load the plan-tracking skill first and follow it. Start with plan_info using the list action. Then say which plans are missing details, or were last verified more than 30 days ago, and ask me only for those fields, in one short list. When I answer, record each fact with plan_info (upsert for a plan, tier for a model, pool for a pool purpose, or note for what I experienced), and show me one line per change so I can check it.
+
+Anything I write after this command is my own context. Record it as I said it, and do not record anything I did not state.

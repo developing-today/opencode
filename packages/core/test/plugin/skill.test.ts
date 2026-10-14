@@ -60,6 +60,15 @@ describe("SkillPlugin.Plugin", () => {
         }),
       )
       expect(skills.find((item) => item.id === "routing-review")?.content).toContain("route_stats")
+      for (const [id, name] of [
+        ["routing-usage", "Routing Usage"],
+        ["plan-tracking", "Plan Tracking"],
+        ["routing-config", "Routing Config"],
+      ]) {
+        expect(skills).toContainEqual(expect.objectContaining({ id, name }))
+      }
+      expect(skills.find((item) => item.id === "plan-tracking")?.content).toContain("plan_info")
+      expect(skills.find((item) => item.id === "routing-config")?.content).toContain("providers")
     }),
   )
 

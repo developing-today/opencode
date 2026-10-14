@@ -82,6 +82,9 @@ describe("CommandPlugin.Plugin", () => {
         name: "routing-review",
         description: "review model pools, categories and plan use (read-only)",
       })
+      for (const name of ["plan-update", "routing-note", "routing-config"]) {
+        expect(yield* command.get(name)).toMatchObject({ name })
+      }
       yield* command.execute({
         name: "init",
         invocation: {

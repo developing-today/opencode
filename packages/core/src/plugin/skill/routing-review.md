@@ -6,221 +6,123 @@
 
 # Routing Review
 
-Review how the user's model pools and categories perform, and recommend changes
-they can approve. Start read-only. Change nothing until the user approves a
-specific change, then make only that change.
+Review how the user's model pools, categories, plans and usage fit together, and
+recommend changes they can approve. Start read-only. Change nothing until the user
+approves a specific change, then make only that change.
+
+The other skills hold the detail: `routing-usage` for what each figure means,
+`plan-tracking` for finding and recording plan facts, and `routing-config` for the
+exact config keys.
 
 ## 0. Before you start
 
-- Take the baseline with `route_stats` at `hours: 168` (a week). Use `hours: 24`
-  only for "what is happening now". Pass `route` to focus on one pool.
-- `route_stats` and `route_adjust` are offered only when some pool is at
-  autonomy `agent` or has no autonomy set. If `route_stats` is missing, every
-  pool is at `fixed`, `rules`, `adaptive` or `predictive`. Say so, and offer to
-  set `autonomy: "agent"` on the pools the user wants reviewed. That is a config
-  change, so ask first. You can still read the configuration and the categories.
-- Read the `routes` part of the result before anything else. It holds each pool's
-  configuration and its members, configured or not.
-- Check how much evidence there is: the total attempts and the attempts per pool.
-  Thin data means thin recommendations (see the minimums in section 3).
+- Read the evidence in this order:
+  1. `route_stats` with `hours: 168` (a week) for pools, members and health. Pass
+     `route` to focus on one pool. Use `hours: 24` only for "what is happening now".
+  2. `route_usage` with `hours: 168` for who used what, cost, sessions and the share
+     of each plan window that is gone.
+  3. `plan_info` with `list` for the plan records, tiers, pool purposes and the
+     latest notes.
+- `route_stats` and `route_adjust` are offered only when some pool is at autonomy
+  `agent` or has no autonomy set. `route_usage` and `plan_info` are always offered
+  when routes exist. If `route_stats` is missing, say so and offer to set
+  `autonomy: "agent"` on the pools the user wants reviewed, as a config change
+  that needs approval.
+- Check how much evidence there is: total attempts, and attempts per pool. Thin data
+  means thin recommendations (section 3).
+- Read the notes before the numbers. An expectation or an experience changes what a
+  good result looks like.
 
 ## 1. What exists
 
-### Pools (`experimental.model_routes` in the OpenCode config)
+### Pools
 
-A pool is an ordered list of targets. OpenCode and OpenChamber show it as the
-model `opencode-route/<id>`, under "OpenCode routes" in the model picker. A
-category's model can be a pool. A pool can also list another pool as a target.
+A pool is `experimental.model_routes.<id>`: an ordered list of targets, shown as the
+model `opencode-route/<id>`. A category's model can be a pool, and a pool can list
+another pool as a target.
 
-A target is `provider/model`, `provider/model#variant`, or an object with
-`model`, `defaultVariant`, `variants` (variant remap) and `until` (epoch ms, after
-which the target leaves the pool).
-
-Pool settings:
-
-- `selection`:
-  - `ordered` (default): the first ready target takes the traffic, and the rest
-    are failover, ranked by effective weight.
-  - `round-robin`: new sessions rotate across targets in proportion to weight.
-  - `weighted`: each new session draws a target with probability proportional to
-    its weight.
-  - In every mode a session stays on its target while that target works. Failover
-    moves it.
-- `weights`: relative weight per target, default 1. Ordered pools also rank
-  failover by effective weight, and equal weights keep the configured order.
-- `schedules`: time-bound weight changes for this pool's targets (section below).
+- `selection`: `ordered` (default; the first ready target takes the traffic, and the
+  rest are failover, ranked by effective weight), `round-robin` (new sessions rotate
+  in proportion to weight), or `weighted` (each new session draws a target in
+  proportion to its weight). In every mode a session stays on its target while it
+  works; failover moves it.
+- `weights`: relative ratios per target, default 1.
 - `health`: `firstTokenTimeoutMs` (default 10000), `maxResponseTimeMs`,
-  `minOutputTokensPerSecond`, `sampleWindow` (5), `slowThreshold` (3),
-  `cooldownMs` (60000), `quotaCooldownMs` (900000). A target that fails goes on
-  cooldown.
-- `budgets`: per target, `requestsPerMinute`, `requestsPerDay`,
-  `tokensPerMinute`, `tokensPerDay`, `softLimit` (default 0.9). A target at its
-  soft limit is passed over until it recovers.
-- `attempts`: tries per target before failover (default 1). Retries happen only
-  before any output, so no tool call runs twice.
-- `hedgeAfterMs`: if the target has produced no output after this many
-  milliseconds, the next target gets the same request. The first answer wins.
-  This costs a duplicate request whenever the first target is slow.
-- `autonomy`, each level including the ones before it:
-  - `fixed`: configured order with failover only. No weights or adjustments.
-  - `rules`: adds selection modes, weights, budgets and provider rate-limit holds.
-  - `adaptive`: adds the scheduled review of history, which lowers or skips
-    targets.
-  - `predictive`: adds hour-of-day and quota-message prediction.
-  - `agent`: adds `route_stats` and `route_adjust`.
-  - Unset keeps everything, the behavior from before levels existed.
+  `minOutputTokensPerSecond`, `sampleWindow` (5), `slowThreshold` (3), `cooldownMs`
+  (60000), `quotaCooldownMs` (900000). A target that fails goes on cooldown.
+- `budgets`: per target, `requestsPerMinute`, `requestsPerDay`, `tokensPerMinute`,
+  `tokensPerDay`, `softLimit` (default 0.9). A target at its soft limit is passed over.
+- `attempts`: tries per target before failover (default 1); retries only before any
+  output.
+- `hedgeAfterMs`: after this many milliseconds without output, the next target gets
+  the same request, and the first answer wins. It costs a duplicate request.
+- `autonomy`: `fixed`, `rules`, `adaptive`, `predictive` or `agent`, each including
+  the ones before it.
 
-A target is left out of a selection for one of these reasons, and `route_stats`
-reports each as an `excluded` count:
-
-- `cooldown`: recent failures.
-- `provider-limit`: the provider said it is rate-limited.
-- `user-skip`: the user said "avoid", or a skip was recorded.
-- `soft-budget`: at its budget soft limit.
-- `already-tried`: it already failed earlier in this same request.
+A target is left out of a selection for one reason, which `route_stats` reports as
+`excluded`: `cooldown`, `provider-limit`, `user-skip`, `soft-budget`, or
+`already-tried` (it already failed in this request).
 
 ### How effective weight is formed
 
 Start from the configured weight, then apply in order:
 
-1. Schedules: the global `experimental.model_route_schedules`, then the pool's own
-   `schedules`. `factor` multiplies, `weight` replaces.
-2. User preferences from OpenChamber sentence rules. "Prefer" multiplies by 3
-   unless a factor or weight is given. "Avoid" removes the target from rotation
-   at every autonomy level.
-3. Recorded adjustments (`route_adjust` and the tuner). These do not apply on
-   `fixed` pools.
-4. Quota demotion. A target demoted after quota errors keeps 1% of its weight
-   until it recovers.
-
-### Schedules
-
-Both `experimental.model_route_schedules` (across pools) and a pool's `schedules`
-take a `when` window and either `factor` (multiplies) or `weight` (replaces):
-
-- `daysOfWeek`: `mon`..`sun` or 0 (Sunday) to 6. `daysOfMonth`: 1 to 31, or -1 for
-  the last day. Every set field must match: they combine with AND.
-- `start` and `end`: local "HH:mm", `end` exclusive. A start later than the end runs
-  past midnight.
-- `timezone`: an IANA name such as `America/Chicago`.
-- `from` and `until`: epoch ms that bound when the window applies. Leave them out
-  for a recurring schedule.
-- An empty `when` means always.
-
-### Adjustments and tuning
-
-- `route_adjust` (an agent tool, approval required): `add` a weight change
-  (`factor` above 1 favours a target, below 1 lightens it; `weight` sets it) or a
-  `skip`, for targets whose provider/model contains `match`. Give `hours` for a
-  duration, a recurring window, or both. `list` shows what is in force. `remove`
-  takes an `id`. Use it for facts like "promo credits expire Friday". Adjustments
-  expire on their own.
-- `route_stats` with `apply: true`: puts its suggestions in force for 30 minutes.
-  They only lower a target's share or skip it.
-- `experimental.model_route_tuning`: `enabled` (default false), `intervalMinutes`
-  (15), `windowHours` (24). This is the automatic version of the same suggestions.
-  Its `notes` take one line each as `match: text`. A note that states a return
-  time ("back in 3 hours", "reset at 2026-01-01T06:00:00Z") skips the matching
-  targets until then. The other notes are shown to you through `route_stats`.
-
-### What the measurements are
-
-`route_stats` reads OpenCode's routing history. Each request is one `route_attempt`
-row, and each selection is one `route_decision` row. No prompts or responses are
-stored.
-
-Per target (`provider/model`), over the window: attempts, failures, timeouts,
-average first-output latency, average speed, errors grouped by tag, code and
-status (with the latest message), cooldowns, provider rate-limit windows
-(`remaining`, `limit`, `resetsInSeconds`, age of the report), requests and tokens
-in the last minute and day, predictions (busy hours; "quota returns at"), hedge
-win rates, suggestions and the adjustments in force.
-
-Per pool: its configuration; `attempts`, `sessions`, `decisions`; `reasons`
-(`ordered`, `adjusted`, `sticky`, `drawn`, `no-candidates`); input-token
-percentiles `p50` and `p90`; and per member:
-
-- `configuredWeight`, `attempts`, `failures`, `timeouts`, `failureRate`
-- `firstTokenMs` and `tokensPerSecond` (medians), `inputTokens` (median), `errorTags`
-- `offered`: selections it was eligible for. `chosen`: selections it was used in,
-  sticky turns included.
-- `draws` and `drawsWon`: new-session draws it was eligible for, and won. Only
-  draws are decided by weight.
-- `expectedShare`: the share its weight promised across those draws.
-  `takeRate`: the share it actually won. Compare the two.
-- `excluded`: selections it was left out of, by reason.
-
-Not in the data: cost per token, answer quality, which OpenChamber category a
-request came from (neither route table records a category), plan names, fees,
-quota sizes, reset days or expiry dates, and any quota the provider does not
-report in its rate-limit headers or quota messages.
+1. Schedules: the global `experimental.model_route_schedules`, then the pool's own.
+   `factor` multiplies, `weight` replaces.
+2. User preferences from OpenChamber sentence rules. "Prefer" multiplies by 3 unless a
+   factor or weight is given. "Avoid" takes the target out of rotation at every
+   autonomy level.
+3. Recorded adjustments (`route_adjust` and the tuner), except on `fixed` pools.
+4. Quota demotion: a target demoted after quota errors keeps 1% of its weight until
+   it recovers.
 
 ### Categories and classification (OpenChamber)
 
-- Categories are OpenChamber's task classes. The built-in ones are `trivial`
-  (mechanical work), `research` (read and explain), `implement` (bounded
-  engineering), `review` (inspect a change) and `hard` (ambiguous, high-stakes or
-  unknown-cause work). Each has a model, a variant and an agent. A category with
-  no model uses the fallback. Users can add their own.
-- The file is `routing.json` in the OpenChamber data directory:
-  `$OPENCHAMBER_DATA_DIR`, or `~/.config/openchamber` by default. It stores only
-  what differs from the built-in defaults. You may read it. If you cannot,
-  ask the user to paste the categories from Settings → Routing.
+- Categories are OpenChamber's task classes: `trivial` (mechanical work), `research`
+  (read and explain), `implement` (bounded engineering), `review` (inspect a change),
+  and `hard` (ambiguous, high-stakes or unknown-cause work). Each has a model, a
+  variant and an agent; a category with no model uses the fallback. Users can add
+  their own.
+- The file is `routing.json` in the OpenChamber data directory (`$OPENCHAMBER_DATA_DIR`,
+  or `~/.config/openchamber` by default). It stores only what differs from the
+  defaults. Read it if you can. If you cannot, ask the user to paste the categories
+  from Settings → Routing.
 - Jev, the classifier, picks one category per request with a confidence. Below
-  `minConfidence` (default 0.6), the fallback model is used.
-- Stickiness keeps a session on its model until consistent prompts move it: two
-  consistent prompts to leave the starting model, three to leave a model it
-  moved to, and a confidence of 0.9 counts as strong. Cache preservation is on by
-  default.
-- Auto is OpenChamber's mode that picks a category for each request. It is not a
-  pool.
-- Category choices are not written to route history. So `route_stats` cannot
-  split a pool's traffic by category. Judge category fit from the categories'
-  descriptions, the pool a category points at, and the user's account.
+  `minConfidence` (default 0.6) the fallback is used. Stickiness keeps a session on
+  its model until consistent prompts move it.
+- Auto is OpenChamber's mode that picks a category for each request. It is not a pool.
+- Category choices are not written to the history. `route_usage` cannot split a pool
+  by category.
 
-### Providers and models: where each thing changes
+### Plans, tiers and notes
 
-| You want to change                                           | Where                                                                                                                                                                 |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A pool's members, order, weights, selection, health, budgets | `experimental.model_routes` in the OpenCode config, or OpenChamber Settings → Model pools                                                                             |
-| Weights for a time of day, across pools                      | `experimental.model_route_schedules`                                                                                                                                  |
-| A temporary fact ("credits expire Friday")                   | `route_adjust`, with approval                                                                                                                                         |
-| Automatic review of history                                  | `experimental.model_route_tuning`                                                                                                                                     |
-| Which model a category uses                                  | OpenChamber Settings → Routing → categories                                                                                                                           |
-| Sentence rules ("weekdays 9 to 5, downweight deepseek")      | OpenChamber Settings → Routing → Route by sentence                                                                                                                    |
-| Turn a provider off                                          | `disabled_providers` in the OpenCode config, or the provider toggle in Settings → Providers. Its models are then unavailable, so pool targets on it cannot be reached |
-| Add or connect a provider                                    | `/connect` in OpenCode, or Settings → Providers. Never by editing credential files                                                                                    |
-| Hide a model from the OpenChamber picker                     | The OpenChamber model picker. A UI-only setting: OpenCode and pools still use the model                                                                               |
+- Plan records and their quota windows: see `plan-tracking`.
+- Model tiers (`plan`, `common`, `medium`, `high`) say what a model costs the user
+  and whether a plan covers it. Pool purposes say what each pool is for.
+- Notes are the user's experiences and expectations, dated and never rewritten.
 
-### Plans, quotas and money
+### Where things change
 
-- Measured quota comes only from `route_stats`: the `rateLimit` windows and the
-  `predictions` that carry a reset time. Only providers that report those have it.
-- Plan facts are not visible to any tool: the plan name, fee, quota per window,
-  reset day, credit expiry and promotions. The user can paste them, or read them
-  on the Usage page in OpenChamber, which shows quota for the providers it
-  supports.
-- Prices are not in route data. Use only prices the user states.
-- Never read or print credentials, API keys, token files or the OpenChamber auth
-  files.
+- A pool's members, weights and selection, or a model's visibility: the OpenCode config
+  (`routing-config`).
+- A category's model, or a sentence rule: OpenChamber Settings → Routing.
+- A plan, a model's tier, a pool's purpose, a note: `plan_info`.
+- A temporary fact: `route_adjust`, with approval.
 
 ## 2. Procedure
 
-1. Baseline: `route_stats` at `hours: 168`, plus `route` for any pool the user
-   named. Note the total attempts.
-2. Inventory: the pools and their members (from `routes`), the categories (from
-   `routing.json` or the user), and, only if the question needs them, the plan
-   facts. Ask for the plan facts in the table in section 5.
-3. For each pool, apply section 3 in order: members that do not fit, splitting or
-   merging, underused members, category fit (3.6), and then the plan order of
-   operations (3.5).
-4. Write the report in the format of section 4. Recommend only what the data
-   supports.
-5. After approval, make exactly the approved change, the smallest one that works:
-   a weight before a membership change, a schedule before a permanent weight, and
-   an adjustment before a config edit for a temporary fact. Then re-run
-   `route_stats` after enough time has passed. A weekday pattern needs at least a
-   day, and a pattern across days needs at least a week.
+1. Gather the evidence in section 0, in order. Read the notes first.
+2. For each pool, apply section 3 in order: members that do not fit, splitting or
+   merging, underused members, category fit, cost tiers, and the plan order of
+   operations.
+3. Write the report in the format of section 4. Recommend only what the evidence
+   supports, and say which evidence each recommendation rests on.
+4. After approval, make exactly the approved change, the smallest one that works:
+   a weight before a membership change, a schedule before a permanent weight, an
+   adjustment before a config edit for a temporary fact, and a note before a change
+   of a plan record unless the user states a new fact. Record the change with
+   `plan_info` when it concerns a plan, and re-run the evidence after enough time has
+   passed: a day for a weekday pattern, a week for a pattern across days.
 
 ## 3. Decision rules
 
@@ -230,37 +132,38 @@ Minimum evidence:
 - 30 new-session draws before judging a weight.
 - 3 days of history before judging a time-of-day pattern.
 - 100 attempts in a pool before splitting or merging it.
+- 7 days of history before judging a plan's window or a monthly pattern.
 
 Below these, say "not enough data yet" and name the number you need.
 
 ### 3.1 A member that does not fit its pool
 
-Read the pool's purpose from its name, the categories that use it, and what the
-user says. Compare each member with the pool's median member:
+Read the pool's purpose from its name, its `purpose` in the plan store, and the
+categories that use it. Compare each member with the pool's median member:
 
 - Slow to answer: first output above 2.5 times the pool median.
 - Slow to stream: tokens per second below half the pool median.
-- Unreliable: failure rate of 20% or more. At 50% or more it is broken.
-- Undersized: failures such as `ContextLengthExceeded` on a member, while the
-  pool's `inputTokens` p90 is well above that member's context.
-- Too expensive for the pool's purpose: only if the user states the prices.
+- Unreliable: a failure rate of 20% or more. At 50% or more it is broken.
+- Undersized: failures such as `ContextLengthExceeded` on a member, while the pool's
+  `inputTokens` p90 is well above that member's context.
+- Costly for the pool's purpose: compare the member's cost per request (from
+  `route_usage`) with its tier in the plan store. A `common` model that costs like a
+  `high` one is a misclassification.
 
 Recommend moving a member only when two signals agree and the evidence meets the
-minimums. A single bad hour is not evidence: look at `predictions` first. Route
-data cannot measure answer quality. If the question is whether the answers are
-good enough, ask the user. If no pool fits the member, propose a new pool rather
-than forcing a fit.
+minimums. A single bad hour is not evidence: check `predictions` first. Quality is
+not measured. If the question is whether answers are good enough, ask the user.
 
 ### 3.2 Splitting a pool
 
 Split only for one of these:
 
-- Two request sizes behaving differently. `inputTokens` p90 is at least 4 times
-  p50, and the failures or slow answers sit on the large requests. Propose a
-  small-input pool and a large-input pool.
-- Two categories sending different kinds of work to one pool, whose best members
-  differ on the user's account or on the data. Route data cannot separate the
-  categories, so say that. Propose the new pool and the category remap.
+- Two request sizes behave differently: `inputTokens` p90 is at least 4 times p50,
+  and the failures or slow answers sit on the large requests. Propose a small-input
+  pool and a large-input pool.
+- Two categories send different kinds of work to one pool, and their best members
+  differ on the user's account or on the data. Say that route data cannot separate
+  the categories.
 
 Do not split for one category, or below 100 attempts.
 
@@ -272,107 +175,114 @@ attempts in 7 days and no category uses it. Retire only after the user confirms.
 
 ### 3.4 Underused members
 
-Only in `weighted` and `round-robin` pools, compare `takeRate` with
-`expectedShare`, over at least 30 draws:
+Only in `weighted` and `round-robin` pools, compare `takeRate` with `expectedShare`
+over at least 30 draws:
 
 - Underused: `takeRate` below half of `expectedShare`, and exclusions on fewer than
-  20% of its offers. Its weight is too low for what it can take. Raise it by 1.5
-  to 2 times, or add a time-bound schedule.
-- Mostly excluded: this is a health or budget problem, not a weight problem.
-  Read its errors, its cooldown and its budget.
+  20% of its offers. Raise its weight by 1.5 to 2 times, or add a time-bound schedule.
+- Mostly excluded: a health or budget problem, not a weight problem. Read its errors,
+  cooldown and budget.
 
-In `ordered` pools a member behind a healthy first target is idle by design, so
-do not call it underused. Look at it only when the targets ahead of it fail often,
-or when it is configured but absent from the history. In that case check the
-spelling, an `until` that has passed, and whether its provider is disabled.
+In `ordered` pools a member behind a healthy first target is idle by design. Do not
+call it underused. Look at it when the targets ahead of it fail often, or when it
+is configured but absent from the history. Then check the spelling, an `until` that
+has passed, and whether its provider is disabled.
 
-Never recommend dropping a provider for low traffic alone. Lower its weight first,
-and let a window pass before anything else.
+Never recommend dropping a provider for low traffic alone. Lower its weight first and
+let a window pass.
 
-### 3.5 Plans and quota: order of operations
+### 3.5 Categories and their pools
 
-For each provider that matters, gather: the plan, its cost (flat fee or metered),
-the quota unit and window, what remains now (from `rateLimit` or the user), its
-reset time or expiry date, and any promotion. Then compute:
-
-- Burn rate per day: its attempts (or tokens) over the last 7 days, divided by the
-  days of data.
-- Days left: until the next reset, or until expiry if that comes first.
-- Projected use: burn rate times days left.
-- Headroom: remaining minus projected use.
-
-Order the actions by time:
-
-1. Expiring with headroom ("use it or lose it"): raise its weight now, with a
-   `route_adjust` whose `hours` reach the expiry, or with a schedule that ends at
-   expiry. Taper before expiry if the headroom shrinks.
-2. A refilling window with headroom (daily or hourly): a schedule that raises its
-   weight in the hours before the reset.
-3. Projected to run out before its reset: skip the non-essential traffic with
-   `route_adjust` until the reset time, and keep the target only for categories
-   that need it.
-4. A flat fee with headroom and no expiry: prefer it over metered members of the
-   same pool.
-5. Metered members: the lowest weight, fallback only, unless the flat plans have no
-   headroom.
-
-Present a timeline (now, next reset, expiry) with the change at each step. Mark
-every number that came from the user, or from a single reading, as an estimate.
-
-### 3.6 Categories and their pools
-
-Each category points at one model or pool. Check that the pool does what the
+Each category points at a model or pool. Check that the pool does what the
 category's description asks for:
 
 - `trivial` and `research`: fast, cheap members. Judge by first-output latency,
   speed and cost.
 - `implement`: reliable mid-tier members. Judge by failure rate and errors.
 - `review`: careful members that finish. Judge by failure rate and timeouts.
-- `hard`: the strongest members, however slow. Judge by reach and reliability,
-  since latency matters less.
+- `hard`: the strongest members, however slow. Judge by reach and reliability.
 
-Use the pool's latency, reliability and error data to test that the pool fits.
-Use its member list to see what it can actually reach. A mismatch is a proposal,
-not a fact: route data cannot show answer quality, so recommend the remap and
-name what the user should check. When several categories share one pool, its
-numbers mix their traffic, so say so.
+A mismatch is a proposal, not a fact. Route data cannot show answer quality, so name
+what the user should check. When several categories share one pool, its numbers mix
+their traffic.
+
+### 3.6 Cost tiers
+
+Use the model tiers in the plan store, and the cost per request from `route_usage`.
+
+- A `high` model that a `plan` covers, with headroom in that plan's window, can take
+  work that a metered `common` model does now. Propose moving the work, and say which
+  window has the headroom.
+- A `high` model with no covering plan, used for `trivial` or `research` work, is
+  the usual cause of an unexpected bill. Propose moving that work to a `common`
+  member.
+- A `plan` model whose window is spent (`percent` at or near 100) should drop to a
+  metered fallback until the window resets. Give the reset time from `resetRule` or
+  `resetAt`.
+- An expectation note ("I always have GPT left at month end") is a reason to spend
+  that plan first when the window is near its end. Quote it.
+
+### 3.7 The plan order of operations
+
+For each provider that matters, use `route_usage` (`plans`) and the plan record:
+
+- Burn rate per day: the window's usage over its last `windowHours`, divided by the
+  window's length in days. Use the 7-day history for a steadier estimate.
+- Days left: until the next reset, or until expiry if that is sooner.
+- Projected use: burn rate times days left.
+- Headroom: the limit's remaining amount minus projected use.
+
+Order the actions by time:
+
+1. Expiring with headroom ("use it or lose it"): raise its weight now, with a
+   `route_adjust` whose `hours` reach the expiry, or a schedule that ends at expiry.
+   Taper before expiry if the headroom shrinks.
+2. A refilling window with headroom (daily or hourly): a schedule that raises its
+   weight in the hours before the reset.
+3. Projected to run out before its reset: skip the non-essential traffic with
+   `route_adjust` until the reset time, and keep the target only for the categories
+   that need it.
+4. A flat fee with headroom and no expiry: prefer it over metered members of the same
+   pool.
+5. Metered members: the lowest weight, fallback only, unless the flat plans have no
+   headroom.
+
+Present a timeline (now, next reset, expiry), with the change at each step. Mark every
+number that came from the user, from a recorded limit, or from a single reading.
 
 ## 4. Report
 
 Lead with the three most valuable actions. Then:
 
-- **Evidence:** a table per pool with the window stated. Columns: member, attempts,
+- **Evidence:** a table per pool, with the window stated. Columns: member, attempts,
   failure rate, first output, tokens per second, take rate against expected share,
-  exclusions, errors.
-- **Findings:** each with the rule from section 3, the numbers behind it, a
-  confidence (high, medium or low), and what would change the conclusion.
-- **Proposed changes:** numbered. For each, give where it goes (the config path,
-  the `route_adjust` arguments, or the OpenChamber setting), the exact snippet, the
-  expected effect, when to check it, and how to undo it.
-- **Needs you:** the questions only the user can answer: plan facts, prices,
-  answer quality, and what a category is meant to cover.
+  exclusions, errors, and cost per request.
+- **Plans:** each plan's windows with used, limit, percent and reset, and how old its
+  record is.
+- **Findings:** each with the rule from section 3, the numbers behind it, a confidence
+  (high, medium or low), and what would change the conclusion.
+- **Proposed changes:** numbered. For each: where it goes (the config key, the
+  `route_adjust` arguments, the `plan_info` call, or the OpenChamber setting), the
+  exact snippet, the expected effect, when to check it, and how to undo it.
+- **Needs you:** the questions only the user can answer: plan facts, prices, answer
+  quality, and what a category is meant to cover.
 - **Not measured:** what this review could not see.
 
 Keep it short enough to read in a terminal. Label every measured fact and every
 guess as such.
 
-## 5. Plan facts table
-
-Ask for these in one table. Leave blanks for anything unknown.
-
-| provider | plan | cost | quota unit and window | remaining now | resets or expires | notes (promos, limits) |
-| -------- | ---- | ---- | --------------------- | ------------- | ----------------- | ---------------------- |
-
-## 6. Guardrails
+## 5. Guardrails
 
 - Read-only until the user approves a specific change. That covers `route_adjust`,
   `route_stats` with `apply: true`, and any edit to the OpenCode config,
   `routing.json`, or OpenChamber settings.
+- `plan_info` writes record facts the user stated or a source shows. Do not record
+  a guess.
 - Do not read or print credentials, tokens or auth files.
 - Do not invent prices, plan limits, reset times or categories. Ask.
 - Do not recommend from thin data. Name the minimum and what is missing.
 - Do not react to one bad hour, one error, or one day of a weekly pattern.
-- Prefer the smallest change: a weight before a membership change, a schedule
-  before a permanent weight, and an adjustment before a config edit.
+- Prefer the smallest change: a weight before a membership change, a schedule before a
+  permanent weight, and an adjustment before a config edit.
 - Respect the user's choices. A pool they built for a reason stays unless the data
   clearly contradicts it. If it does, say so and let them decide.

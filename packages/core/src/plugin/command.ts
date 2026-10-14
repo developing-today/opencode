@@ -8,6 +8,9 @@ import { Mcp } from "../mcp/index.js"
 import PROMPT_INITIALIZE from "./command/initialize.txt"
 import PROMPT_REVIEW from "./command/review.txt"
 import PROMPT_ROUTING_REVIEW from "./command/routing-review.txt"
+import PROMPT_ROUTING_CONFIG from "./command/routing-config.txt"
+import PROMPT_ROUTING_NOTE from "./command/routing-note.txt"
+import PROMPT_PLAN_UPDATE from "./command/plan-update.txt"
 
 export const Plugin = define({
   id: "opencode.command",
@@ -62,6 +65,45 @@ export const Plugin = define({
               ...input.prompt,
               sessionID: input.sessionID,
               text: append(PROMPT_ROUTING_REVIEW, input.prompt.text),
+              delivery: input.delivery,
+            })
+            .pipe(Effect.asVoid),
+      })
+      editor.add({
+        name: "plan-update",
+        description: "update plan records: quotas, reset dates, expiries and tiers (guided)",
+        execute: (input) =>
+          ctx.session
+            .prompt({
+              ...input.prompt,
+              sessionID: input.sessionID,
+              text: append(PROMPT_PLAN_UPDATE, input.prompt.text),
+              delivery: input.delivery,
+            })
+            .pipe(Effect.asVoid),
+      })
+      editor.add({
+        name: "routing-note",
+        description: "record a routing note: what happened with a plan or model, or what you expect",
+        execute: (input) =>
+          ctx.session
+            .prompt({
+              ...input.prompt,
+              sessionID: input.sessionID,
+              text: append(PROMPT_ROUTING_NOTE, input.prompt.text),
+              delivery: input.delivery,
+            })
+            .pipe(Effect.asVoid),
+      })
+      editor.add({
+        name: "routing-config",
+        description: "change routing config: model visibility, providers, pools and weights (approval first)",
+        execute: (input) =>
+          ctx.session
+            .prompt({
+              ...input.prompt,
+              sessionID: input.sessionID,
+              text: append(PROMPT_ROUTING_CONFIG, input.prompt.text),
               delivery: input.delivery,
             })
             .pipe(Effect.asVoid),

@@ -1,0 +1,5 @@
+Help me change my OpenCode routing configuration with the routing-config skill.
+
+Load the routing-config skill first. Show the current value of what I asked about, propose the exact change with its key names, and apply it only after I approve. Edit only the keys the change needs. After the change, read the file back, tell me what should now differ in the model picker or in routing, and tell me how to undo it.
+
+Anything I write after this command is my own context. Use it as I stated it.
