@@ -417,6 +417,7 @@ export const make = Effect.gen(function* () {
               tokens_reasoning: tokens?.reasoning,
               tokens_cache_read: tokens?.cache.read,
               tokens_cache_write: tokens?.cache.write,
+              cost_usd: tokens ? SessionUsage.calculateCost(input.model.cost, tokens) : undefined,
             },
           })
         }

@@ -106,6 +106,7 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
           \`tokens_reasoning\` integer,
           \`tokens_cache_read\` integer,
           \`tokens_cache_write\` integer,
+          \`cost_usd\` real,
           \`quota\` text
         );
       `)

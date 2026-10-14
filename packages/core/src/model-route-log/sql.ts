@@ -64,6 +64,9 @@ export const RouteAttemptTable = sqliteTable(
     tokens_reasoning: integer(),
     tokens_cache_read: integer(),
     tokens_cache_write: integer(),
+    /** What the request cost in USD, from the model's catalog prices and the tokens it used. Null when the request
+     * did not finish with usage. Stored with the attempt so the cost outlives the session it belongs to. */
+    cost_usd: real(),
     /** Provider rate-limit and quota headers or fields, when the error carried them. */
     quota: text({ mode: "json" }).$type<Record<string, unknown>>(),
   },
