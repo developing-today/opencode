@@ -6,13 +6,14 @@ import type { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
 
 const anthropic = Provider.ID.make("anthropic")
 const openai = Provider.ID.make("openai")
+const now = Date.now()
 
-const model = (providerID: Provider.ID, id: string) =>
-  [id, Model.Info.default(providerID, Model.ID.make(id))] as const
+const models = (ids: string[]) =>
+  new Map(ids.map((id) => [id, Model.Info.default(anthropic, Model.ID.make(id))] as const))
 
 const definitions = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>([
-  [anthropic, new Map([model(anthropic, "claude-opus-4-1")])],
-  [openai, new Map([model(openai, "gpt-6-luna")])],
+  [anthropic, models(["claude-opus-4-1", "claude-sonnet-4-5", "claude-haiku-4-5"])],
+  [openai, models(["gpt-6-luna"])],
 ])
 
 const selection = (reference: string) => {
@@ -24,27 +25,35 @@ const route = (targets: (string | { model: string; until?: number; variants?: Re
     [
       "r",
       {
-        targets: targets.map((target) => (typeof target === "string" ? selection(target) : { ...target, model: selection(target.model) })),
+        targets: targets.map((target) =>
+          typeof target === "string" ? selection(target) : { ...target, model: selection(target.model) },
+        ),
         ...extra,
-      } as ConfigModelRoutes.Route,
+      } as unknown as ConfigModelRoutes.Route,
     ],
   ])
 
 describe("pool targets", () => {
-  test("until drops an expired target and keeps a future one", () => {
-    const now = Date.now()
-    const routes = route([
-      { model: "openai/gpt-6-luna", until: now - 1000 },
-      { model: "anthropic/claude-opus-4-1", until: now + 60_000 },
-    ])
-    const { leaves } = expand("r", routes, definitions)
-    expect(leaves.map((leaf) => `${leaf.ref.providerID}/${leaf.ref.id}`)).toEqual(["anthropic/claude-opus-4-1"])
+  test("a glob target joins every matching model of its provider, in provider order", () => {
+    const { leaves } = expand("r", route(["anthropic/*sonnet*", "anthropic/*opus*"]), definitions)
+    expect(leaves.map((leaf) => String(leaf.ref.id))).toEqual(["claude-sonnet-4-5", "claude-opus-4-1"])
   })
 
-  test("a target pattern matches catalog models of the provider", () => {
-    const routes = route(["openai/*"])
-    const { leaves } = expand("r", routes, definitions)
-    expect(leaves.map((leaf) => `${leaf.ref.providerID}/${leaf.ref.id}`)).toEqual(["openai/gpt-6-luna"])
+  test("a glob that matches nothing contributes nothing and does not fail the route", () => {
+    const { leaves } = expand("r", route(["anthropic/*mistral*", "openai/gpt-6-luna"]), definitions)
+    expect(leaves.map((leaf) => String(leaf.ref.id))).toEqual(["gpt-6-luna"])
+  })
+
+  test("a model reached by two targets appears once", () => {
+    const { leaves } = expand("r", route(["anthropic/*sonnet*", "anthropic/claude-sonnet-4-5"]), definitions)
+    expect(leaves).toHaveLength(1)
+  })
+
+  test("a time-limited target is in the route until its end time, then leaves it", () => {
+    const live = { model: "anthropic/*opus*", until: now + 60_000 }
+    const expired = { model: "openai/gpt-6-luna", until: now - 1 }
+    const kept = expand("r", route([live, expired]), definitions)
+    expect(kept.leaves.map((leaf) => String(leaf.ref.id))).toEqual(["claude-opus-4-1"])
   })
 })
 
