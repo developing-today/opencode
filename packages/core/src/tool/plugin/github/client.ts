@@ -1,7 +1,7 @@
 export * as GitHubClient from "./client.js"
 
 import { AppProcess } from "@opencode/util/process"
-import { Duration, Effect, Schedule, Schema } from "effect"
+import { Duration, Effect, Option, Schedule, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http"
 import { ChildProcess } from "effect/process"
 
@@ -339,13 +339,12 @@ export function link(header: string | undefined, rel: string) {
     .find((match) => match?.[2] === rel)?.[1]
 }
 
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
+// Error pages and log downloads are not JSON; keep their text so error messages can quote it.
 function parseJson(text: string): unknown {
   if (!text) return undefined
-  try {
-    return JSON.parse(text)
-  } catch {
-    return text
-  }
+  return Option.getOrElse(decodeJson(text), () => text)
 }
 
 interface GraphQLError {
