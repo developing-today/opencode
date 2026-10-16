@@ -7,7 +7,9 @@ import type { Context } from "@opencode/plugin/effect/plugin"
 import { AbsolutePath } from "@opencode/schema/schema"
 import { Effect, Scope } from "effect"
 import { FetchHttpClient, HttpClient } from "effect/http"
+import { GitHubAccess } from "./access.js"
 import { GitHubActions } from "./actions.js"
+import { GitHubAutomation } from "./automation.js"
 import { GitHubClient } from "./client.js"
 import { GitHubDiscussions } from "./discussion.js"
 import { GitHubExplore } from "./explore.js"
@@ -17,8 +19,10 @@ import { GitHubProcess } from "./process.js"
 import { GitHubPulls } from "./pull.js"
 import { GitHubReleases } from "./release.js"
 import { GitHubReview } from "./review.js"
+import { GitHubSecurity } from "./security.js"
 import { GitHubSettings } from "./settings.js"
 import { GitHubShared } from "./shared.js"
+import { GitHubToolset } from "./toolset.js"
 import skillContent from "./skill.md" with { type: "text" }
 
 export const ID = "opencode.github"
@@ -33,6 +37,9 @@ const groups = [
   GitHubReleases,
   GitHubExplore,
   GitHubSettings,
+  GitHubAccess,
+  GitHubSecurity,
+  GitHubAutomation,
 ] as const
 
 /** Every tool, built from host capabilities. Exposed for tests and for hosts that assemble their own dependencies. */
@@ -59,14 +66,22 @@ export default Plugin.define({
       codemode: ctx.options.codemode !== false,
     }
     const registered = tools(deps)
+    const toolset = GitHubToolset.make({ deps, tools: registered, reload: ctx.tool.reload })
+    yield* toolset.load.pipe(Effect.ignore)
+    // The transform runs again on every reload, so enable and disable change what it adds.
     yield* ctx.tool
       .transform((draft) => {
         draft.namespace({
           name: GitHubShared.NAMESPACE,
-          description:
+          description: [
             "GitHub through the authenticated gh account: pull request review loops (Copilot and human feedback, replies, resolving, waiting for reviews and CI), pull requests, issues, discussions, Actions, releases, search, repository settings and uploads. Start with context or pr.",
+            toolset.counts().hidden > 0 ? toolset.note() : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
         })
-        registered.forEach((tool) => draft.add(tool))
+        toolset.meta.forEach((tool) => draft.add(tool))
+        registered.filter((tool) => toolset.enabled(tool.name)).forEach((tool) => draft.add(tool))
       })
       .pipe(Effect.orDie)
     // Waits that a reload or restart interrupted continue where they left off.

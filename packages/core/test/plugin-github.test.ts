@@ -29,26 +29,25 @@ const TOOLS = [
   "api",
   "artifact_download",
   "artifacts",
-  "branch_protection",
-  "branch_protection_update",
   "comment",
   "comment_update",
   "commits",
   "compare",
   "context",
   "copilot",
+  "disable",
   "discussion",
   "discussion_create",
   "discussion_update",
   "discussions",
   "dispatch",
-  "environment_update",
-  "environments",
+  "enable",
   "feedback",
   "issue",
   "issue_create",
   "issue_update",
   "issues",
+  "list_tools",
   "logs",
   "pr",
   "pr_create",
@@ -63,24 +62,54 @@ const TOOLS = [
   "release_update",
   "releases",
   "repo",
-  "repo_update",
   "repos",
   "respond",
   "review",
-  "ruleset_update",
-  "rulesets",
   "run",
   "run_action",
   "runs",
   "search",
-  "secret_set",
-  "secrets",
   "updates",
   "upload",
-  "variable_set",
-  "variables",
   "wait",
   "workflows",
+]
+
+// Administration tools start hidden; enable adds them.
+const HIDDEN = [
+  "actions_settings",
+  "actions_settings_update",
+  "alert_update",
+  "alerts",
+  "autolink_update",
+  "autolinks",
+  "branch_protection",
+  "branch_protection_update",
+  "collaborator_update",
+  "collaborators",
+  "copilot_settings",
+  "copilot_settings_update",
+  "deploy_key_update",
+  "deploy_keys",
+  "environment_update",
+  "environments",
+  "pages",
+  "pages_update",
+  "properties",
+  "property_set",
+  "repo_update",
+  "ruleset_update",
+  "rulesets",
+  "secret_set",
+  "secrets",
+  "security",
+  "security_update",
+  "tag_update",
+  "tags",
+  "variable_set",
+  "variables",
+  "webhook_update",
+  "webhooks",
 ]
 
 // The built-in plugin list comes from the real supervisor; only the config's plugin operations are scripted.
@@ -150,7 +179,7 @@ const activate = (operations: ConfigPluginSource.Operation[]) =>
   }).pipe(Effect.ensuring(Effect.sync(() => (source.operations = []))))
 
 describe("built-in github plugin", () => {
-  supervised.live("is on by default and registers every tool in the Code Mode catalog", () =>
+  supervised.live("is on by default and lists every tool not hidden by default in the Code Mode catalog", () =>
     Effect.gen(function* () {
       const result = yield* activate([])
       expect(result.status).toBe("active")
@@ -204,6 +233,56 @@ describe("github plugin through the plugin host", () => {
         yield* execute(`return await tools.github.preferences({ scope: "global", clear: ["notes"] })`),
       ).toMatchObject({ global: { review_rounds: 5 } })
       expect((yield* execute(`return await tools.github.preferences({})`)).global).toEqual({ review_rounds: 5 })
+    }),
+  )
+
+  hosted.live("enable and disable change the Code Mode catalog from the next step", () =>
+    Effect.gen(function* () {
+      const plugins = yield* Plugin.Service
+      const sessions = yield* Session.Service
+      const location = yield* Location.Service
+      const registry = yield* Tool.Service
+      yield* GitHubPlugin.effect(yield* PluginHost.make(plugins))
+      const session = yield* sessions.create({ location: Location.Ref.make({ directory: location.directory }) })
+      const execute = (code: string) =>
+        executeTool(registry, {
+          sessionID: session.id,
+          ...toolIdentity,
+          call: { type: "tool-call", id: `call-${code.length}`, name: "execute", input: { code } },
+        }).pipe(
+          Effect.map((result) => JSON.parse(result.content?.[0]?.type === "text" ? result.content[0].text : "null")),
+        )
+      const listed = Effect.gen(function* () {
+        const snapshot = yield* registry.snapshot()
+        return codeModeListings(snapshot.codeModeCatalog ?? { tools: [] })
+          .map((entry) => entry.path)
+          .filter((entry) => entry.startsWith("github."))
+          .map((entry) => entry.slice("github.".length))
+          .toSorted()
+      })
+      expect(yield* listed).toEqual(TOOLS.toSorted())
+
+      const enabled = yield* execute(`return await tools.github.enable({ patterns: ["secret*", "dependabot"] })`)
+      expect(enabled.changed.toSorted()).toEqual([
+        "alert_update",
+        "alerts",
+        "secret_set",
+        "secrets",
+        "security",
+        "security_update",
+      ])
+      expect(yield* listed).toEqual(
+        [...TOOLS, "alert_update", "alerts", "secret_set", "secrets", "security", "security_update"].toSorted(),
+      )
+
+      yield* execute(`return await tools.github.enable({ patterns: ["*"] })`)
+      expect(yield* listed).toEqual([...TOOLS, ...HIDDEN].toSorted())
+
+      yield* execute(`return await tools.github.disable({ patterns: ["*"] })`)
+      expect(yield* listed).toEqual(["disable", "enable", "list_tools"])
+
+      yield* execute(`return await tools.github.list_tools({ reset: true })`)
+      expect(yield* listed).toEqual(TOOLS.toSorted())
     }),
   )
 

@@ -26,6 +26,13 @@ export const Info = Schema.Struct({
   wait_timeout_minutes: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 720 }))).annotate({
     description: "Default timeout for waits. Default 20.",
   }),
+  tools_enabled: Schema.optionalKey(Schema.Array(Schema.String)).annotate({
+    description:
+      "Tools, sections or aliases (wildcards allowed) to show by default, such as administration sections that start hidden.",
+  }),
+  tools_disabled: Schema.optionalKey(Schema.Array(Schema.String)).annotate({
+    description: "Tools, sections or aliases (wildcards allowed) to hide by default.",
+  }),
   notes: Schema.optionalKey(Schema.Array(Schema.String)).annotate({
     description: "Free-form standing instructions, such as 'treat security nits as non-blocking'.",
   }),
