@@ -1,0 +1,75 @@
+name: Jules Daily Upstream Sync (OpenCode)
+
+# Daily automated upstream sync, conflict resolution, feature-opportunity triage,
+# and safe merging for developing-today/opencode using Google Jules.
+
+on:
+  schedule:
+    # Run daily at 04:00 UTC
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      auto_merge:
+        description: "Automatically merge the PR if all tests and validation pass"
+        type: boolean
+        default: true
+      create_feature_issues:
+        description: "Analyze new upstream features and file GitHub issues for adoption opportunities"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  daily-upstream-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Jules Upstream Sync Agent
+        uses: google-labs-code/jules-action@v1
+        with:
+          jules_api_key: ${{ secrets.JULES_API_KEY }}
+          include_commit_log: true
+          prompt: >-
+            Perform the daily upstream sync of OpenCode v2 from upstream anomalyco/opencode (branch `dev`) into `main`.
+
+            Follow these strict requirements and principles:
+
+            ### 1. UPSTREAM TRACKING POLICY
+            - Track upstream `dev` exclusively (upstream promoted v2 to `dev` on Oct 10, 2026; legacy v1 is on `v1`).
+            - Merge upstream `dev` into our `main` branch: `git fetch upstream dev && git merge --no-ff upstream/dev`.
+
+            ### 2. CONFLICT RESOLUTION & CAPABILITY PRESERVATION RULES
+            - **Preserve All Features**: Keep all features, tools, skills, route definitions, and capabilities from BOTH sides.
+            - **No Deprecations**: If upstream removed an API, feature, parameter, or route that our fork uses or provides, DO NOT remove it on our side. We want more capabilities and features in general.
+            - **Reduce Future Conflicts**: Where appropriate, isolate fork additions and extensions into separate/modular files (`.ts`, plugins, skill files) rather than interleaving them in large upstream files, so future merges conflict less often.
+            - **Schema & Migrations**: Ensure database migrations in `packages/core/src/database/migration/` are monotonically numbered and registered in `migration.gen.ts`. Run `bun run --cwd packages/core migration --check` to guarantee schema consistency.
+            - **Language / i18n Parity**: Ensure all locale dictionary keys stay in 100% key parity with English. Fallback gracefully to English strings if translations are absent to prevent merge friction.
+
+            ### 3. FEATURE OPPORTUNITY TRIAGE & ISSUE CREATION
+            - Inspect the newly merged upstream commits (`git log ... --grep="^feat"`).
+            - Identify if any new upstream capabilities, refactors, or UI surfaces could be adopted or built upon by our fork's features (such as model routing, tier-aware pooling, token cost accounting, quota tracking, or MCPX).
+            - For each identified high-value synergy, create a comprehensive GitHub issue using `gh issue create --repo developing-today/opencode` containing:
+              - Clear title and summary
+              - Upstream commit references
+              - Architectural context and user story
+              - Concrete technical specifications and relevant file paths
+              - Complete acceptance criteria
+              (Ensure enough detail that a brand-new agent with zero prior context can implement it).
+
+            ### 4. VALIDATION & TESTING
+            - Run full typecheck and linting: `bun run check`.
+            - Run core routing and telemetry test suites: `bun test test/model-*.test.ts test/route-*.test.ts`.
+            - Verify that all tests that weren't already failing continue to pass, and all newly merged tests pass.
+
+            ### 5. PULL REQUEST & SAFE MERGE
+            - Update the `README.md` fork notice with the latest upstream commit SHA and timestamp.
+            - Open a clean, conflict-free Pull Request detailing all merged upstream commits and resolved conflicts.
+            - If tests pass cleanly and there are no regressions, proceed to merge the PR into `main`.
