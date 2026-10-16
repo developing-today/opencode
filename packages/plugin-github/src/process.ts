@@ -18,6 +18,8 @@ export type Run = (
     readonly timeout?: number
     /** Written to stdin, which keeps secrets out of the argument list other processes can read. */
     readonly input?: string
+    /** Added to the inherited environment. */
+    readonly env?: Readonly<Record<string, string>>
   },
 ) => Effect.Effect<Result>
 
@@ -26,7 +28,14 @@ export const run: Run = (command, args, options = {}) =>
     const child = execFile(
       command,
       [...args],
-      { cwd: options.cwd, timeout: options.timeout ?? 30_000, signal, maxBuffer: 64 * 1024 * 1024, encoding: "utf8" },
+      {
+        cwd: options.cwd,
+        timeout: options.timeout ?? 30_000,
+        signal,
+        maxBuffer: 64 * 1024 * 1024,
+        encoding: "utf8",
+        ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
+      },
       (error, stdout, stderr) =>
         resume(
           Effect.succeed({

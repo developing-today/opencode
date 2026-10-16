@@ -17,6 +17,7 @@ import { GitHubProcess } from "./process.js"
 import { GitHubPulls } from "./pull.js"
 import { GitHubReleases } from "./release.js"
 import { GitHubReview } from "./review.js"
+import { GitHubSettings } from "./settings.js"
 import { GitHubShared } from "./shared.js"
 import skillContent from "./skill.md" with { type: "text" }
 
@@ -31,6 +32,7 @@ const groups = [
   GitHubActions,
   GitHubReleases,
   GitHubExplore,
+  GitHubSettings,
 ] as const
 
 /** Every tool, built from host capabilities. Exposed for tests and for hosts that assemble their own dependencies. */

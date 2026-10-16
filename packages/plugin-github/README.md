@@ -51,11 +51,37 @@ Review loop:
 | `wait`        | Waits for the next Copilot review or for checks, in the background by default; the result, with the open items, arrives in the session as a message.                                                                                        |
 | `preferences` | Persistent preferences per repository or global: review rounds, follow-up issue policy, reply prefix, auto-request, merge method, wait timeout, notes.                                                                                      |
 
+Repository administration:
+
+| Tool                                            | What it does                                                                                                                                                                                                            |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `variables`, `variable_set`                     | Actions variables with values, at repository, environment and organization scope (including organization variables shared with the repository); create, update, delete.                                                 |
+| `secrets`, `secret_set`                         | Secret names only, at the same scopes, for Actions, Dependabot and Codespaces. Setting reads the value from `from_file` or `from_env` (or `value`), encrypts it through `gh secret set` on stdin, and never returns it. |
+| `environments`, `environment_update`            | Deployment environments: reviewers, wait timer, admin bypass, deployment branch and tag patterns, variable and secret counts; create, update, delete.                                                                   |
+| `rulesets`, `ruleset_update`                    | Repository and organization rulesets in full, and the rules that apply to a branch (readable without admin access); create, update, delete.                                                                             |
+| `branch_protection`, `branch_protection_update` | Classic branch protection in full, with a pointer to rulesets when it is unavailable; replace or remove it.                                                                                                             |
+| `repo`, `repo_update`                           | Overview of settings, security, Actions permissions and CODEOWNERS; change description, visibility, features, merge settings, topics, archiving.                                                                        |
+
 Everything else: `prs`, `pr_create`, `pr_update`, `pr_merge`, `pr_files`, `review`, `issues`, `issue`, `issue_create`,
 `issue_update`, `comment`, `comment_update`, `discussions`, `discussion`, `discussion_create`, `discussion_update`,
 `workflows`, `runs`, `run`, `logs`, `run_action`, `dispatch`, `artifacts`, `artifact_download`, `releases`,
-`release_create`, `release_update`, `release_notes`, `release_asset`, `repo`, `search`, `commits`, `compare`, `repos`,
-`upload` and `api`.
+`release_create`, `release_update`, `release_notes`, `release_asset`, `search`, `commits`, `compare`, `repos`, `upload`
+and `api`.
+
+Administrative writes follow the same permission defaults as every other tool. To be asked first:
+
+```jsonc title="opencode.jsonc"
+{
+  "permission": {
+    "github_secret_set": "ask",
+    "github_variable_set": "ask",
+    "github_environment_update": "ask",
+    "github_ruleset_update": "ask",
+    "github_branch_protection_update": "ask",
+    "github_repo_update": "ask",
+  },
+}
+```
 
 ## Design notes
 
@@ -66,6 +92,10 @@ Everything else: `prs`, `pr_create`, `pr_update`, `pr_merge`, `pr_files`, `revie
   older formats.
 - GitHub's answer to a review request does not list Copilot, and `requested_reviewers` stays empty while it works, so
   review progress comes from the timeline (`review_requested`, `copilot_work_started`, `copilot_work_finished*`).
+- Findings with no thread to resolve record their handled state in a hidden marker in a pull request comment, so every
+  session and machine agrees on what is still open.
+- Checks that re-ran for the same commit count once; checks queued for over ten minutes are reported with the runner
+  labels their job waits for, since a missing runner is the usual reason.
 - A background `wait` survives transient network, server and rate-limit errors, joins an existing wait for the same pull
   request instead of polling twice, and leaves a just-pushed commit to a repository's review-on-push rule for a minute
   before requesting a review itself.
