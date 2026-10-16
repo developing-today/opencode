@@ -895,7 +895,6 @@ export type ConfigModelRoutes = {
     weights?: { [x: string]: number }
   }
 }
-}
 
 export type SessionMessageLocationSwitched = {
   id: SessionMessageID
