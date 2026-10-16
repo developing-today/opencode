@@ -1,12 +1,14 @@
 <!--
   developing-today/opencode fork notice:
-  This fork tracks the upstream v2 line (anomalyco/opencode branch v2) exclusively.
-  It is strictly v2-only; the legacy v1 (dev) branch is not tracked or merged here.
+  This fork tracks the upstream v2 line (anomalyco/opencode branch dev) exclusively.
+  Following upstream's promotion of v2 to dev (with legacy v1 branched to v1), this fork tracks dev.
+  Latest upstream commit merged: 00e7472faa2ef15b30db6110440117e4e7e1a72a (Fri Oct 16 15:15:15 2026 +0530).
 -->
 
 > [!NOTE]
 > **Fork Information (`developing-today/opencode`):**
-> This repository is a fork of [OpenCode](https://github.com/anomalyco/opencode) tracking the upstream **`v2`** line exclusively.
+> This repository is a fork of [OpenCode](https://github.com/anomalyco/opencode) tracking the upstream **`v2`** codebase on `dev` exclusively (upstream promoted v2 to `dev` on Oct 10, 2026; legacy v1 is on `v1`).
+> - **Latest upstream commit merged**: `00e7472faa2ef15b30db6110440117e4e7e1a72a` (Fri Oct 16 2026).
 >
 > **High-Level Additions & Differences in this Fork:**
 > - **Model Route Pooling & Scheduled Weights**: Named provider/model route pools (`experimental.model_routes`), recurring time-based weight schedules (`schedules` and `experimental.model_route_schedules` with weekday/month/hour/timezone windows), selection modes (ordered, round-robin, weighted), soft budgets, burst rate-limit continuity, and silent-target hedging.
@@ -28,7 +30,7 @@
 <p align="center">The open source AI coding agent.</p>
 <p align="center">
   <a href="https://opencode.ai/discord"><img alt="Discord" src="https://img.shields.io/discord/1391832426048651334?style=flat-square&label=discord" /></a>
-  <a href="https://www.npmjs.com/package/opencode-ai"><img alt="npm" src="https://img.shields.io/npm/v/opencode-ai?style=flat-square" /></a>
+  <a href="https://www.npmjs.com/package/@opencode/cli"><img alt="npm" src="https://img.shields.io/npm/v/@opencode/cli?style=flat-square" /></a>
   <a href="https://github.com/anomalyco/opencode/actions/workflows/publish.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/anomalyco/opencode/publish.yml?style=flat-square&branch=dev" /></a>
 </p>
 
@@ -68,7 +70,7 @@
 curl -fsSL https://opencode.ai/install | bash
 
 # Package managers
-npm i -g opencode-ai@latest        # or bun/pnpm/yarn
+npm i -g @opencode/cli@latest      # or bun/pnpm/yarn
 scoop install opencode             # Windows
 choco install opencode             # Windows
 brew install anomalyco/tap/opencode # macOS and Linux (recommended, always up to date)

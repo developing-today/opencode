@@ -31,7 +31,7 @@ export const Plugin = define({
           })
         }
         integrations.update(integrationID, (integration) => {
-          integration.name = provider.name ?? integration.name
+          integration.name = provider.name || integration.name
         })
         if (provider.env !== undefined) {
           integrations.method.update({
@@ -67,8 +67,10 @@ export const Plugin = define({
             })
           provider.activation = "enabled"
           if (item.canonical !== undefined) provider.canonical = item.canonical
-          if (item.name !== undefined) provider.name = item.name
+          if (item.name) provider.name = item.name
           if (item.package !== undefined) provider.package = item.package
+          if (item.compatibility !== undefined)
+            provider.compatibility = { ...provider.compatibility, ...item.compatibility }
           if (item.settings !== undefined) provider.settings = Provider.mergeOverlay(provider.settings, item.settings)
           if (item.headers !== undefined) provider.headers = Provider.mergeHeaders(provider.headers, item.headers)
           if (item.body !== undefined) provider.body = Provider.mergeOverlay(provider.body, item.body)
@@ -88,6 +90,14 @@ export const Plugin = define({
           })
         }
         next.set(item, { providerID, models: definitions })
+      }
+      for (const [item, definition] of next) {
+        for (const [id, config] of Object.entries(item.models ?? {})) {
+          if (config.limit === undefined) continue
+          providers.models.update(definition.providerID, id, (model) => {
+            model.limit = { ...model.limit, ...config.limit }
+          })
+        }
       }
       sources.defaultModel = Config.latest(loaded.entries, "model")
       sources.models = next
@@ -110,7 +120,7 @@ export const Plugin = define({
               if (item.settings?.baseURL !== undefined && model.settings) delete model.settings.baseURL
             }
             if (config.family !== undefined) model.family = config.family
-            if (config.name !== undefined) model.name = config.name
+            if (config.name) model.name = config.name
             if (config.modelID !== undefined) model.modelID = config.modelID
             if (config.compatibility !== undefined)
               model.compatibility = { ...model.compatibility, ...config.compatibility }
@@ -149,7 +159,13 @@ export const Plugin = define({
             if (config.disabled !== undefined) model.enabled = !config.disabled
             if (config.limit !== undefined) model.limit = { ...model.limit, ...config.limit }
           })
-          if (config.variants === undefined && !source?.base)
+          // Inherited variants are spelled for the base model's package, so a package override needs fresh ones.
+          // A base without variants has no reasoning support to respell.
+          const repackaged =
+            source?.base !== undefined &&
+            source.base.variants.length > 0 &&
+            models.get(providerID, id)?.package !== source.base.package
+          if (config.variants === undefined && (!source?.base || repackaged))
             models.update(providerID, id, (model) => {
               model.variants = [
                 ...Variant.resolve({

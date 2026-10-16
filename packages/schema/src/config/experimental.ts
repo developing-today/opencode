@@ -13,7 +13,7 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
     description: "Maximum subagent nesting depth. Defaults to 1.",
   }),
   policies: ConfigPolicy.Info.pipe(Schema.Array, optional).annotate({
-    description: "Ordered policies controlling access to configured resources",
+    description: "Deprecated: use top-level policies. Ordered policies controlling access to configured resources",
   }),
   model_routes: ConfigModelRoutes.Info.pipe(optional).annotate({
     description: "Named ordered provider/model routes with failure and performance failover",

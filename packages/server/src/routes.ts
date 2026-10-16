@@ -58,6 +58,7 @@ const applicationServiceNodes = [
   httpClient,
   Job.node,
   Project.node,
+  Project.sweepNode,
   Worktree.node,
   Session.node,
   Instance.node,
@@ -126,6 +127,7 @@ function makeRoutes<AuthError, AuthServices>(
     Config.node.replace(
       Config.configured({
         project: options.config?.project,
+        claude: options.config?.claude,
         file: options.config?.file,
         content: options.config?.content,
       }),
