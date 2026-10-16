@@ -44,7 +44,8 @@ export function fakeGitHub(routes: Record<string, Reply | Route>) {
         method: request.method,
         url: request.url,
         path: url.pathname,
-        query: Object.fromEntries(url.searchParams),
+        // Effect keeps request parameters apart from the URL until the request is sent.
+        query: Object.fromEntries([...url.searchParams, ...request.urlParams.params]),
         headers: request.headers,
         body,
       }

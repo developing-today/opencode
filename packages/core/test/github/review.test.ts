@@ -609,7 +609,7 @@ describe("github review tools", () => {
           expect(asserted.map((item) => item.action)).toEqual(["github_respond"])
 
           const reply = github.requests.find((request) =>
-            JSON.stringify(request.body).includes("addPullRequestReviewThreadReply"),
+            JSON.stringify(request.body ?? null).includes("addPullRequestReviewThreadReply"),
           )
           const replyBody = (reply?.body as { variables: { body: string } }).variables.body
           expect(replyBody.startsWith("> *Automated response from an AI coding agent*\n\n")).toBe(true)
@@ -619,7 +619,9 @@ describe("github review tools", () => {
           const combined = github.requests.find(
             (request) => request.method === "POST" && request.path.endsWith("/issues/7/comments"),
           )
-          expect(JSON.stringify(combined?.body)).toContain("Capped at five attempts.")
+          expect((combined?.body as { body: string }).body).toBe(
+            "Replies to findings in Copilot's review summary:\n\n---\n\n**Re: Guard the retry loop** (`src/retry.ts:40`)\n\nCapped at five attempts.",
+          )
 
           const after = yield* run<object, { items: GitHubReview.Item[] }>(find(tools, "feedback"), {
             repo: "acme/widgets",

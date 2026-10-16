@@ -1797,6 +1797,16 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
       return { number: created.number, url: created.html_url }
     })
 
+  // Body findings have no thread, so the combined reply names each one by its title and location.
+  const bodyFindings = input.responses.some((response) => response.id.startsWith("copilot:"))
+    ? new Map(
+        (yield* reviews(api, repo, number)).flatMap((review) =>
+          GitHubCopilot.parseReview(review.body).body.map(
+            (finding, index) => [`copilot:${review.id}:${index}`, finding] as const,
+          ),
+        ),
+      )
+    : new Map<string, GitHubCopilot.BodyFinding>()
   const pendingReviews = new Map<string, number>()
   const bodyReplies: string[] = []
   const results: Result[] = []
@@ -1853,7 +1863,15 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
       if (response.id.startsWith("copilot:")) {
         const issue = yield* fileIssue(response, "Copilot finding", data.url, response.body ?? "")
         const body = response.body ?? defaultBody(response)
-        if (body) bodyReplies.push(`**${response.id}**${issue ? ` — tracked in #${issue.number}` : ""}\n\n${body}`)
+        const finding = bodyFindings.get(response.id)
+        const heading = [
+          `**Re: ${finding?.title ?? "finding in Copilot's review"}**`,
+          finding?.path ? `(\`${finding.path}${finding.line ? `:${finding.line}` : ""}\`)` : undefined,
+          issue ? `— tracked in #${issue.number}` : undefined,
+        ]
+          .filter(Boolean)
+          .join(" ")
+        if (body) bodyReplies.push(`${heading}\n\n${body}`)
         if (response.resolve === true) yield* addToList(input.deps, handledKey(repo, number), [response.id])
         if (response.resolve === false) yield* removeFromList(input.deps, handledKey(repo, number), response.id)
         return {
