@@ -103,7 +103,7 @@ describe("github pull request tools", () => {
               url: "https://github.com/acme/widgets/pull/7",
               state: "OPEN",
               draft: true,
-              author: "ghost",
+              author: { login: "ghost", kind: "bot" },
               base: "main",
               head: "feature/pages",
               labels: ["bug"],

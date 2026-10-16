@@ -3,7 +3,7 @@ export * as GitHubShared from "./shared.js"
 import { ToolFailure } from "@opencode/ai"
 import type { Tool } from "@opencode/schema/tool"
 import type { AppProcess } from "@opencode/util/process"
-import { Effect, Option, Schema, type Scope } from "effect"
+import { Clock, Effect, Exit, Option, Schema, type Scope } from "effect"
 import type { Job } from "../../../job.js"
 import type { KV } from "../../../kv.js"
 import type { Permission } from "../../../permission.js"
@@ -60,13 +60,27 @@ export interface PRTarget extends Target {
 
 const defaultHost = () => process.env.GH_HOST || "github.com"
 
+// Code Mode scripts call several tools in a row; reading the remotes once per burst saves a handful of git spawns
+// per call without hiding a branch switch for long.
+const LOCAL_TTL_MS = 5_000
+const locals = new Map<string, { readonly at: number; readonly value: Exit.Exit<GitHubRepo.Local, GitHubClient.Error> }>()
+
+const localRepo = Effect.fn("GitHubShared.localRepo")(function* (deps: Deps) {
+  const now = yield* Clock.currentTimeMillis
+  const cached = locals.get(deps.directory)
+  if (cached && now - cached.at < LOCAL_TTL_MS) return yield* cached.value
+  const value = yield* GitHubRepo.local(deps.process, deps.directory).pipe(Effect.exit)
+  locals.set(deps.directory, { at: now, value })
+  return yield* value
+})
+
 /** Resolves the repository from input or from the working directory's git remotes. */
 export const target = Effect.fn("GitHubShared.target")(function* (deps: Deps, repo?: string) {
   if (repo === undefined) {
-    const local = yield* GitHubRepo.local(deps.process, deps.directory)
+    const local = yield* localRepo(deps)
     return { repo: local, api: deps.client.forHost(local.host), local } satisfies Target as Target
   }
-  const local = Option.getOrUndefined(yield* GitHubRepo.local(deps.process, deps.directory).pipe(Effect.option))
+  const local = Option.getOrUndefined(yield* localRepo(deps).pipe(Effect.option))
   const parsed = GitHubRepo.parse(repo, local?.host ?? defaultHost())
   if (!parsed)
     return yield* new GitHubClient.Error({ kind: "validation", message: `Unrecognized repository: ${repo}. Use owner/name.` })

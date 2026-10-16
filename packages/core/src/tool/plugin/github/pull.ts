@@ -29,7 +29,7 @@ const ListItem = Schema.Struct({
   url: Schema.String,
   state: Schema.String,
   draft: Schema.Boolean,
-  author: Schema.String,
+  author: GitHubShared.Author,
   base: Schema.String,
   head: Schema.String,
   labels: Schema.Array(Schema.String),
@@ -60,7 +60,7 @@ interface SearchNode {
   readonly isDraft: boolean
   readonly createdAt: string
   readonly updatedAt: string
-  readonly author: { readonly login: string } | null
+  readonly author: { readonly login: string; readonly __typename?: string } | null
   readonly baseRefName: string
   readonly headRefName: string
   readonly repository: { readonly nameWithOwner: string }
@@ -76,7 +76,7 @@ const SEARCH_QUERY = `query($q: String!, $first: Int!) {
     issueCount
     nodes {
       ... on PullRequest {
-        number title url state isDraft createdAt updatedAt author { login }
+        number title url state isDraft createdAt updatedAt author { login __typename }
         baseRefName headRefName repository { nameWithOwner }
         labels(first: 20) { nodes { name } }
         reviewDecision
@@ -259,7 +259,10 @@ export function tools(deps: Deps): Tool.Info[] {
                     url: node.url,
                     state: node.state,
                     draft: node.isDraft,
-                    author: node.author?.login ?? "ghost",
+                    author: {
+                      login: node.author?.login ?? "ghost",
+                      kind: GitHubCopilot.authorKind(node.author?.login, node.author?.__typename),
+                    },
                     base: node.baseRefName,
                     head: node.headRefName,
                     labels: (node.labels?.nodes ?? []).map((label) => label.name),

@@ -1165,7 +1165,7 @@ export function tools(deps: Deps): Tool.Info[] {
         }
 
         const settled = yield* Deferred.make<typeof WaitResult.Type>()
-        const run = poll({ api, repo, number, goal, started, timeout, interval, requested }).pipe(
+        const run = poll({ api, repo, number, goal, started, timeout, interval, requested, allowRequest }).pipe(
           Effect.tap((result) => Deferred.succeed(settled, result)),
           Effect.map(renderWait),
         )
@@ -1885,7 +1885,9 @@ const requestCopilot = Effect.fn("GitHubReview.requestCopilot")(function* (
 
 const WaitResult = Schema.Struct({
   pr: Schema.String,
-  status: Schema.Literals(["completed", "timed_out", "running"]),
+  status: Schema.Literals(["completed", "timed_out", "stopped", "running"]).annotate({
+    description: "stopped: the pull request closed, or no Copilot review is pending and none could be requested.",
+  }),
   waited_seconds: Schema.Int,
   requested: Schema.Literals(["none", "requested", "re-requested"]),
   copilot: Schema.optionalKey(CopilotStatus),
@@ -1947,19 +1949,29 @@ const poll = Effect.fn("GitHubReview.poll")(function* (input: {
   readonly timeout: Duration.Duration
   readonly interval: Duration.Duration
   readonly requested: "none" | "requested" | "re-requested"
+  readonly allowRequest: boolean
 }) {
   const label = `${GitHubRepo.slug(input.repo)}#${input.number}`
-  let rekicked = input.requested === "re-requested"
+  let rekicks = input.requested === "none" ? 0 : 1
+  let lastRequest = input.requested === "none" ? 0 : input.started
   while (true) {
-    const [data, reviewList] = yield* Effect.all([pull(input.api, input.repo, input.number), reviews(input.api, input.repo, input.number)], {
-      concurrency: 2,
-    })
+    const [data, reviewList] = yield* Effect.all(
+      [pull(input.api, input.repo, input.number), reviews(input.api, input.repo, input.number)],
+      { concurrency: 2 },
+    )
     const now = yield* Clock.currentTimeMillis
-    const copilot = input.goal === "checks" ? undefined : yield* copilotStatus(input.api, input.repo, input.number, data.headRefOid, reviewList)
+    const copilot =
+      input.goal === "checks"
+        ? undefined
+        : yield* copilotStatus(input.api, input.repo, input.number, data.headRefOid, reviewList)
     const checkSummary = input.goal === "copilot" ? undefined : checks(data)
-    const reviewedSinceStart = copilot?.reviewed_at !== undefined && Date.parse(copilot.reviewed_at) >= input.started - 5_000
-    const copilotDone = copilot === undefined || copilot.state === "reviewed" || (reviewedSinceStart && copilot.state !== "in_progress")
-    const checksDone = checkSummary === undefined || (checkSummary.pending.length === 0 && checkSummary.state !== "PENDING" && checkSummary.state !== "EXPECTED")
+    const reviewedSinceStart =
+      copilot?.reviewed_at !== undefined && Date.parse(copilot.reviewed_at) >= input.started - 5_000
+    const copilotDone =
+      copilot === undefined || copilot.state === "reviewed" || (reviewedSinceStart && copilot.state !== "in_progress")
+    const checksDone =
+      checkSummary === undefined ||
+      (checkSummary.pending.length === 0 && checkSummary.state !== "PENDING" && checkSummary.state !== "EXPECTED")
     const waited = Math.round((now - input.started) / 1000)
     const base = {
       pr: label,
@@ -1969,13 +1981,25 @@ const poll = Effect.fn("GitHubReview.poll")(function* (input: {
       ...(copilot ? { copilot } : {}),
       ...(checkSummary ? { checks: checkSummary } : {}),
     }
+    if (data.state !== "OPEN")
+      return { ...base, status: "stopped" as const, message: `${label} is ${data.state.toLowerCase()}. ${summarize(base)}` }
     if (copilotDone && checksDone) return { ...base, status: "completed" as const, message: summarize(base) }
     if (now - input.started >= Duration.toMillis(input.timeout))
       return { ...base, status: "timed_out" as const, message: `Timed out after ${waited}s. ${summarize(base)}` }
-    // A request that never started is re-sent once; GitHub sometimes drops them.
-    if (copilot?.state === "requested" && copilot.stuck && !rekicked) {
-      rekicked = true
-      yield* requestCopilot(input.api, input.repo, input.number, true).pipe(Effect.ignore)
+    // A push during the wait leaves nothing pending unless the repository requests reviews on push. Give a fresh
+    // request a minute to show up in the timeline before deciding that.
+    const idle = copilot && !copilotDone && (copilot.state === "stale" || copilot.state === "none")
+    const stuck = copilot?.state === "requested" && copilot.stuck
+    if ((idle || stuck) && now - lastRequest > 60_000) {
+      if (!input.allowRequest || rekicks >= 3)
+        return {
+          ...base,
+          status: "stopped" as const,
+          message: `No Copilot review is pending on ${label}${input.allowRequest ? " after 3 requests" : " and requesting is disabled"}. ${summarize(base)}`,
+        }
+      rekicks++
+      lastRequest = now
+      yield* requestCopilot(input.api, input.repo, input.number, stuck === true).pipe(Effect.ignore)
     }
     yield* Effect.sleep(input.interval)
   }
@@ -1986,9 +2010,9 @@ function summarize(input: { readonly copilot?: CopilotStatus; readonly checks?: 
   if (input.copilot) {
     const copilot = input.copilot
     lines.push(
-      copilot.state === "reviewed" || copilot.reviewed_at
+      copilot.state === "reviewed" || (copilot.reviewed_at && copilot.state === "stale")
         ? `Copilot reviewed ${copilot.reviewed_commit?.slice(0, 7) ?? "?"} (round ${copilot.rounds})${copilot.headline ? `: ${copilot.headline}` : ""}${copilot.summary ? ` — ${copilot.summary}` : ""}. Approved: ${copilot.approved ? "yes" : "no"}.`
-        : `Copilot state: ${copilot.state}.`,
+        : `Copilot state: ${copilot.state}${copilot.reviewed_commit ? ` (last reviewed ${copilot.reviewed_commit.slice(0, 7)})` : ""}.`,
     )
     const findings = copilot.findings.filter((finding) => finding.new)
     if (findings.length > 0)
