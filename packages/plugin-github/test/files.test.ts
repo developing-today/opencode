@@ -70,6 +70,9 @@ describe("GitHubProcess.run", () => {
       const ok = yield* GitHubProcess.run("git", ["--version"])
       expect(ok.exitCode).toBe(0)
       expect(ok.stdout).toStartWith("git version")
+      const echoed = yield* GitHubProcess.run("git", ["hash-object", "--stdin"], { input: "secret\n" })
+      // The blob ID of "secret\n", so stdin really reached the program.
+      expect(echoed.stdout.trim()).toBe("d97c5eada5d8c52079031eef0107a4430a9617c5")
       const missing = yield* GitHubProcess.run("opencode-no-such-program", [])
       expect(missing.exitCode).toBe(127)
       expect(missing.stderr).toContain("opencode-no-such-program")
