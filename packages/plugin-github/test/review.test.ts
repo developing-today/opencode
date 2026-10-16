@@ -1,16 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { LayerNode } from "@opencode/util/effect/layer-node"
-import { AppProcess } from "@opencode/util/process"
 import * as TestClock from "effect/testing/TestClock"
-import { GitHubCopilot } from "@opencode/core/tool/plugin/github/copilot"
-import { GitHubRepo } from "@opencode/core/tool/plugin/github/repo"
-import { GitHubReview } from "@opencode/core/tool/plugin/github/review"
-import { withEnv } from "../fixture/env"
-import { testEffect } from "../lib/effect"
+import { GitHubCopilot } from "../src/copilot.js"
+import { GitHubRepo } from "../src/repo.js"
+import { GitHubReview } from "../src/review.js"
+import { it, withEnv } from "./lib"
 import { fakeGitHub, find, makeDeps, run, type Route } from "./fixture"
-
-const it = testEffect(LayerNode.compile(AppProcess.node))
 
 const HEAD = "a".repeat(40)
 const OLD = "b".repeat(40)
@@ -444,6 +439,7 @@ const baseRoutes = (overrides: Record<string, Route | object> = {}) => ({
   "GET /repos/acme/widgets/code-scanning/alerts": { body: [alert] },
   "GET /repos/acme/widgets/code-scanning/alerts/5": { body: alert },
   "GET /user": { body: { login: "dev" } },
+  "GET /repos/acme/widgets/rules/branches/main": { body: [] },
   "GRAPHQL viewer { login id }": {
     body: {
       viewer: { login: "dev", id: "U_dev" },
@@ -775,14 +771,12 @@ describe("github review tools", () => {
           }),
         )
         const { deps, notified } = yield* makeDeps({ http: github.http })
-        const result = yield* run<object, { status: string; requested: string }>(
-          find(GitHubReview.tools(deps), "wait"),
-          {
-            repo: "acme/widgets",
-            pr: 7,
-            interval_seconds: 30,
-          },
-        )
+        const wait = find(GitHubReview.tools(deps), "wait")
+        const result = yield* run<object, { status: string; requested: string }>(wait, {
+          repo: "acme/widgets",
+          pr: 7,
+          interval_seconds: 30,
+        })
         expect(result).toMatchObject({ status: "running", requested: "none" })
 
         // Long enough that the client's own retries give up and the poll sees the failure.
@@ -831,16 +825,25 @@ describe("github review tools", () => {
           }),
         )
         const { deps, notified } = yield* makeDeps({ http: github.http })
-        const result = yield* run<object, { status: string; requested: string }>(
-          find(GitHubReview.tools(deps), "wait"),
-          {
-            repo: "acme/widgets",
-            pr: 7,
-            interval_seconds: 30,
-          },
-        )
+        const wait = find(GitHubReview.tools(deps), "wait")
+        const result = yield* run<object, { status: string; requested: string }>(wait, {
+          repo: "acme/widgets",
+          pr: 7,
+          interval_seconds: 30,
+        })
         expect(result).toMatchObject({ status: "running", requested: "requested" })
         expect(notified).toEqual([])
+        // A second wait joins the running one instead of polling (and requesting) again.
+        const again = yield* run<object, { status: string; message: string }>(wait, {
+          repo: "acme/widgets",
+          pr: 7,
+        })
+        expect(again.status).toBe("running")
+        expect(
+          github.requests.filter(
+            (request) => request.method === "POST" && request.path.endsWith("/requested_reviewers"),
+          ),
+        ).toHaveLength(1)
 
         events.push({ event: "copilot_work_started", created_at: "2026-01-01T11:00:20Z" })
         yield* TestClock.adjust("30 seconds")
@@ -857,6 +860,90 @@ describe("github review tools", () => {
         expect(notified[0]?.text).toContain('state="completed"')
         expect(notified[0]?.text).toContain("Approval recommended")
         expect(notified[0]?.metadata).toMatchObject({ source: "github.wait", pr: "acme/widgets#7" })
+        // The open items arrive with the notification, so the session can start without calling feedback.
+        expect(notified[0]?.text).toContain(
+          "Open items:\n- PRRT_copilot [high] src/page.ts:20 Pagination stops after one page\n- PRRT_human [human] src/cache.ts:8 Why a Map here?",
+        )
+      }),
+    ),
+  )
+
+  it.effect("a wait leaves a just-pushed commit to the repository's review-on-push rule before requesting", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-01-01T11:00:00Z"))
+        const github = fakeGitHub(
+          baseRoutes({
+            "GET /repos/acme/widgets/pulls/7/reviews": {
+              body: [copilotReview({ id: 900, commit: OLD, at: "2026-01-01T10:00:00Z", body: changesBody })],
+            },
+            "GET /repos/acme/widgets/rules/branches/main": {
+              body: [{ type: "copilot_code_review", parameters: { review_on_push: true } }],
+            },
+            "POST /repos/acme/widgets/pulls/7/requested_reviewers": { status: 201, body: { requested_reviewers: [] } },
+          }),
+        )
+        const posts = () =>
+          github.requests.filter(
+            (request) => request.method === "POST" && request.path.endsWith("/requested_reviewers"),
+          )
+        const { deps } = yield* makeDeps({ http: github.http })
+        const result = yield* run<object, { requested: string }>(find(GitHubReview.tools(deps), "wait"), {
+          repo: "acme/widgets",
+          pr: 7,
+          interval_seconds: 30,
+        })
+        expect(result.requested).toBe("none")
+        yield* TestClock.adjust("30 seconds")
+        for (let attempt = 0; attempt < 20; attempt++) yield* Effect.yieldNow
+        expect(posts()).toHaveLength(0)
+        // Nothing arrived on its own within a minute, so the next poll asks for the review itself.
+        yield* TestClock.adjust("65 seconds")
+        for (let attempt = 0; attempt < 20 && posts().length === 0; attempt++) yield* Effect.yieldNow
+        expect(posts()).toHaveLength(1)
+      }),
+    ),
+  )
+
+  it.live("respond fills {sha} with the pushed head commit", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const github = fakeGitHub(
+          baseRoutes({
+            "GRAPHQL nodes(ids:": {
+              body: {
+                nodes: [
+                  {
+                    __typename: "PullRequestReviewThread",
+                    id: "PRRT_copilot",
+                    isResolved: false,
+                    path: "src/page.ts",
+                    comments: {
+                      nodes: [
+                        { author: { login: "copilot-pull-request-reviewer", __typename: "Bot" }, body: "x", url: "u" },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+            "GRAPHQL addPullRequestReviewThreadReply": {
+              body: { addPullRequestReviewThreadReply: { comment: { url: "https://reply", pullRequestReview: null } } },
+            },
+          }),
+        )
+        const { deps } = yield* makeDeps({ http: github.http })
+        yield* run(find(GitHubReview.tools(deps), "respond"), {
+          repo: "acme/widgets",
+          pr: 7,
+          responses: [{ id: "PRRT_copilot", body: "Fixed in {sha}: pagination follows the next link." }],
+        })
+        const reply = github.requests.find((request) =>
+          JSON.stringify(request.body ?? null).includes("addPullRequestReviewThreadReply"),
+        )
+        expect((reply?.body as { variables: { body: string } }).variables.body).toBe(
+          "Fixed in aaaaaaa: pagination follows the next link.",
+        )
       }),
     ),
   )

@@ -1,8 +1,7 @@
 export * as GitHubReview from "./review.js"
 
 import type { Tool } from "@opencode/schema/tool"
-import { Clock, Deferred, Duration, Effect, Option, Result, Schema } from "effect"
-import { SessionMessage } from "../../../session/message.js"
+import { Cause, Clock, Duration, Effect, Exit, Option, Result, Schema } from "effect"
 import { GitHubClient } from "./client.js"
 import { GitHubCopilot } from "./copilot.js"
 import { GitHubPreferences } from "./preferences.js"
@@ -499,9 +498,11 @@ export function guidance(preferences: GitHubPreferences.Info & typeof GitHubPref
     "Review-loop guidance:",
     "- Reviewer findings, Copilot's especially, are advice, not directives. Verify each against the code. Fix real defects; decline the rest with evidence (file:line, why).",
     "- Do not chase speculative security or edge-case hardening on already-guarded paths. Resolve it as noted and list it for the user.",
-    "- Before replying fixed, look for the same pattern elsewhere and fix every instance. Push before replying with a commit.",
+    "- Before replying fixed, search for the rule the finding names, not just its one site, and fix every instance. Re-read the file to confirm the edit landed.",
+    "- Commit and push before replying, then cite the commit ({sha} in respond). Say what changed; do not paste the finding back, since bots can read echoed text as a new finding.",
     "- Work through findings autonomously; bring changes of direction (architecture, behavior, scope) to the user.",
-    `- Every push gets a fresh Copilot review with new threads, so zero findings may never arrive. After about ${preferences.review_rounds} rounds, or once findings are follow-ups to your own fixes or mostly nits, stop and hand back with a summary.`,
+    `- Every push gets a fresh Copilot review with new threads, so zero findings may never arrive. Judge a round by what it touches: findings on code, tests, config or CI stay worth fixing; documentation bookkeeping can be batched. After about ${preferences.review_rounds} rounds, or once findings are follow-ups to your own fixes or mostly nits, stop and hand back with a summary.`,
+    "- Ready to merge means checks pass on the pushed head and no open finding is a correctness, data-loss or real security defect (pr reports blockers).",
     `- Minor, out-of-scope or follow-up findings: ${followup}.`,
     ...(preferences.notes?.length
       ? ["- Standing notes from the user:", ...preferences.notes.map((note) => `  - ${note}`)]
@@ -515,6 +516,7 @@ export function guidance(preferences: GitHubPreferences.Info & typeof GitHubPref
 
 export function tools(deps: Deps): Tool.Info[] {
   const shownGuidance = new Set<string>()
+  const waits = new Set<string>()
   const discovered = new Map<string, { at: number; value: Discovery }>()
 
   const discover = Effect.fn("GitHubReview.discover")(function* (target: GitHubShared.Target) {
@@ -947,7 +949,7 @@ export function tools(deps: Deps): Tool.Info[] {
           id: Schema.String.annotate({ description: "Item ID from feedback." }),
           body: Schema.optionalKey(Schema.String).annotate({
             description:
-              "Reply text. Explain what changed (with the commit) or why not. Omit to use a short default for the reason.",
+              "Reply text: what changed and where, or why not, without restating the finding. {sha} becomes the pushed head commit. Omit to use a short default for the reason.",
           }),
           resolve: Schema.optionalKey(Schema.Boolean).annotate({
             description: "true resolves or dismisses the item, false reopens it, omitted leaves its state alone.",
@@ -1261,8 +1263,17 @@ export function tools(deps: Deps): Tool.Info[] {
         const allowRequest = input.request ?? prefs.effective.copilot_auto_request
         const label = `${GitHubRepo.slug(repo)}#${number}`
 
+        // One background wait per pull request and goal: a second call joins the first instead of polling twice.
+        const key = `${context.sessionID}:${prKey(repo, number)}:${goal}`
+        if (input.background !== false && waits.has(key))
+          return {
+            ...backgroundResult(label, goal, "none"),
+            message: `A wait for ${goal} on ${label} is already running in the background. You will be notified when it finishes; DO NOT poll.`,
+          }
+
         // Kick off a review up front so a request failure is reported to the caller, not to a background message.
         let requested: "none" | "requested" | "re-requested" = "none"
+        let lastRequest = 0
         if (goal !== "checks") {
           const [data, reviewList] = yield* Effect.all([pull(api, repo, number), reviews(api, repo, number)], {
             concurrency: 2,
@@ -1275,44 +1286,29 @@ export function tools(deps: Deps): Tool.Info[] {
               message: `No Copilot review is pending on ${label} (state ${current.state}) and request is false.`,
               hint: "Call again with request: true, or request one with copilot.",
             })
-          if (action !== "none" && allowRequest) {
+          // Repositories with a review-on-push rule request Copilot themselves shortly after a push; give that a
+          // minute before requesting, so a just-pushed commit is not requested twice.
+          const automatic =
+            action === "requested" && current.state === "stale" && (yield* reviewsOnPush(api, repo, data.baseRefName))
+          if (automatic) lastRequest = started
+          if (action !== "none" && allowRequest && !automatic) {
             yield* GitHubShared.authorize(deps, context, "copilot", repo)
             yield* requestCopilot(api, repo, number, action === "re-requested")
             requested = action
+            lastRequest = started
           }
         }
 
-        const settled = yield* Deferred.make<typeof WaitResult.Type>()
-        const run = poll({ api, repo, number, goal, started, timeout, interval, requested, allowRequest }).pipe(
-          Effect.tap((result) => Deferred.succeed(settled, result)),
-          Effect.map(renderWait),
+        const work = poll({ api, repo, number, goal, started, timeout, interval, requested, allowRequest, lastRequest })
+        if (input.background === false) return yield* work
+        waits.add(key)
+        yield* work.pipe(
+          Effect.exit,
+          Effect.flatMap((exit) => notify(deps, context.sessionID, label, exit)),
+          Effect.ensuring(Effect.sync(() => waits.delete(key))),
+          Effect.forkIn(deps.scope, { startImmediately: true }),
         )
-        const id = `github-wait-${prKey(repo, number).replace(/[^\w-]+/g, "-")}-${started}`
-        const job = yield* deps.jobs.start({
-          id,
-          type: "github.wait",
-          title: `Waiting for ${goal === "checks" ? "checks" : goal === "both" ? "Copilot and checks" : "Copilot"} on ${label}`,
-          metadata: { sessionID: context.sessionID, pr: label },
-          run,
-        })
-        const notify = notifyWhenDone(deps, context.sessionID, job.id, label, settled)
-        if (input.background !== false) {
-          yield* deps.jobs.background(job.id)
-          yield* notify
-          return backgroundResult(label, goal, requested)
-        }
-        const blocked = yield* deps.jobs
-          .block({ id: job.id, sessionID: context.sessionID })
-          .pipe(Effect.onInterrupt(() => deps.jobs.cancel(job.id).pipe(Effect.ignore)))
-        if (blocked?.type === "backgrounded") {
-          yield* notify
-          return backgroundResult(label, goal, requested)
-        }
-        if (blocked?.info.status === "error")
-          return yield* new GitHubClient.Error({ kind: "server", message: blocked.info.error ?? "wait failed" })
-        if (blocked?.info.status === "cancelled")
-          return yield* new GitHubClient.Error({ kind: "validation", message: "wait cancelled" })
-        return yield* Deferred.await(settled)
+        return backgroundResult(label, goal, requested)
       }),
   })
 
@@ -1817,7 +1813,11 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
   const bodyReplies: string[] = []
   const results: Result[] = []
 
-  for (const response of input.responses) {
+  // {sha} lets a reply written before the push name the commit reviewers will see.
+  const responses = input.responses.map((response) =>
+    response.body === undefined ? response : { ...response, body: response.body.replaceAll("{sha}", short) },
+  )
+  for (const response of responses) {
     const outcome = yield* Effect.gen(function* (): Effect.fn.Return<Result, GitHubClient.Error> {
       if (response.id.startsWith("alert:")) {
         const alertNumber = Number(response.id.slice("alert:".length))
@@ -2164,10 +2164,11 @@ const poll = Effect.fn("GitHubReview.poll")(function* (input: {
   readonly interval: Duration.Duration
   readonly requested: "none" | "requested" | "re-requested"
   readonly allowRequest: boolean
+  readonly lastRequest: number
 }) {
   const label = `${GitHubRepo.slug(input.repo)}#${input.number}`
   let rekicks = input.requested === "none" ? 0 : 1
-  let lastRequest = input.requested === "none" ? 0 : input.started
+  let lastRequest = input.lastRequest
   let failures = 0
   while (true) {
     // A long wait outlives brief network or rate-limit trouble; only give up after several polls in a row fail.
@@ -2176,11 +2177,14 @@ const poll = Effect.fn("GitHubReview.poll")(function* (input: {
       { concurrency: 2 },
     ).pipe(
       Effect.flatMap(
-        ([data, reviewList]): Effect.Effect<{ data: PullData; copilot?: CopilotStatus }, GitHubClient.Error> =>
+        ([data, reviewList]): Effect.Effect<
+          { data: PullData; reviewList: ReadonlyArray<RestReview>; copilot?: CopilotStatus },
+          GitHubClient.Error
+        > =>
           input.goal === "checks"
-            ? Effect.succeed({ data })
+            ? Effect.succeed({ data, reviewList })
             : copilotStatus(input.api, input.repo, input.number, data.headRefOid, reviewList).pipe(
-                Effect.map((copilot) => ({ data, copilot })),
+                Effect.map((copilot) => ({ data, reviewList, copilot })),
               ),
       ),
       Effect.result,
@@ -2219,7 +2223,20 @@ const poll = Effect.fn("GitHubReview.poll")(function* (input: {
         status: "stopped" as const,
         message: `${label} is ${data.state.toLowerCase()}. ${summarize(base)}`,
       }
-    if (copilotDone && checksDone) return { ...base, status: "completed" as const, message: summarize(base) }
+    if (copilotDone && checksDone) {
+      // List what is open now, so the session can start on the findings without another call.
+      const open =
+        copilot === undefined
+          ? []
+          : yield* openItems(input.api, input.repo, input.number, data, snapshot.success.reviewList).pipe(
+              Effect.orElseSucceed((): string[] => []),
+            )
+      return {
+        ...base,
+        status: "completed" as const,
+        message: [summarize(base), ...(open.length ? ["Open items:", ...open] : [])].join("\n"),
+      }
+    }
     if (now - input.started >= Duration.toMillis(input.timeout))
       return { ...base, status: "timed_out" as const, message: `Timed out after ${waited}s. ${summarize(base)}` }
     // A push during the wait leaves nothing pending unless the repository requests reviews on push. Give a fresh
@@ -2269,31 +2286,82 @@ function summarize(input: {
   return lines.join("\n")
 }
 
-function renderWait(result: typeof WaitResult.Type) {
-  return result.message
-}
-
-const notifyWhenDone = (
+/** Posts a finished background wait into its session, which wakes the session if it is idle. */
+const notify = (
   deps: Deps,
   sessionID: Tool.Context["sessionID"],
-  id: string,
   label: string,
-  settled: Deferred.Deferred<typeof WaitResult.Type>,
-) =>
-  Effect.gen(function* () {
-    const info = (yield* deps.jobs.wait({ id })).info
-    if (!info || info.status === "running") return
-    const result = info.status === "completed" ? yield* Deferred.await(settled) : undefined
-    const state = result?.status ?? info.status
-    const text = result?.message ?? (info.status === "error" ? (info.error ?? "wait failed") : "Cancelled")
-    yield* deps.sessions.synthetic({
-      id: SessionMessage.ID.create(),
+  exit: Exit.Exit<typeof WaitResult.Type, GitHubClient.Error>,
+) => {
+  // The plugin scope closing interrupts waits; there is nobody left to tell.
+  if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) return Effect.void
+  const state = Exit.isSuccess(exit) ? exit.value.status : "error"
+  const text = Exit.isSuccess(exit)
+    ? exit.value.message
+    : `The wait failed: ${Cause.squash(exit.cause) instanceof GitHubClient.Error ? (Cause.squash(exit.cause) as GitHubClient.Error).message : Cause.pretty(exit.cause)}`
+  return deps.sessions
+    .synthetic({
       sessionID,
       description: `GitHub wait on ${label}`,
-      text: `<github-wait id="${id}" pr="${label}" state="${state}">\n${text}\n</github-wait>`,
-      metadata: { source: "github.wait", jobID: id, pr: label, state },
+      text: `<github-wait pr="${label}" state="${state}">\n${text}\n</github-wait>`,
+      metadata: { source: "github.wait", pr: label, state },
     })
-  }).pipe(Effect.ignore, Effect.forkIn(deps.scope, { startImmediately: true }), Effect.asVoid)
+    .pipe(Effect.ignore)
+}
+
+/** One line per open review thread and Copilot body finding, for a wait's completion message. */
+const openItems = Effect.fn("GitHubReview.openItems")(function* (
+  api: Api,
+  repo: GitHubRepo.Ref,
+  number: number,
+  data: PullData,
+  reviewList: ReadonlyArray<RestReview>,
+) {
+  const threadList = yield* threads(api, repo, number)
+  const summaries = copilotReviews(reviewList).map((review) => ({
+    review,
+    summary: GitHubCopilot.parseReview(review.body),
+  }))
+  const known = findingIndex(summaries.map((entry) => entry.summary))
+  const location = (path: string | undefined, line: number | null | undefined) =>
+    path ? ` ${path}${line ? `:${line}` : ""}` : ""
+  const lines = [
+    ...threadList
+      .filter((thread) => !thread.isResolved)
+      .map((thread) => {
+        const first = thread.comments.nodes[0]
+        const finding = first ? known.get(first.databaseId) : undefined
+        const text = finding?.title ?? GitHubCopilot.plain(first?.body ?? "").split("\n")[0] ?? ""
+        return `- ${thread.id} [${finding?.severity ?? authorOf(first?.author).kind}]${location(thread.path, thread.line ?? thread.originalLine)} ${GitHubShared.clip(text, 140)}`
+      }),
+    ...summaries
+      .filter((entry) => entry.review.commit === data.headRefOid)
+      .flatMap((entry) =>
+        entry.summary.body.map(
+          (finding, index) =>
+            `- copilot:${entry.review.id}:${index} [${finding.severity ?? finding.kind}]${location(finding.path, finding.line)} ${GitHubShared.clip(finding.title ?? finding.body.split("\n")[0] ?? "", 140)}`,
+        ),
+      ),
+  ]
+  return lines.length > OPEN_ITEM_LIMIT
+    ? [...lines.slice(0, OPEN_ITEM_LIMIT), `- … ${lines.length - OPEN_ITEM_LIMIT} more; call feedback for all of them.`]
+    : lines
+})
+
+const OPEN_ITEM_LIMIT = 20
+
+/** Whether the base branch's rules ask Copilot to review every push on its own. */
+const reviewsOnPush = (api: Api, repo: GitHubRepo.Ref, branch: string) =>
+  api
+    .json<
+      ReadonlyArray<{ type: string; parameters?: { review_on_push?: boolean } }>
+    >("GET", `/repos/${GitHubRepo.slug(repo)}/rules/branches/${GitHubShared.refPath(branch)}`)
+    .pipe(
+      Effect.map((rules) =>
+        rules.some((rule) => rule.type === "copilot_code_review" && rule.parameters?.review_on_push),
+      ),
+      Effect.orElseSucceed(() => false),
+    )
 
 /**
  * Merge readiness as reviewers here treat it: CI green on the pushed head and no open correctness or security defect.

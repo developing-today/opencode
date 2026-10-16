@@ -124,6 +124,10 @@
       "dependsOn": ["transit"],
       "outputs": []
     },
+    "@opencode/plugin-github#test": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
     "@opencode/script#test": {
       "dependsOn": ["transit"],
       "outputs": []
@@ -164,6 +168,10 @@
       "outputs": []
     },
     "@opencode/plugin-browser#test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "@opencode/plugin-github#test": {
       "dependsOn": ["^build"],
       "outputs": []
     },

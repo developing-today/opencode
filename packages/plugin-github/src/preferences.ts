@@ -1,7 +1,7 @@
 export * as GitHubPreferences from "./preferences.js"
 
 import { Effect, Option, Schema } from "effect"
-import type { KV } from "../../../kv.js"
+import type { StorageDomain } from "@opencode/plugin/effect/storage"
 import type { GitHubRepo } from "./repo.js"
 
 export const Info = Schema.Struct({
@@ -45,14 +45,14 @@ const PREFIX = "github.preferences/"
 export const globalKey = `${PREFIX}global`
 export const repoKey = (repo: GitHubRepo.Ref) => `${PREFIX}repo/${repo.host}/${repo.owner}/${repo.name}`.toLowerCase()
 
-export const read = Effect.fn("GitHubPreferences.read")(function* (kv: KV.Interface, key: string) {
+export const read = Effect.fn("GitHubPreferences.read")(function* (kv: StorageDomain, key: string) {
   const value = yield* kv.get(key)
   return Option.getOrElse(decode(value), (): Info => ({}))
 })
 
 /** Merges stored preferences: repository over global over discovered defaults over built-in defaults. */
 export const effective = Effect.fn("GitHubPreferences.effective")(function* (
-  kv: KV.Interface,
+  kv: StorageDomain,
   repo: GitHubRepo.Ref | undefined,
   discovered: Info = {},
 ) {
@@ -65,7 +65,7 @@ export const effective = Effect.fn("GitHubPreferences.effective")(function* (
 })
 
 export const write = Effect.fn("GitHubPreferences.write")(function* (
-  kv: KV.Interface,
+  kv: StorageDomain,
   key: string,
   set: Info,
   clear: ReadonlyArray<string>,

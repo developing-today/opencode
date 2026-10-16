@@ -25,8 +25,8 @@ the work can continue while the cause is fixed. Report the original failure to t
 | Code scanning alerts "unavailable" | Code scanning enabled? Token has `security_events`?                               | Enable it, or refresh scopes                                                                                                                                               |
 | Copilot review never starts        | `copilot` shows `requested` + `stuck`                                             | Copilot code review must be enabled for the repository or account; re-request with `copilot` `force`, or ask the user to request it in the web UI                          |
 
-Disable or relocate the tools with `OPENCODE_GITHUB_TOOLS=off` or `native` (native lists them as provider tools for
-sessions without Code Mode).
+The tools come from the built-in `opencode.github` plugin. Turn it off with `"plugins": ["-opencode.github"]`, or
+limit single tools with permissions such as `"permission": { "github_pr_merge": "ask" }`.
 
 ## gh equivalents
 

@@ -2,14 +2,10 @@ import { describe, expect } from "bun:test"
 import { readFile } from "node:fs/promises"
 import { Effect } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/http"
-import { LayerNode } from "@opencode/util/effect/layer-node"
-import { AppProcess } from "@opencode/util/process"
-import { GitHubActions } from "@opencode/core/tool/plugin/github/actions"
-import { withEnv } from "../fixture/env"
-import { testEffect } from "../lib/effect"
+import { GitHubActions } from "../src/actions.js"
+import { it, withEnv } from "./lib"
 import { fakeGitHub, find, makeDeps, run, type Reply, type Route } from "./fixture"
 
-const it = testEffect(LayerNode.compile(AppProcess.node))
 const env = { GH_TOKEN: "test-token", GITHUB_TOKEN: undefined }
 
 /**

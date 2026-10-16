@@ -2,18 +2,13 @@ import { describe, expect } from "bun:test"
 import { $ } from "bun"
 import { Effect } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/http"
-import { LayerNode } from "@opencode/util/effect/layer-node"
-import { AppProcess } from "@opencode/util/process"
-import { GitHubClient } from "@opencode/core/tool/plugin/github/client"
-import { GitHubRepo } from "@opencode/core/tool/plugin/github/repo"
-import { GitHubShared } from "@opencode/core/tool/plugin/github/shared"
-import { withEnv } from "../fixture/env"
-import { initRepo } from "../fixture/git"
-import { tmpdirScoped } from "../fixture/tmpdir"
-import { testEffect } from "../lib/effect"
+import { GitHubClient } from "../src/client.js"
+import { GitHubProcess } from "../src/process.js"
+import { GitHubRepo } from "../src/repo.js"
+import { GitHubShared } from "../src/shared.js"
+import { initRepo, it, tmpdirScoped, withEnv } from "./lib"
 import { fakeGitHub, makeDeps } from "./fixture"
 
-const it = testEffect(LayerNode.compile(AppProcess.node))
 const env = { GH_TOKEN: "test-token", GITHUB_TOKEN: undefined, GH_HOST: undefined }
 
 /** Serves one streamed body in fixed chunks, optionally without a content-length, to exercise bounded downloads. */
@@ -41,7 +36,7 @@ describe("GitHubClient.download", () => {
       Effect.gen(function* () {
         const api = GitHubClient.make({
           http: streaming("0123456789".repeat(10), 7, false),
-          process: yield* AppProcess.Service,
+          run: GitHubProcess.run,
         }).forHost("github.com")
         const result = yield* api.download("/logs", { maxBytes: 25, keep: "tail" })
         expect(result.truncated).toBe(true)
@@ -55,7 +50,7 @@ describe("GitHubClient.download", () => {
       Effect.gen(function* () {
         const api = GitHubClient.make({
           http: streaming("x".repeat(100), 10, true),
-          process: yield* AppProcess.Service,
+          run: GitHubProcess.run,
         }).forHost("github.com")
         const failure = yield* api.download("/asset", { maxBytes: 50 }).pipe(Effect.flip)
         expect(failure.message).toBe("Download is 100 bytes, over the 50-byte limit.")
@@ -68,7 +63,7 @@ describe("GitHubClient.download", () => {
       Effect.gen(function* () {
         const api = GitHubClient.make({
           http: streaming("x".repeat(100), 10, false),
-          process: yield* AppProcess.Service,
+          run: GitHubProcess.run,
         }).forHost("github.com")
         const failure = yield* api.download("/asset", { maxBytes: 50 }).pipe(Effect.flip)
         expect(failure.message).toBe("Download is 60 bytes, over the 50-byte limit.")
@@ -97,7 +92,7 @@ describe("GitHubClient requests", () => {
             return HttpClientResponse.fromWeb(request, new Response(stream, { status: 200 }))
           }),
         )
-        const api = GitHubClient.make({ http, process: yield* AppProcess.Service }).forHost("github.com")
+        const api = GitHubClient.make({ http, run: GitHubProcess.run }).forHost("github.com")
         const failure = yield* api.json("GET", "/repos/acme/widgets/issues").pipe(Effect.flip)
         expect(failure.kind).toBe("network")
         expect(failure.message).toContain("Lost the connection to github.com while reading /repos/acme/widgets/issues")
@@ -124,7 +119,7 @@ describe("GitHubRepo.local", () => {
         await git("config", "branch.feature.merge", "refs/heads/main")
         await git("config", "remote.pushDefault", "origin")
       })
-      const local = yield* GitHubRepo.local(yield* AppProcess.Service, dir.path)
+      const local = yield* GitHubRepo.local(GitHubProcess.run, dir.path)
       expect(local).toMatchObject({
         host: "github.com",
         owner: "acme",

@@ -1,33 +1,29 @@
 export * as GitHubShared from "./shared.js"
 
-import { ToolFailure } from "@opencode/ai"
-import type { Tool } from "@opencode/schema/tool"
-import type { AppProcess } from "@opencode/util/process"
+import type { Context } from "@opencode/plugin/effect/plugin"
+import { Tool } from "@opencode/schema/tool"
 import { Clock, Effect, Exit, Option, Schema, type Scope } from "effect"
-import type { FileAccess } from "../../../file-access.js"
-import type { Job } from "../../../job.js"
-import type { KV } from "../../../kv.js"
-import type { Permission } from "../../../permission.js"
-import type { Session } from "../../../session.js"
 import { GitHubClient } from "./client.js"
+import type { GitHubFiles } from "./files.js"
+import type { GitHubProcess } from "./process.js"
 import { GitHubRepo } from "./repo.js"
 
 export const NAMESPACE = "github"
 export const SKILL = "github"
 
+/** Everything the tools need from the plugin host, as plain values so tests can supply fakes. */
 export interface Deps {
   readonly client: GitHubClient.Client
-  readonly process: AppProcess.Interface
-  readonly kv: KV.Interface
-  readonly permission: Pick<Permission.Interface, "assert">
+  readonly run: GitHubProcess.Run
+  readonly kv: Context["storage"]
+  readonly permission: Pick<Context["permission"], "assert">
   /** Delivers background results into a session. */
-  readonly sessions: Pick<Session.Interface, "synthetic">
+  readonly sessions: Pick<Context["session"], "synthetic">
   /** Approves reading local files (uploads) and writing downloads, like the read and write tools do. */
-  readonly files: Pick<FileAccess.Interface, "resolve" | "authorizeExternal" | "authorizeRead">
-  readonly jobs: Job.Interface
+  readonly files: GitHubFiles.Interface
   readonly scope: Scope.Scope
   readonly directory: string
-  /** False when OPENCODE_GITHUB_TOOLS=native registers the tools on the provider's native tool list. */
+  /** False puts the tools on the provider's native tool list instead of the Code Mode catalog. */
   readonly codemode: boolean
 }
 
@@ -76,7 +72,7 @@ const localRepo = Effect.fn("GitHubShared.localRepo")(function* (deps: Deps) {
   const now = yield* Clock.currentTimeMillis
   const cached = locals.get(deps.directory)
   if (cached && now - cached.at < LOCAL_TTL_MS) return yield* cached.value
-  const value = yield* GitHubRepo.local(deps.process, deps.directory).pipe(Effect.exit)
+  const value = yield* GitHubRepo.local(deps.run, deps.directory).pipe(Effect.exit)
   locals.set(deps.directory, { at: now, value })
   return yield* value
 })
@@ -251,21 +247,21 @@ export const writableFile = Effect.fn("GitHubShared.writableFile")(function* (
 /** Encodes a branch or tag for a URL path, keeping the slashes GitHub expects between ref segments. */
 export const refPath = (ref: string) => ref.split("/").map(encodeURIComponent).join("/")
 
-/** Turns any typed failure into a model-facing ToolFailure, appending recovery hints and the fallback skill. */
+/** Turns any typed failure into a model-facing Tool.Error, appending recovery hints and the fallback skill. */
 export function failure(tool: string, error: unknown) {
-  if (error instanceof ToolFailure) return error
+  if (error instanceof Tool.Error) return error
   if (error instanceof GitHubClient.Error) {
     const fallback =
       error.kind === "validation" || error.kind === "not_found" || error.kind === "conflict"
         ? undefined
         : `If this persists, load the \`${SKILL}\` skill for troubleshooting and gh CLI fallbacks.`
-    return new ToolFailure({
+    return new Tool.Error({
       message: [`github.${tool}: ${error.message}`, error.hint, fallback].filter(Boolean).join("\n"),
       metadata: { kind: error.kind, ...(error.status ? { status: error.status } : {}) },
     })
   }
   const message = error instanceof globalThis.Error ? error.message : String(error)
-  return new ToolFailure({ message: `github.${tool}: ${message}`, error })
+  return new Tool.Error({ message: `github.${tool}: ${message}`, error })
 }
 
 export interface Spec<I extends Schema.Codec<unknown, unknown>, O extends Schema.Codec<unknown, unknown>> {

@@ -1,9 +1,8 @@
 export * as GitHubClient from "./client.js"
 
-import { AppProcess } from "@opencode/util/process"
 import { Duration, Effect, Option, Schedule, Schema, Stream } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http"
-import { ChildProcess } from "effect/process"
+import type { GitHubProcess } from "./process.js"
 
 export const Kind = Schema.Literals([
   "auth",
@@ -97,7 +96,7 @@ const API_VERSION = "2022-11-28"
 const USER_AGENT = "opencode-github-tools"
 const DEFAULT_DOWNLOAD_BYTES = 20 * 1024 * 1024
 
-export function make(input: { readonly http: HttpClient.HttpClient; readonly process: AppProcess.Interface }): Client {
+export function make(input: { readonly http: HttpClient.HttpClient; readonly run: GitHubProcess.Run }): Client {
   const tokens = new Map<string, { value: string; source: string }>()
   const apis = new Map<string, Api>()
 
@@ -109,22 +108,14 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
       tokens.set(host, fromEnv)
       return fromEnv
     }
-    const result = yield* input.process
-      .run(ChildProcess.make("gh", ["auth", "token", "--hostname", host], { extendEnv: true, stdin: "ignore" }), {
-        timeout: "15 seconds",
+    const result = yield* input.run("gh", ["auth", "token", "--hostname", host], { timeout: 15_000 })
+    if (result.exitCode !== 0)
+      return yield* new Error({
+        kind: "auth",
+        message: `No GitHub credentials for ${host}: ${result.stderr.trim() || `gh exited with ${result.exitCode}`}`,
+        hint: authHint(host),
       })
-      .pipe(
-        Effect.flatMap(AppProcess.requireSuccess),
-        Effect.mapError(
-          (error) =>
-            new Error({
-              kind: "auth",
-              message: `No GitHub credentials for ${host}: ${error.message}`,
-              hint: authHint(host),
-            }),
-        ),
-      )
-    const value = result.stdout.toString("utf8").trim()
+    const value = result.stdout.trim()
     if (!value)
       return yield* new Error({ kind: "auth", message: `gh returned no token for ${host}`, hint: authHint(host) })
     const token = { value, source: "gh auth token" }

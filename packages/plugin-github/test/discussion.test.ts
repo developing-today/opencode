@@ -1,13 +1,8 @@
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
-import { LayerNode } from "@opencode/util/effect/layer-node"
-import { AppProcess } from "@opencode/util/process"
-import { GitHubDiscussions } from "@opencode/core/tool/plugin/github/discussion"
-import { withEnv } from "../fixture/env"
-import { testEffect } from "../lib/effect"
+import { GitHubDiscussions } from "../src/discussion.js"
+import { it, withEnv } from "./lib"
 import { fakeGitHub, find, makeDeps, run, type Request } from "./fixture"
-
-const it = testEffect(LayerNode.compile(AppProcess.node))
 
 const env = { GH_TOKEN: "test-token", GITHUB_TOKEN: undefined }
 

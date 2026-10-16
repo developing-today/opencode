@@ -4,15 +4,10 @@ import os from "node:os"
 import path from "node:path"
 import { Effect } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/http"
-import { LayerNode } from "@opencode/util/effect/layer-node"
-import { AppProcess } from "@opencode/util/process"
-import { GitHubReleases } from "@opencode/core/tool/plugin/github/release"
-import { withEnv } from "../fixture/env"
-import { tmpdirScoped } from "../fixture/tmpdir"
-import { testEffect } from "../lib/effect"
+import { GitHubReleases } from "../src/release.js"
+import { it, tmpdirScoped, withEnv } from "./lib"
 import { fakeGitHub, find, makeDeps, run } from "./fixture"
 
-const it = testEffect(LayerNode.compile(AppProcess.node))
 const env = { GH_TOKEN: "test-token", GITHUB_TOKEN: undefined }
 
 /**

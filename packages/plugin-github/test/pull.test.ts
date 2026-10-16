@@ -1,14 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { LayerNode } from "@opencode/util/effect/layer-node"
-import { AppProcess } from "@opencode/util/process"
-import { GitHubPreferences } from "@opencode/core/tool/plugin/github/preferences"
-import { GitHubPulls } from "@opencode/core/tool/plugin/github/pull"
-import { withEnv } from "../fixture/env"
-import { testEffect } from "../lib/effect"
+import { GitHubPreferences } from "../src/preferences.js"
+import { GitHubPulls } from "../src/pull.js"
+import { it, withEnv } from "./lib"
 import { fakeGitHub, find, makeDeps, run, type Reply, type Route } from "./fixture"
-
-const it = testEffect(LayerNode.compile(AppProcess.node))
 
 const env = { GH_TOKEN: "test-token", GITHUB_TOKEN: undefined }
 const HEAD = "a".repeat(40)

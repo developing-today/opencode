@@ -1,9 +1,8 @@
 export * as GitHubRepo from "./repo.js"
 
-import { AppProcess } from "@opencode/util/process"
 import { Effect } from "effect"
-import { ChildProcess } from "effect/process"
 import { GitHubClient } from "./client.js"
+import type { GitHubProcess } from "./process.js"
 
 export interface Ref {
   readonly host: string
@@ -67,16 +66,11 @@ export function parseNumber(
  * Reads the repository from a working directory. Prefers the remote `gh repo set-default` selected, then the
  * current branch's push remote, then `origin`, then the first GitHub remote.
  */
-export const local = Effect.fn("GitHubRepo.local")(function* (process: AppProcess.Interface, directory: string) {
+export const local = Effect.fn("GitHubRepo.local")(function* (run: GitHubProcess.Run, directory: string) {
   const git = (args: string[]) =>
-    process
-      .run(ChildProcess.make("git", ["-C", directory, ...args], { extendEnv: true, stdin: "ignore" }), {
-        timeout: "10 seconds",
-      })
-      .pipe(
-        Effect.map((result) => (result.exitCode === 0 ? result.stdout.toString("utf8").trim() : "")),
-        Effect.orElseSucceed(() => ""),
-      )
+    run("git", ["-C", directory, ...args], { timeout: 10_000 }).pipe(
+      Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
+    )
   const [remotes, branch, head, resolved] = yield* Effect.all(
     [
       git(["remote", "-v"]),

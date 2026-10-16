@@ -2,15 +2,10 @@ import { describe, expect } from "bun:test"
 import fs from "node:fs/promises"
 import path from "node:path"
 import { Effect } from "effect"
-import { LayerNode } from "@opencode/util/effect/layer-node"
-import { AppProcess } from "@opencode/util/process"
-import { GitHubExplore } from "@opencode/core/tool/plugin/github/explore"
-import { withEnv } from "../fixture/env"
-import { withTempDir } from "../fixture/tmpdir"
-import { testEffect } from "../lib/effect"
+import { GitHubExplore } from "../src/explore.js"
+import { it, withEnv, withTempDir } from "./lib"
 import { fakeGitHub, find, makeDeps, run, type Reply, type Route } from "./fixture"
 
-const it = testEffect(LayerNode.compile(AppProcess.node))
 const env = { GH_TOKEN: "test-token", GITHUB_TOKEN: undefined, GH_HOST: undefined }
 
 const setup = (routes: Record<string, Reply | Route>, directory?: string) =>

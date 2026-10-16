@@ -1,17 +1,15 @@
-import { Agent } from "@opencode/core/agent"
-import { Job } from "@opencode/core/job"
-import { KV } from "@opencode/core/kv"
-import type { Permission } from "@opencode/core/permission"
-import { Session } from "@opencode/core/session"
-import { SessionMessage } from "@opencode/core/session/message"
-import { GitHubClient } from "@opencode/core/tool/plugin/github/client"
-import type { GitHubShared } from "@opencode/core/tool/plugin/github/shared"
+import type { PermissionDomain } from "@opencode/plugin/effect/permission"
+import type { StorageDomain } from "@opencode/plugin/effect/storage"
+import { Agent } from "@opencode/schema/agent"
+import { Session } from "@opencode/schema/session"
+import { SessionMessage } from "@opencode/schema/session-message"
 import { Tool } from "@opencode/schema/tool"
-import { AppProcess } from "@opencode/util/process"
 import { Effect, Schema, Scope } from "effect"
-import path from "node:path"
-import { AbsolutePath } from "@opencode/core/schema"
 import { HttpClient, HttpClientResponse } from "effect/http"
+import path from "node:path"
+import { GitHubClient } from "../src/client.js"
+import { GitHubProcess } from "../src/process.js"
+import type { GitHubShared } from "../src/shared.js"
 
 export interface Request {
   readonly method: string
@@ -88,7 +86,7 @@ function parse(text: string): unknown {
   }
 }
 
-export function memoryKV(): KV.Interface {
+export function memoryKV(): StorageDomain {
   const store = new Map<string, Schema.Json>()
   return {
     get: (key) => Effect.sync(() => store.get(key)),
@@ -118,12 +116,10 @@ export const makeDeps = Effect.fn("test.github.deps")(function* (input: {
   readonly http: HttpClient.HttpClient
   readonly directory?: string
 }) {
-  const process = yield* AppProcess.Service
   const scope = yield* Scope.Scope
   const kv = memoryKV()
-  const asserted: Permission.AssertInput[] = []
-  const notified: Parameters<Session.Interface["synthetic"]>[0][] = []
-  const jobs = yield* Job.make.pipe(Effect.provideService(Scope.Scope, scope), Effect.provideService(KV.Service, kv))
+  const asserted: Parameters<PermissionDomain["assert"]>[0][] = []
+  const notified: Parameters<GitHubShared.Deps["sessions"]["synthetic"]>[0][] = []
   const permission: GitHubShared.Deps["permission"] = {
     assert: (assertion) => Effect.sync(() => void asserted.push(assertion)),
   }
@@ -131,11 +127,11 @@ export const makeDeps = Effect.fn("test.github.deps")(function* (input: {
   const sessions: GitHubShared.Deps["sessions"] = {
     synthetic: (message) => Effect.sync(() => void notified.push(message)).pipe(Effect.andThen(Effect.never)),
   }
-  // Local file approvals resolve against the working directory and are recorded, like the real FileAccess.
+  // Local file approvals resolve against the working directory and are recorded.
   const approvals: Array<{ readonly kind: "read" | "external"; readonly path: string }> = []
   const directory = input.directory ?? "/nonexistent-github-test-directory"
   const resolve = (file: string) => {
-    const absolute = AbsolutePath.make(path.resolve(directory, file))
+    const absolute = path.resolve(directory, file)
     return { absolute, resource: absolute }
   }
   const files: GitHubShared.Deps["files"] = {
@@ -150,13 +146,12 @@ export const makeDeps = Effect.fn("test.github.deps")(function* (input: {
       }),
   }
   const deps: GitHubShared.Deps = {
-    client: GitHubClient.make({ http: input.http, process }),
-    process,
+    client: GitHubClient.make({ http: input.http, run: GitHubProcess.run }),
+    run: GitHubProcess.run,
     kv,
     permission,
     sessions,
     files,
-    jobs,
     scope,
     directory,
     codemode: true,

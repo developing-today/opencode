@@ -4,9 +4,7 @@ import { mkdir, readdir, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { Tool } from "@opencode/schema/tool"
-import { AppProcess } from "@opencode/util/process"
 import { Clock, Effect, Schema } from "effect"
-import { ChildProcess } from "effect/process"
 import { GitHubClient } from "./client.js"
 import { GitHubRepo } from "./repo.js"
 import { GitHubShared } from "./shared.js"
@@ -965,15 +963,9 @@ export function tools(deps: Deps): Tool.Info[] {
         )
         // Extraction writes every entry into the caller's directory, so each one needs the same approval as a write.
         if (input.path) {
-          const listing = yield* deps.process
-            .run(ChildProcess.make("unzip", ["-Z1", zip], { extendEnv: true, stdin: "ignore" }), {
-              timeout: "1 minute",
-            })
-            .pipe(
-              Effect.flatMap(AppProcess.requireSuccess),
-              Effect.map((output) => output.stdout.toString("utf8")),
-              Effect.orElseSucceed(() => ""),
-            )
+          const listing = yield* deps
+            .run("unzip", ["-Z1", zip], { timeout: 60_000 })
+            .pipe(Effect.map((output) => (output.exitCode === 0 ? output.stdout : "")))
           yield* Effect.forEach(
             listing
               .split("\n")
@@ -983,15 +975,9 @@ export function tools(deps: Deps): Tool.Info[] {
             { discard: true },
           )
         }
-        const failure = yield* deps.process
-          .run(ChildProcess.make("unzip", ["-o", "-q", zip, "-d", directory], { extendEnv: true, stdin: "ignore" }), {
-            timeout: "5 minutes",
-          })
-          .pipe(
-            Effect.flatMap(AppProcess.requireSuccess),
-            Effect.as(undefined),
-            Effect.catch((error) => Effect.succeed(error.message)),
-          )
+        const extracted = yield* deps.run("unzip", ["-o", "-q", zip, "-d", directory], { timeout: 300_000 })
+        const failure =
+          extracted.exitCode === 0 ? undefined : extracted.stderr || `unzip exited with ${extracted.exitCode}`
         if (failure !== undefined)
           return {
             ...result,

@@ -325,7 +325,7 @@ export function tools(deps: Deps): Tool.Info[] {
     execute: (input, context) =>
       Effect.gen(function* () {
         const { repo, api } = yield* GitHubShared.target(deps, input.repo)
-        const local = Option.getOrUndefined(yield* GitHubRepo.local(deps.process, deps.directory).pipe(Effect.option))
+        const local = Option.getOrUndefined(yield* GitHubRepo.local(deps.run, deps.directory).pipe(Effect.option))
         const head = yield* resolveHead(input.head, repo, local)
         const found = yield* api.request("GET", `/repos/${head.owner}/${head.name}/branches/${refPath(head.branch)}`, {
           allow: [404],
