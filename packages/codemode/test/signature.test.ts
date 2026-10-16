@@ -99,8 +99,28 @@ describe("pretty signature rendering", () => {
     expect(inputTypeScript(lookupOrder, true)).toBe(
       ["{", "  /** Order identifier */", "  id: string,", "  verbose?: boolean,", "}"].join("\n"),
     )
-    expect(outputTypeScript(lookupOrder, true)).toBe(
-      ["{", "  /** Current order status */", "  status: string,", "}"].join("\n"),
+    // Results render on one line with descriptions inline.
+    expect(outputTypeScript(lookupOrder, true)).toBe("{ /** Current order status */ status: string }")
+  })
+
+  test("result types keep descriptions and deprecation inline and drop validation tags", () => {
+    const tool = Tool.make({
+      description: "Result documentation",
+      input: Schema.Struct({}),
+      output: {
+        type: "object",
+        properties: {
+          old: { type: "string", deprecated: true, description: "Use name." },
+          ids: { type: "array", minItems: 1, items: { type: "integer", minimum: 1, description: "Issue number." } },
+          note: { type: "string", maxLength: 9, description: "First line.\nSecond */ line." },
+        },
+        required: ["ids"],
+      } as const,
+      execute: () => Effect.succeed({ ids: [1] }),
+    })
+    expect(outputTypeScript(tool, true)).toBe(
+      "{ /** Use name. @deprecated */ old?: string; /** Each item: Issue number. */ ids: Array<number>; " +
+        "/** First line. Second * / line. */ note?: string }",
     )
   })
 
@@ -637,7 +657,7 @@ describe("non-identifier property names render as quoted keys", () => {
     })
     expect(inputTypeScript(tool)).toContain('"foo-bar"?: string')
     expect(outputTypeScript(tool)).toBe('{ "content-type": string }')
-    expect(outputTypeScript(tool, true)).toBe(["{", '  "content-type": string,', "}"].join("\n"))
+    expect(outputTypeScript(tool, true)).toBe('{ "content-type": string }')
   })
 
   test("Effect Schema structs with non-identifier field names quote too", () => {
@@ -696,11 +716,12 @@ describe("union schemas render every alternative", () => {
     ].join("; ")
     expect(inputTypeScript(tool)).toBe(compact)
     expect(outputTypeScript(tool)).toBe(compact)
-    for (const rendered of [inputTypeScript(tool, true), outputTypeScript(tool, true)]) {
-      expect(rendered).toContain("  /** @integer */\n  count: number,")
-      expect(rendered).toContain("  /** @integer @minimum 1 @maximum 10 */\n  bounded: number,")
-      expect(rendered).not.toContain("Infinity")
-    }
+    const input = inputTypeScript(tool, true)
+    expect(input).toContain("  /** @integer */\n  count: number,")
+    expect(input).toContain("  /** @integer @minimum 1 @maximum 10 */\n  bounded: number,")
+    expect(input).not.toContain("Infinity")
+    // A result is read, not written, so it carries no validation tags.
+    expect(outputTypeScript(tool, true)).toBe(compact)
     const named = Tool.make({ description: "n", input: Amount, output: Amount, execute: Effect.succeed })
     expect(inputTypeScript(named)).toBe("number")
     expect(outputTypeScript(named)).toBe("number")
@@ -833,7 +854,7 @@ describe("JSDoc signatures in catalogs and search results", () => {
         scores: Schema.Record(Schema.String, Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
       }),
     },
-  ])("$source constraints survive input/output catalog and search signatures", async ({ schema }) => {
+  ])("$source constraints survive input catalog and search signatures, and leave result types", async ({ schema }) => {
     const runtime = CodeMode.make({
       tools: {
         constrained: Tool.make({
@@ -861,7 +882,8 @@ describe("JSDoc signatures in catalogs and search results", () => {
       "  },",
       "}",
     ].join("\n")
-    const signature = `tools.constrained(${type}): Promise<${type}>`
+    const output = "{ count: number; name: string; labels: Array<string>; scores: { [key: string]: number } }"
+    const signature = `tools.constrained(${type}): Promise<${output}>`
     expect(runtime.catalog[0]?.signature).toBe(signature)
     const result = await Effect.runPromise(runtime.execute('return search({ query: "tools.constrained" })'))
     expect(result.ok).toBe(true)
@@ -908,10 +930,7 @@ describe("JSDoc signatures in catalogs and search results", () => {
           "  /** Order identifier */",
           "  id: string,",
           "  verbose?: boolean,",
-          "}): Promise<{",
-          "  /** Current order status */",
-          "  status: string,",
-          "}>",
+          "}): Promise<{ /** Current order status */ status: string }>",
         ].join("\n"),
       )
     }
@@ -1037,9 +1056,7 @@ describe("empty object signatures", () => {
       }),
     )
     expect(outputTypeScript(tool)).toBe("{ meta: {}; extra?: {} }")
-    expect(outputTypeScript(tool, true)).toBe(
-      ["{", "  meta: {},", "  /** Extra data */", "  extra?: {},", "}"].join("\n"),
-    )
+    expect(outputTypeScript(tool, true)).toBe("{ meta: {}; /** Extra data */ extra?: {} }")
   })
 
   test("raw schemas render only the exact empty-struct shapes as {}", () => {

@@ -664,7 +664,7 @@ describe("CodeMode schema flexibility", () => {
       {
         path: "users.lookup",
         description: "Look up a user",
-        signature: "tools.users.lookup({\n  login: string,\n}): Promise<{\n  login: string,\n  id: number,\n}>",
+        signature: "tools.users.lookup({\n  login: string,\n}): Promise<{ login: string; id: number }>",
       },
     ])
 
@@ -737,7 +737,7 @@ describe("CodeMode public contract", () => {
       {
         path: "orders.lookup",
         description: "Look up an order by ID",
-        signature: "tools.orders.lookup({\n  id: string,\n}): Promise<{\n  id: string,\n  status: string,\n}>",
+        signature: "tools.orders.lookup({\n  id: string,\n}): Promise<{ id: string; status: string }>",
       },
     ])
 
@@ -749,7 +749,7 @@ describe("CodeMode public contract", () => {
           {
             path: "tools.orders.lookup",
             description: "Look up an order by ID",
-            signature: "tools.orders.lookup({\n  id: string,\n}): Promise<{\n  id: string,\n  status: string,\n}>",
+            signature: "tools.orders.lookup({\n  id: string,\n}): Promise<{ id: string; status: string }>",
           },
         ],
         remaining: 0,
@@ -856,12 +856,12 @@ describe("CodeMode public contract", () => {
         {
           path: "tools.thread.uploadFile",
           description: "Upload one readable local file to the current Discord thread",
-          signature: "tools.thread.uploadFile({\n  path: string,\n}): Promise<{\n  sent: boolean,\n}>",
+          signature: "tools.thread.uploadFile({\n  path: string,\n}): Promise<{ sent: boolean }>",
         },
         {
           path: "tools.thread.generateImage",
           description: "Generate an image and upload it to the current Discord thread",
-          signature: "tools.thread.generateImage({\n  prompt: string,\n}): Promise<{\n  sent: boolean,\n}>",
+          signature: "tools.thread.generateImage({\n  prompt: string,\n}): Promise<{ sent: boolean }>",
         },
       ],
       remaining: 0,

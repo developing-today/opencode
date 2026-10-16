@@ -40,9 +40,15 @@ const intersection = (members: ReadonlyArray<string>): string => {
 
 const MAX_RENDER_DEPTH = 8
 
+/**
+ * false: one line, no documentation. true: one field per line with JSDoc. "dense": one line with each field's
+ * description inline and no validation tags, for results, which are read rather than written.
+ */
+type Layout = boolean | "dense"
+
 type RenderContext = {
   readonly definitions: Readonly<Record<string, JsonSchema>>
-  readonly pretty: boolean
+  readonly pretty: Layout
 }
 
 const hasUnresolvedRef = (
@@ -133,6 +139,34 @@ const jsdoc = (schema: JsonSchema, pad: string): string => {
   return `${pad}/**\n${body}\n${pad} */\n`
 }
 
+const summary = (schema: JsonSchema) =>
+  [
+    ...(schema.description ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== ""),
+    ...(schema.deprecated === true ? ["@deprecated"] : []),
+  ].join(" ")
+
+const inlineDoc = (schema: JsonSchema): string => {
+  const types = typeof schema.type === "string" ? [schema.type] : (schema.type ?? [])
+  const labelled = (label: string, child: JsonSchema) => {
+    const text = summary(child)
+    return text === "" ? "" : `${label}: ${text}`
+  }
+  const parts = [
+    summary(schema),
+    types.includes("array") && schema.items ? labelled("Each item", schema.items) : "",
+    (types.includes("object") || schema.properties) && typeof schema.additionalProperties === "object"
+      ? labelled(
+          Object.keys(schema.properties ?? {}).length > 0 ? "Each additional value" : "Each value",
+          schema.additionalProperties,
+        )
+      : "",
+  ].filter((part) => part !== "")
+  return parts.length === 0 ? "" : `/** ${parts.join(" ").replaceAll("*/", "* /")} */ `
+}
+
 const renderSchema = (
   schema: JsonSchema,
   ctx: RenderContext,
@@ -200,6 +234,12 @@ const renderSchema = (
     const field = ([name, value]: readonly [string, JsonSchema]) =>
       `${renderKey(name)}${required.has(name) ? "" : "?"}: ${renderSchema(value, nested, depth + 1, seen)}`
 
+    if (ctx.pretty === "dense") {
+      const fields = properties.map((entry) => `${inlineDoc(entry[1])}${field(entry)}`)
+      if (indexType !== undefined) fields.push(`[key: string]: ${indexType}`)
+      return fields.length === 0 ? "{}" : `{ ${fields.join("; ")} }`
+    }
+
     if (!ctx.pretty) {
       const fields = properties.map(field)
       if (indexType !== undefined) fields.push(`[key: string]: ${indexType}`)
@@ -216,7 +256,7 @@ const renderSchema = (
   return "unknown"
 }
 
-export const toTypeScript = (schema: Schema.Top, decoded = false, pretty = false): string => {
+export const toTypeScript = (schema: Schema.Top, decoded = false, pretty: Layout = false): string => {
   try {
     const document = Schema.toJsonSchemaDocument(decoded ? Schema.toType(schema) : schema, {
       onExcessProperty: "error",
@@ -230,7 +270,7 @@ export const toTypeScript = (schema: Schema.Top, decoded = false, pretty = false
   }
 }
 
-export const jsonSchemaToTypeScript = (schema: JsonSchema, pretty = false): string => {
+export const jsonSchemaToTypeScript = (schema: JsonSchema, pretty: Layout = false): string => {
   try {
     return renderSchema(schema, { definitions: {}, pretty })
   } catch {
@@ -285,12 +325,13 @@ export const isEmptyInput = <R>(tool: Tool<R>): boolean =>
       )
     : inputTypeScript(tool) === "{}"
 
+/** pretty renders results densely: a result is read, so its fields need descriptions but not layout or constraints. */
 export const outputTypeScript = <R>(tool: Tool<R>, pretty = false): string =>
   tool.output === undefined
     ? "void"
     : isEffectSchema(tool.output)
-      ? toTypeScript(tool.output, true, pretty)
-      : jsonSchemaToTypeScript(tool.output, pretty)
+      ? toTypeScript(tool.output, true, pretty && "dense")
+      : jsonSchemaToTypeScript(tool.output, pretty && "dense")
 
 export const decodeInput = <R>(tool: Tool<R>, value: unknown): unknown =>
   isEffectSchema(tool.input) ? Schema.decodeUnknownSync(tool.input)(value) : value
