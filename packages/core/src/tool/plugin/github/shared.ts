@@ -18,8 +18,9 @@ export interface Deps {
   readonly client: GitHubClient.Client
   readonly process: AppProcess.Interface
   readonly kv: KV.Interface
-  readonly permission: Permission.Interface
-  readonly sessions: Session.Interface
+  readonly permission: Pick<Permission.Interface, "assert">
+  /** Delivers background results into a session. */
+  readonly sessions: Pick<Session.Interface, "synthetic">
   readonly jobs: Job.Interface
   readonly scope: Scope.Scope
   readonly directory: string

@@ -1,15 +1,14 @@
 import { Agent } from "@opencode/core/agent"
 import { Job } from "@opencode/core/job"
 import { KV } from "@opencode/core/kv"
-import { Permission } from "@opencode/core/permission"
+import type { Permission } from "@opencode/core/permission"
 import { Session } from "@opencode/core/session"
 import { SessionMessage } from "@opencode/core/session/message"
 import { GitHubClient } from "@opencode/core/tool/plugin/github/client"
 import type { GitHubShared } from "@opencode/core/tool/plugin/github/shared"
-import { Session as SessionSchema } from "@opencode/schema/session"
 import { Tool } from "@opencode/schema/tool"
 import { AppProcess } from "@opencode/util/process"
-import { Effect, Layer, Schema, Scope } from "effect"
+import { Effect, Schema, Scope } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/http"
 
 export interface Request {
@@ -99,7 +98,7 @@ export function memoryKV(): KV.Interface {
   }
 }
 
-export const sessionID = SessionSchema.ID.make("ses_github_test")
+export const sessionID = Session.ID.make("ses_github_test")
 
 export const context: Tool.Context = {
   sessionID,
@@ -120,19 +119,13 @@ export const makeDeps = Effect.fn("test.github.deps")(function* (input: {
   const asserted: Permission.AssertInput[] = []
   const notified: Parameters<Session.Interface["synthetic"]>[0][] = []
   const jobs = yield* Job.make.pipe(Effect.provideService(Scope.Scope, scope), Effect.provideService(KV.Service, kv))
-  const permission = yield* Permission.Service.pipe(
-    Effect.provide(Layer.mock(Permission.Service, { assert: (assertion) => Effect.sync(() => void asserted.push(assertion)) })),
-  )
-  const sessions = yield* Session.Service.pipe(
-    Effect.provide(
-      Layer.mock(Session.Service, {
-        synthetic: (message) =>
-          Effect.sync(() => {
-            notified.push(message)
-          }).pipe(Effect.andThen(Effect.never)),
-      }),
-    ),
-  )
+  const permission: GitHubShared.Deps["permission"] = {
+    assert: (assertion) => Effect.sync(() => void asserted.push(assertion)),
+  }
+  // The admitted inbox item is never read by the tools, so the fake never completes.
+  const sessions: GitHubShared.Deps["sessions"] = {
+    synthetic: (message) => Effect.sync(() => void notified.push(message)).pipe(Effect.andThen(Effect.never)),
+  }
   const deps: GitHubShared.Deps = {
     client: GitHubClient.make({ http: input.http, process }),
     process,

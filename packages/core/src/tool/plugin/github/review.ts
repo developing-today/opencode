@@ -434,6 +434,9 @@ const addToList = (deps: Deps, key: string, values: ReadonlyArray<string>, keep 
     Effect.flatMap((current) => deps.kv.set(key, Array.from(new Set([...current, ...values])).slice(-keep))),
   )
 
+// With no checkpoint, updates reports only the latest reviews and comments instead of the whole history.
+const FIRST_CHECK_LIMIT = 10
+
 const Cursor = Schema.Struct({ at: Schema.String, head: Schema.String, base: Schema.String })
 const decodeCursor = Schema.decodeUnknownOption(Cursor)
 
@@ -651,6 +654,11 @@ export function tools(deps: Deps): Tool.Info[] {
         open_alerts: Schema.optionalKey(Schema.Int),
       }),
       local: Schema.optionalKey(Schema.Struct({ branch: Schema.optionalKey(Schema.String), head: Schema.String, pushed: Schema.Boolean })),
+      ready: Schema.Struct({
+        merge: Schema.Boolean.annotate({ description: "No blockers: safe to merge if you are satisfied with the change." }),
+        blockers: Schema.Array(Schema.String),
+        warnings: Schema.Array(Schema.String).annotate({ description: "Worth knowing, but not a reason to hold the merge." }),
+      }),
       next: Schema.Array(Schema.String),
     }),
     execute: (input) =>
@@ -667,6 +675,7 @@ export function tools(deps: Deps): Tool.Info[] {
           GitHubCopilot.authorKind(thread.comments.nodes[0]?.author?.login, thread.comments.nodes[0]?.author?.__typename)
         const checkSummary = checks(data)
         const localHead = resolved.local?.branch === data.headRefName ? resolved.local.head : undefined
+        const severities = findingIndex(copilotReviews(reviewList).map((review) => GitHubCopilot.parseReview(review.body)))
         const feedback = {
           unresolved_threads: open.length,
           copilot_threads: open.filter((thread) => kindOf(thread) === "copilot").length,
@@ -711,6 +720,21 @@ export function tools(deps: Deps): Tool.Info[] {
           copilot,
           feedback,
           ...(localHead ? { local: { branch: resolved.local?.branch, head: localHead, pushed: localHead === data.headRefOid } } : {}),
+          ready: readiness({
+            data,
+            copilot,
+            checks: checkSummary,
+            localHead,
+            threads: open.map((thread) => {
+              const first = thread.comments.nodes[0]
+              return {
+                kind: kindOf(thread),
+                outdated: thread.isOutdated,
+                severity: first ? severities.get(first.databaseId)?.severity : undefined,
+              }
+            }),
+            alerts: alertList.items.map((alert) => alert.rule.security_severity_level ?? alert.rule.severity ?? "unknown"),
+          }),
           next: nextSteps({
             data,
             copilot,
@@ -995,7 +1019,9 @@ export function tools(deps: Deps): Tool.Info[] {
             ahead_by: Option.match(position, { onNone: () => 0, onSome: (diff) => diff.ahead_by }),
           },
           reviews: reviewList
-            .filter((review) => review.submitted_at && after(review.submitted_at))
+            // Thread replies create empty COMMENTED reviews; their comments are listed below.
+            .filter((review) => review.submitted_at && after(review.submitted_at) && (review.body?.trim() || review.state !== "COMMENTED"))
+            .slice(since === undefined ? -FIRST_CHECK_LIMIT : 0)
             .map((review) => {
               const kind = GitHubCopilot.authorKind(review.user?.login, review.user?.type)
               return {
@@ -1027,7 +1053,9 @@ export function tools(deps: Deps): Tool.Info[] {
                 excerpt: GitHubShared.clip(GitHubCopilot.plain(comment.body), 300),
                 url: comment.url,
               })),
-          ].toSorted((left, right) => left.at.localeCompare(right.at)),
+          ]
+            .toSorted((left, right) => left.at.localeCompare(right.at))
+            .slice(since === undefined ? -FIRST_CHECK_LIMIT : 0),
           checks: checks(data),
           copilot,
         }
@@ -1321,6 +1349,17 @@ function authorOf(author: GqlAuthor | null | undefined) {
   return { login: author?.login ?? "ghost", kind: GitHubCopilot.authorKind(author?.login, author?.__typename) }
 }
 
+/** Maps a Copilot review comment's database ID to the severity and title its review listed it with. */
+function findingIndex(summaries: ReadonlyArray<GitHubCopilot.Review>) {
+  return new Map(
+    summaries.flatMap((summary) =>
+      summary.findings.flatMap((finding) =>
+        finding.commentID ? [[finding.commentID, { severity: finding.severity, title: finding.title }] as const] : [],
+      ),
+    ),
+  )
+}
+
 const seenToken = (item: Item) => `${item.id}@${item.replies?.length ?? 0}`
 
 function collect(input: {
@@ -1340,13 +1379,7 @@ function collect(input: {
     (review) => GitHubCopilot.authorKind(review.user?.login, review.user?.type) === "copilot",
   )
   const parsed = copilotReviews.map((review) => ({ review, summary: GitHubCopilot.parseReview(review.body) }))
-  const severity = new Map(
-    parsed.flatMap((entry) =>
-      entry.summary.findings.flatMap((finding) =>
-        finding.commentID ? [[finding.commentID, { severity: finding.severity, title: finding.title }] as const] : [],
-      ),
-    ),
-  )
+  const severity = findingIndex(parsed.map((entry) => entry.summary))
   const authorMatches = (kind: GitHubCopilot.AuthorKind, conversation: boolean) => {
     if (input.author === undefined) return !conversation || kind !== "bot"
     return input.author === "all" || input.author === kind
@@ -1392,19 +1425,19 @@ function collect(input: {
     ]
   })
 
-  // Only the latest Copilot review's body findings are current; earlier ones were re-evaluated by later rounds.
-  const latestCopilot = parsed.at(-1)
-  const bodyItems =
-    latestCopilot && authorMatches("copilot", false)
-      ? latestCopilot.summary.body.flatMap((finding, index): Item[] => {
-          const id = `copilot:${latestCopilot.review.id}:${index}`
+  // Body-only findings are never repeated by later rounds, so every review's findings stay listed until handled.
+  // Those from reviews of an older commit are flagged outdated, since the code may have changed under them.
+  const bodyItems = authorMatches("copilot", false)
+    ? parsed.flatMap((entry) =>
+        entry.summary.body.flatMap((finding, index): Item[] => {
+          const id = `copilot:${entry.review.id}:${index}`
           const handled = input.handled.has(id)
           if (input.open && handled) return []
           return [
             mark({
               id,
               kind: "copilot_body",
-              author: { login: latestCopilot.review.user?.login ?? "copilot-pull-request-reviewer", kind: "copilot" },
+              author: { login: entry.review.user?.login ?? "copilot-pull-request-reviewer", kind: "copilot" },
               ...(finding.title ? { title: finding.title } : {}),
               body: GitHubShared.clip(finding.body, input.max),
               ...(finding.path ? { path: finding.path } : {}),
@@ -1412,14 +1445,16 @@ function collect(input: {
               ...(finding.endLine ? { end_line: finding.endLine } : {}),
               ...(finding.severity ? { severity: finding.severity } : {}),
               source: finding.kind,
-              url: latestCopilot.review.html_url,
-              ...(latestCopilot.review.submitted_at ? { created_at: latestCopilot.review.submitted_at } : {}),
+              url: entry.review.html_url,
+              ...(entry.review.submitted_at ? { created_at: entry.review.submitted_at } : {}),
               resolved: handled,
+              outdated: entry.review.commit_id !== input.data.headRefOid,
               actions: ["reply", "resolve"],
             }),
           ]
-        })
-      : []
+        }),
+      )
+    : []
 
   const alertItems = input.alerts.flatMap((alert): Item[] => {
     const resolved = alert.state !== "open"
@@ -1993,6 +2028,47 @@ const notifyWhenDone = (
       metadata: { source: "github.wait", jobID: id, pr: label, state },
     })
   }).pipe(Effect.ignore, Effect.forkIn(deps.scope, { startImmediately: true }), Effect.asVoid)
+
+/**
+ * Merge readiness as reviewers here treat it: CI green on the pushed head and no open correctness or security defect.
+ * Waiting for zero Copilot threads never converges, because every push gets a fresh review, so low and medium Copilot
+ * findings only warn.
+ */
+function readiness(input: {
+  readonly data: PullData
+  readonly copilot: CopilotStatus
+  readonly checks: typeof Checks.Type
+  readonly localHead: string | undefined
+  readonly threads: ReadonlyArray<{ readonly kind: GitHubCopilot.AuthorKind; readonly outdated: boolean; readonly severity?: string }>
+  readonly alerts: ReadonlyArray<string>
+}) {
+  const blockers: string[] = []
+  const warnings: string[] = []
+  if (input.data.state !== "OPEN") blockers.push(`The pull request is ${input.data.state.toLowerCase()}.`)
+  if (input.data.isDraft) blockers.push("Draft: mark it ready for review first.")
+  if (input.data.mergeable === "CONFLICTING") blockers.push(`Conflicts with ${input.data.baseRefName}.`)
+  if (input.localHead && input.localHead !== input.data.headRefOid) blockers.push("Local commits are not pushed.")
+  const failing = input.checks.failing.filter((check) => check.required)
+  if (failing.length) blockers.push(`Required checks failing: ${failing.map((check) => check.name).join(", ")}.`)
+  if (input.checks.failing.length > failing.length)
+    warnings.push(`Optional checks failing: ${input.checks.failing.filter((check) => !check.required).map((check) => check.name).join(", ")}.`)
+  if (input.checks.pending.length) blockers.push(`${input.checks.pending.length} check(s) still running.`)
+  if (input.data.reviewDecision === "CHANGES_REQUESTED") blockers.push("A reviewer requested changes.")
+  if (input.data.reviewDecision === "REVIEW_REQUIRED") blockers.push("An approving review is required.")
+  const human = input.threads.filter((thread) => thread.kind === "human")
+  if (human.length) blockers.push(`${human.length} unresolved thread(s) from people.`)
+  const serious = input.threads.filter((thread) => thread.kind !== "human" && (thread.severity === "high" || thread.severity === "critical"))
+  if (serious.length) blockers.push(`${serious.length} unresolved high-severity bot finding(s).`)
+  const minor = input.threads.length - human.length - serious.length
+  if (minor > 0) warnings.push(`${minor} unresolved lower-severity bot thread(s); resolve or file them as follow-ups.`)
+  const severeAlerts = input.alerts.filter((level) => level === "critical" || level === "high" || level === "error")
+  if (severeAlerts.length) blockers.push(`${severeAlerts.length} open high-severity code scanning alert(s).`)
+  if (input.alerts.length > severeAlerts.length) warnings.push(`${input.alerts.length - severeAlerts.length} other open code scanning alert(s).`)
+  if (input.data.mergeStateStatus === "BEHIND") warnings.push(`Behind ${input.data.baseRefName}.`)
+  if (input.copilot.state === "in_progress" || input.copilot.state === "requested") warnings.push("Copilot is still reviewing.")
+  if (input.copilot.state === "stale") warnings.push("Copilot has not reviewed the latest commit.")
+  return { merge: blockers.length === 0, blockers, warnings }
+}
 
 function nextSteps(input: {
   readonly data: PullData

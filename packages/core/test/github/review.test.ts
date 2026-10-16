@@ -465,6 +465,64 @@ describe("github review tools", () => {
     ),
   )
 
+  it.live("Copilot body findings from earlier rounds stay listed and are flagged outdated", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const github = fakeGitHub(
+          baseRoutes({
+            "GET /repos/acme/widgets/pulls/7/reviews": {
+              body: [
+                copilotReview({ id: 899, commit: OLD, at: "2026-01-01T09:00:00Z", body: legacyBody }),
+                copilotReview({ id: 900, commit: HEAD, at: "2026-01-01T10:00:00Z", body: changesBody }),
+              ],
+            },
+          }),
+        )
+        const { deps } = yield* makeDeps({ http: github.http })
+        const result = yield* run<object, FeedbackOutput>(find(GitHubReview.tools(deps), "feedback"), {
+          repo: "acme/widgets",
+          pr: 7,
+          sources: ["copilot_body"],
+        })
+        expect(result.items.map((item) => [item.id, item.source, item.outdated, item.path])).toEqual([
+          ["copilot:899:0", "low_confidence", true, "src/a.ts"],
+          ["copilot:899:1", "low_confidence", true, "src/b.ts"],
+          ["copilot:900:0", "previously_missed", false, "src/retry.ts"],
+        ])
+      }),
+    ),
+  )
+
+  it.live("pr reports merge blockers separately from warnings", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const github = fakeGitHub(baseRoutes())
+        const { deps } = yield* makeDeps({ http: github.http })
+        const result = yield* run<object, { ready: { merge: boolean; blockers: string[]; warnings: string[] }; feedback: object }>(
+          find(GitHubReview.tools(deps), "pr"),
+          { repo: "acme/widgets", pr: 7 },
+        )
+        expect(result.feedback).toEqual({
+          unresolved_threads: 2,
+          copilot_threads: 1,
+          human_threads: 1,
+          outdated_threads: 1,
+          open_alerts: 1,
+        })
+        expect(result.ready).toEqual({
+          merge: false,
+          blockers: [
+            "Required checks failing: unit.",
+            "1 unresolved thread(s) from people.",
+            "1 unresolved high-severity bot finding(s).",
+            "1 open high-severity code scanning alert(s).",
+          ],
+          warnings: [],
+        })
+      }),
+    ),
+  )
+
   it.live("respond replies with the human prefix, resolves, dismisses alerts with a reason, and combines body replies", () =>
     withEnv(env, () =>
       Effect.gen(function* () {
