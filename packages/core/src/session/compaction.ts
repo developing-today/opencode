@@ -847,6 +847,7 @@ const messageToText = (message: SessionMessage.Info): string => {
         .join("\n")
 
     case "synthetic":
+      if (message.metadata?.audience === "user") return ""
       return `[Synthetic context]: ${message.text}`
 
     case "skill":

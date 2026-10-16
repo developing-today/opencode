@@ -277,6 +277,74 @@ export type PersistentPtyHandoff = { directory: string; instanceID: string; tick
 
 export type ReferenceGitSource = { type: "git"; repository: string; branch?: string }
 
+export type MessagingDelivery = "none" | "inbox" | "wake"
+
+export type MessagingOp = {
+  seq: number
+  kind: string
+  writer: string
+  time: number | "Infinity" | "-Infinity" | "NaN"
+  viewers: Array<string>
+  reason?: string
+}
+
+export type MessagingMatchMode = "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+
+export type MessagingVisibilityResult = {
+  topic: string
+  seq: number
+  targets: Array<number>
+  viewers: Array<string>
+  default: boolean
+}
+
+export type MessagingWriteMode = "open" | "readonly" | "limited"
+
+export type MessagingWriter = { session: string; children?: boolean; ancestors?: boolean }
+
+export type MessagingParticipant = {
+  session: string
+  title?: string
+  reads: number
+  writes: number
+  first?: number | "Infinity" | "-Infinity" | "NaN"
+  last?: number | "Infinity" | "-Infinity" | "NaN"
+}
+
+export type MessagingSessionBrief = {
+  id: string
+  title?: string
+  agent?: string
+  status: "running" | "idle"
+  created?: number | "Infinity" | "-Infinity" | "NaN"
+  updated?: number | "Infinity" | "-Infinity" | "NaN"
+}
+
+export type MessagingLogPart =
+  | "user"
+  | "output"
+  | "thinking"
+  | "tools"
+  | "results"
+  | "system"
+  | "synthetic"
+  | "shell"
+  | "events"
+  | "compaction"
+
+export type MessagingPreset = { name: string; template: string; description: string; policy: string; value?: string }
+
+export type MessagingVar = {
+  name: string
+  kind: "constant" | "context" | "time" | "custom"
+  description: string
+  template?: string
+  value?: string
+  scope?: string
+}
+
+export type MessagingModelProgress = { file: string; received: number; total?: number }
+
 export type VcsBranch = { current?: string; default?: string }
 
 export type VcsBase = { name: string; ref: string; source: "reflog" | "default" }
@@ -452,6 +520,7 @@ export type SkillInfo = {
   name: SkillName
   description?: string
   autoinvoke?: boolean
+  vars?: boolean
   path: AbsolutePath
   content: string
 }
@@ -854,6 +923,63 @@ export type FormMultiselectField1 = {
 
 export type FormAnswer2 = { [x: string]: FormValue1 }
 
+export type MessagingDelivered = { session: string; delivery: MessagingDelivery }
+
+export type MessagingMessage = {
+  id: number
+  topic: string
+  seq: number
+  kind: string
+  type: string
+  writer: string
+  time: number | "Infinity" | "-Infinity" | "NaN"
+  data: string
+  meta?: { [x: string]: JsonValue }
+  reply?: number
+  hidden?: boolean
+  score?: number | "Infinity" | "-Infinity" | "NaN"
+  ops?: Array<MessagingOp>
+}
+
+export type MessagingWindow = { total: number; first: Array<MessagingParticipant>; latest: Array<MessagingParticipant> }
+
+export type MessagingChildWindow = {
+  total: number
+  first: Array<MessagingSessionBrief>
+  latest: Array<MessagingSessionBrief>
+}
+
+export type MessagingLogEntry = {
+  session: string
+  message: string
+  index: number
+  part: MessagingLogPart
+  time: number | "Infinity" | "-Infinity" | "NaN"
+  text: string
+  tool?: string
+  match?: boolean
+  score?: number | "Infinity" | "-Infinity" | "NaN"
+}
+
+export type MessagingVars = { presets: Array<MessagingPreset>; vars: Array<MessagingVar>; rendered?: string }
+
+export type MessagingModelStatus = {
+  state: "off" | "unavailable" | "pending" | "downloading" | "starting" | "ready" | "error"
+  tier?: string
+  model?: string
+  dimensions?: number
+  path?: string
+  source?: string
+  server?: string
+  endpoint?: string
+  remote?: boolean
+  progress?: Array<MessagingModelProgress>
+  error?: string
+  indexed?: number
+  pending?: number
+  tiers?: Array<{ name: string; model: string; size: string; hardware: string; available: boolean }>
+}
+
 export type VcsInfo = { provider?: string; branch: VcsBranch }
 
 export type WebSearchProvider = { id: WebSearchID; name: string }
@@ -893,6 +1019,41 @@ export type ConfigModelRoutes = {
     autonomy?: "fixed" | "rules" | "adaptive" | "predictive" | "agent"
     selection?: "ordered" | "round-robin" | "weighted"
     weights?: { [x: string]: number }
+    schedules?: Array<{
+      id?: string
+      targets?: Array<string>
+      when: {
+        daysOfWeek?: Array<
+          | "sun"
+          | "sunday"
+          | "mon"
+          | "monday"
+          | "tue"
+          | "tuesday"
+          | "tues"
+          | "wed"
+          | "wednesday"
+          | "thu"
+          | "thursday"
+          | "thur"
+          | "thurs"
+          | "fri"
+          | "friday"
+          | "sat"
+          | "saturday"
+          | number
+        >
+        daysOfMonth?: Array<-1 | number>
+        start?: string
+        end?: string
+        timezone?: string
+        from?: number
+        until?: number
+      }
+      factor?: number
+      weight?: number
+      note?: string
+    }>
   }
 }
 
@@ -1781,6 +1942,15 @@ export type WebsearchUpdated = {
   data: {}
 }
 
+export type MessagingMessageCreated = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "messaging.message.created"
+  location?: LocationRef
+  data: { topic: string; seq: number; kind: string; type: string; writer: string; time: number; preview: string }
+}
+
 export type SessionStatusUpdated = {
   id: EventID
   created: number
@@ -2040,6 +2210,73 @@ export type FormReplied = {
   type: "form.replied"
   location?: LocationRef
   data: { id: FormID; sessionID: string; answer: FormAnswer2 }
+}
+
+export type MessagingSendResult = {
+  topic: string
+  seq: number
+  created: boolean
+  forced?: boolean
+  delivered: Array<MessagingDelivered>
+}
+
+export type MessagingQueryResult = {
+  messages: Array<MessagingMessage>
+  more: boolean
+  match?: MessagingMatchMode
+  note?: string
+}
+
+export type MessagingTopic = {
+  name: string
+  exists: boolean
+  kind: string
+  preset?: string
+  owner?: string
+  creator?: string
+  description?: string
+  mode: MessagingWriteMode
+  writers: Array<MessagingWriter>
+  policy: string
+  messages: number
+  created?: number | "Infinity" | "-Infinity" | "NaN"
+  last?: number | "Infinity" | "-Infinity" | "NaN"
+  unread?: number
+  subscribed?: MessagingDelivery
+  writersWindow?: MessagingWindow
+  readersWindow?: MessagingWindow
+  allowedWindow?: MessagingWindow
+}
+
+export type MessagingSessionNode = {
+  id: string
+  title?: string
+  parentID?: string
+  depth: number
+  agent?: string
+  model?: string
+  directory: string
+  status: "running" | "idle"
+  project?: string
+  original?: string
+  created?: number | "Infinity" | "-Infinity" | "NaN"
+  updated?: number | "Infinity" | "-Infinity" | "NaN"
+  outcome?: string
+  children?: number
+  descendants?: number
+  messages?: number
+  cost?: number | "Infinity" | "-Infinity" | "NaN"
+  tokens?: number
+  topics?: number
+  childWindow?: MessagingChildWindow
+}
+
+export type MessagingLog = {
+  entries: Array<MessagingLogEntry>
+  total: number
+  more: boolean
+  match?: MessagingMatchMode
+  note?: string
 }
 
 export type SessionInboxMove = {
@@ -2317,6 +2554,31 @@ export type ConfigEntry =
         plugins?: Array<string | { package: string; options?: { [x: string]: JsonValue } }>
         worktree?: ConfigWorktree
         warming?: boolean | { prompt?: string; interval?: string; duration?: string }
+        messaging?: {
+          presets?: { [x: string]: string }
+          vars?: { [x: string]: string }
+          session_start?: string
+          delivery?: {
+            direct?: "none" | "inbox" | "wake"
+            root?: "none" | "inbox" | "wake"
+            user?: "hidden" | "visible" | "wake"
+          }
+          search?: { match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"; model?: string }
+          embedding?:
+            | string
+            | {
+                tier?: string
+                url?: string
+                path?: string
+                pooling?: "last" | "mean" | "cls"
+                query?: string
+                server?: string
+                autostart?: boolean
+                gpu_layers?: number
+                threads?: number
+                remote?: { url: string; model: string; key?: string; dimensions?: number }
+              }
+        }
         providers?: {
           [x: string]: {
             canonical?: ProviderID
@@ -2373,6 +2635,44 @@ export type ConfigEntry =
             effect: "allow" | "deny"
           }>
           model_routes?: ConfigModelRoutes
+          model_route_schedules?: Array<{
+            id?: string
+            providers?: Array<string>
+            models?: Array<string>
+            targets?: Array<string>
+            routes?: Array<string>
+            when: {
+              daysOfWeek?: Array<
+                | "sun"
+                | "sunday"
+                | "mon"
+                | "monday"
+                | "tue"
+                | "tuesday"
+                | "tues"
+                | "wed"
+                | "wednesday"
+                | "thu"
+                | "thursday"
+                | "thur"
+                | "thurs"
+                | "fri"
+                | "friday"
+                | "sat"
+                | "saturday"
+                | number
+              >
+              daysOfMonth?: Array<-1 | number>
+              start?: string
+              end?: string
+              timezone?: string
+              from?: number
+              until?: number
+            }
+            factor?: number
+            weight?: number
+            note?: string
+          }>
           model_route_tuning?: {
             enabled?: boolean
             intervalMinutes?: number
@@ -2435,6 +2735,12 @@ export type FormFields = [FormField, ...Array<FormField>]
 export type CredentialValue = CredentialOAuth | CredentialKey | CredentialExternal
 
 export type FormFields2 = [FormField1, ...Array<FormField1>]
+
+export type MessagingTopicList = { topics: Array<MessagingTopic>; total: number }
+
+export type MessagingChain = { chain: Array<MessagingSessionNode>; root: string; depth: number }
+
+export type MessagingSessionList = { sessions: Array<MessagingSessionNode>; total: number }
 
 export type SessionMessageCompaction =
   | SessionMessageCompactionRunning
@@ -2691,6 +2997,7 @@ export type V2Event =
   | FormReplied
   | FormCancelled
   | WebsearchUpdated
+  | MessagingMessageCreated
   | SessionStatusUpdated
   | SessionIdle
   | TuiPromptAppend
@@ -2945,6 +3252,10 @@ export type WorktreeError = {
 }
 export const isWorktreeError = (value: unknown): value is WorktreeError =>
   typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "WorktreeError"
+
+export type MessagingNotFoundError = { readonly _tag: "MessagingNotFoundError"; readonly message: string }
+export const isMessagingNotFoundError = (value: unknown): value is MessagingNotFoundError =>
+  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "MessagingNotFoundError"
 
 export type VcsInitNotSupportedError = {
   readonly _tag: "VcsInitNotSupportedError"
@@ -6777,6 +7088,1604 @@ export type WorktreeRemoveOutput = void
 export type WorktreeRefreshInput = { readonly projectID: { readonly projectID: string }["projectID"] }
 
 export type WorktreeRefreshOutput = void
+
+export type MessagingSendInput = {
+  readonly as?: {
+    readonly as?: string
+    readonly topic?: string
+    readonly to?: string
+    readonly text: string
+    readonly type?: string
+    readonly meta?: { readonly [x: string]: JsonValue }
+    readonly reply?: number
+    readonly force?: boolean
+    readonly deliver?: "none" | "inbox" | "wake"
+  }["as"]
+  readonly topic?: {
+    readonly as?: string
+    readonly topic?: string
+    readonly to?: string
+    readonly text: string
+    readonly type?: string
+    readonly meta?: { readonly [x: string]: JsonValue }
+    readonly reply?: number
+    readonly force?: boolean
+    readonly deliver?: "none" | "inbox" | "wake"
+  }["topic"]
+  readonly to?: {
+    readonly as?: string
+    readonly topic?: string
+    readonly to?: string
+    readonly text: string
+    readonly type?: string
+    readonly meta?: { readonly [x: string]: JsonValue }
+    readonly reply?: number
+    readonly force?: boolean
+    readonly deliver?: "none" | "inbox" | "wake"
+  }["to"]
+  readonly text: {
+    readonly as?: string
+    readonly topic?: string
+    readonly to?: string
+    readonly text: string
+    readonly type?: string
+    readonly meta?: { readonly [x: string]: JsonValue }
+    readonly reply?: number
+    readonly force?: boolean
+    readonly deliver?: "none" | "inbox" | "wake"
+  }["text"]
+  readonly type?: {
+    readonly as?: string
+    readonly topic?: string
+    readonly to?: string
+    readonly text: string
+    readonly type?: string
+    readonly meta?: { readonly [x: string]: JsonValue }
+    readonly reply?: number
+    readonly force?: boolean
+    readonly deliver?: "none" | "inbox" | "wake"
+  }["type"]
+  readonly meta?: {
+    readonly as?: string
+    readonly topic?: string
+    readonly to?: string
+    readonly text: string
+    readonly type?: string
+    readonly meta?: { readonly [x: string]: JsonValue }
+    readonly reply?: number
+    readonly force?: boolean
+    readonly deliver?: "none" | "inbox" | "wake"
+  }["meta"]
+  readonly reply?: {
+    readonly as?: string
+    readonly topic?: string
+    readonly to?: string
+    readonly text: string
+    readonly type?: string
+    readonly meta?: { readonly [x: string]: JsonValue }
+    readonly reply?: number
+    readonly force?: boolean
+    readonly deliver?: "none" | "inbox" | "wake"
+  }["reply"]
+  readonly force?: {
+    readonly as?: string
+    readonly topic?: string
+    readonly to?: string
+    readonly text: string
+    readonly type?: string
+    readonly meta?: { readonly [x: string]: JsonValue }
+    readonly reply?: number
+    readonly force?: boolean
+    readonly deliver?: "none" | "inbox" | "wake"
+  }["force"]
+  readonly deliver?: {
+    readonly as?: string
+    readonly topic?: string
+    readonly to?: string
+    readonly text: string
+    readonly type?: string
+    readonly meta?: { readonly [x: string]: JsonValue }
+    readonly reply?: number
+    readonly force?: boolean
+    readonly deliver?: "none" | "inbox" | "wake"
+  }["deliver"]
+}
+
+export type MessagingSendOutput = { data: MessagingSendResult }["data"]
+
+export type MessagingUserInput = {
+  readonly as: {
+    readonly as: string
+    readonly text: string
+    readonly title?: string
+    readonly root?: "hidden" | "visible" | "wake"
+  }["as"]
+  readonly text: {
+    readonly as: string
+    readonly text: string
+    readonly title?: string
+    readonly root?: "hidden" | "visible" | "wake"
+  }["text"]
+  readonly title?: {
+    readonly as: string
+    readonly text: string
+    readonly title?: string
+    readonly root?: "hidden" | "visible" | "wake"
+  }["title"]
+  readonly root?: {
+    readonly as: string
+    readonly text: string
+    readonly title?: string
+    readonly root?: "hidden" | "visible" | "wake"
+  }["root"]
+}
+
+export type MessagingUserOutput = { data: MessagingSendResult }["data"]
+
+export type MessagingQueryInput = {
+  readonly as?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["as"]
+  readonly topics?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["topics"]
+  readonly query?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["query"]
+  readonly match?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["match"]
+  readonly from?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["from"]
+  readonly types?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["types"]
+  readonly kinds?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["kinds"]
+  readonly since?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["since"]
+  readonly until?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["until"]
+  readonly after?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["after"]
+  readonly before?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["before"]
+  readonly hidden?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["hidden"]
+  readonly hiddenBy?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["hiddenBy"]
+  readonly hiddenFrom?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["hiddenFrom"]
+  readonly hiddenSince?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["hiddenSince"]
+  readonly hiddenUntil?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["hiddenUntil"]
+  readonly unread?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["unread"]
+  readonly limit?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["limit"]
+  readonly order?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["order"]
+  readonly markRead?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["markRead"]
+  readonly wait?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["wait"]
+}
+
+export type MessagingQueryOutput = { data: MessagingQueryResult }["data"]
+
+export type MessagingInspectInput = {
+  readonly as?: { readonly as?: string; readonly topic: string; readonly seq: number }["as"]
+  readonly topic: { readonly as?: string; readonly topic: string; readonly seq: number }["topic"]
+  readonly seq: { readonly as?: string; readonly topic: string; readonly seq: number }["seq"]
+}
+
+export type MessagingInspectOutput = { data: MessagingMessage }["data"]
+
+export type MessagingVisibilityInput = {
+  readonly as?: {
+    readonly as?: string
+    readonly topic: string
+    readonly action: "hide" | "restore"
+    readonly seqs?: ReadonlyArray<number>
+    readonly for?: ReadonlyArray<string>
+    readonly reason?: string
+  }["as"]
+  readonly topic: {
+    readonly as?: string
+    readonly topic: string
+    readonly action: "hide" | "restore"
+    readonly seqs?: ReadonlyArray<number>
+    readonly for?: ReadonlyArray<string>
+    readonly reason?: string
+  }["topic"]
+  readonly action: {
+    readonly as?: string
+    readonly topic: string
+    readonly action: "hide" | "restore"
+    readonly seqs?: ReadonlyArray<number>
+    readonly for?: ReadonlyArray<string>
+    readonly reason?: string
+  }["action"]
+  readonly seqs?: {
+    readonly as?: string
+    readonly topic: string
+    readonly action: "hide" | "restore"
+    readonly seqs?: ReadonlyArray<number>
+    readonly for?: ReadonlyArray<string>
+    readonly reason?: string
+  }["seqs"]
+  readonly for?: {
+    readonly as?: string
+    readonly topic: string
+    readonly action: "hide" | "restore"
+    readonly seqs?: ReadonlyArray<number>
+    readonly for?: ReadonlyArray<string>
+    readonly reason?: string
+  }["for"]
+  readonly reason?: {
+    readonly as?: string
+    readonly topic: string
+    readonly action: "hide" | "restore"
+    readonly seqs?: ReadonlyArray<number>
+    readonly for?: ReadonlyArray<string>
+    readonly reason?: string
+  }["reason"]
+}
+
+export type MessagingVisibilityOutput = { data: MessagingVisibilityResult }["data"]
+
+export type MessagingSettingsInput = {
+  readonly as?: {
+    readonly as?: string
+    readonly topic: string
+    readonly mode?: "open" | "readonly" | "limited"
+    readonly writers?: ReadonlyArray<{
+      readonly session: string
+      readonly children?: boolean
+      readonly ancestors?: boolean
+    }>
+    readonly description?: string
+  }["as"]
+  readonly topic: {
+    readonly as?: string
+    readonly topic: string
+    readonly mode?: "open" | "readonly" | "limited"
+    readonly writers?: ReadonlyArray<{
+      readonly session: string
+      readonly children?: boolean
+      readonly ancestors?: boolean
+    }>
+    readonly description?: string
+  }["topic"]
+  readonly mode?: {
+    readonly as?: string
+    readonly topic: string
+    readonly mode?: "open" | "readonly" | "limited"
+    readonly writers?: ReadonlyArray<{
+      readonly session: string
+      readonly children?: boolean
+      readonly ancestors?: boolean
+    }>
+    readonly description?: string
+  }["mode"]
+  readonly writers?: {
+    readonly as?: string
+    readonly topic: string
+    readonly mode?: "open" | "readonly" | "limited"
+    readonly writers?: ReadonlyArray<{
+      readonly session: string
+      readonly children?: boolean
+      readonly ancestors?: boolean
+    }>
+    readonly description?: string
+  }["writers"]
+  readonly description?: {
+    readonly as?: string
+    readonly topic: string
+    readonly mode?: "open" | "readonly" | "limited"
+    readonly writers?: ReadonlyArray<{
+      readonly session: string
+      readonly children?: boolean
+      readonly ancestors?: boolean
+    }>
+    readonly description?: string
+  }["description"]
+}
+
+export type MessagingSettingsOutput = { data: MessagingTopic }["data"]
+
+export type MessagingSubscribeInput = {
+  readonly as: {
+    readonly as: string
+    readonly topic: string
+    readonly delivery?: "none" | "inbox" | "wake"
+    readonly remove?: boolean
+  }["as"]
+  readonly topic: {
+    readonly as: string
+    readonly topic: string
+    readonly delivery?: "none" | "inbox" | "wake"
+    readonly remove?: boolean
+  }["topic"]
+  readonly delivery?: {
+    readonly as: string
+    readonly topic: string
+    readonly delivery?: "none" | "inbox" | "wake"
+    readonly remove?: boolean
+  }["delivery"]
+  readonly remove?: {
+    readonly as: string
+    readonly topic: string
+    readonly delivery?: "none" | "inbox" | "wake"
+    readonly remove?: boolean
+  }["remove"]
+}
+
+export type MessagingSubscribeOutput = { data: MessagingTopic }["data"]
+
+export type MessagingTopicInput = {
+  readonly as?: { readonly as?: string; readonly topic: string; readonly expand?: number }["as"]
+  readonly topic: { readonly as?: string; readonly topic: string; readonly expand?: number }["topic"]
+  readonly expand?: { readonly as?: string; readonly topic: string; readonly expand?: number }["expand"]
+}
+
+export type MessagingTopicOutput = { data: MessagingTopic }["data"]
+
+export type MessagingTopicsInput = {
+  readonly as?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly sessions?: ReadonlyArray<string>
+    readonly role?: "any" | "reader" | "writer" | "subscriber"
+    readonly kinds?: ReadonlyArray<string>
+    readonly search?: string
+    readonly standard?: boolean
+    readonly sort?: "created" | "last"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly expand?: number
+  }["as"]
+  readonly topics?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly sessions?: ReadonlyArray<string>
+    readonly role?: "any" | "reader" | "writer" | "subscriber"
+    readonly kinds?: ReadonlyArray<string>
+    readonly search?: string
+    readonly standard?: boolean
+    readonly sort?: "created" | "last"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly expand?: number
+  }["topics"]
+  readonly sessions?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly sessions?: ReadonlyArray<string>
+    readonly role?: "any" | "reader" | "writer" | "subscriber"
+    readonly kinds?: ReadonlyArray<string>
+    readonly search?: string
+    readonly standard?: boolean
+    readonly sort?: "created" | "last"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly expand?: number
+  }["sessions"]
+  readonly role?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly sessions?: ReadonlyArray<string>
+    readonly role?: "any" | "reader" | "writer" | "subscriber"
+    readonly kinds?: ReadonlyArray<string>
+    readonly search?: string
+    readonly standard?: boolean
+    readonly sort?: "created" | "last"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly expand?: number
+  }["role"]
+  readonly kinds?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly sessions?: ReadonlyArray<string>
+    readonly role?: "any" | "reader" | "writer" | "subscriber"
+    readonly kinds?: ReadonlyArray<string>
+    readonly search?: string
+    readonly standard?: boolean
+    readonly sort?: "created" | "last"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly expand?: number
+  }["kinds"]
+  readonly search?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly sessions?: ReadonlyArray<string>
+    readonly role?: "any" | "reader" | "writer" | "subscriber"
+    readonly kinds?: ReadonlyArray<string>
+    readonly search?: string
+    readonly standard?: boolean
+    readonly sort?: "created" | "last"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly expand?: number
+  }["search"]
+  readonly standard?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly sessions?: ReadonlyArray<string>
+    readonly role?: "any" | "reader" | "writer" | "subscriber"
+    readonly kinds?: ReadonlyArray<string>
+    readonly search?: string
+    readonly standard?: boolean
+    readonly sort?: "created" | "last"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly expand?: number
+  }["standard"]
+  readonly sort?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly sessions?: ReadonlyArray<string>
+    readonly role?: "any" | "reader" | "writer" | "subscriber"
+    readonly kinds?: ReadonlyArray<string>
+    readonly search?: string
+    readonly standard?: boolean
+    readonly sort?: "created" | "last"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly expand?: number
+  }["sort"]
+  readonly order?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly sessions?: ReadonlyArray<string>
+    readonly role?: "any" | "reader" | "writer" | "subscriber"
+    readonly kinds?: ReadonlyArray<string>
+    readonly search?: string
+    readonly standard?: boolean
+    readonly sort?: "created" | "last"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly expand?: number
+  }["order"]
+  readonly limit?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly sessions?: ReadonlyArray<string>
+    readonly role?: "any" | "reader" | "writer" | "subscriber"
+    readonly kinds?: ReadonlyArray<string>
+    readonly search?: string
+    readonly standard?: boolean
+    readonly sort?: "created" | "last"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly expand?: number
+  }["limit"]
+  readonly offset?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly sessions?: ReadonlyArray<string>
+    readonly role?: "any" | "reader" | "writer" | "subscriber"
+    readonly kinds?: ReadonlyArray<string>
+    readonly search?: string
+    readonly standard?: boolean
+    readonly sort?: "created" | "last"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly expand?: number
+  }["offset"]
+  readonly expand?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly sessions?: ReadonlyArray<string>
+    readonly role?: "any" | "reader" | "writer" | "subscriber"
+    readonly kinds?: ReadonlyArray<string>
+    readonly search?: string
+    readonly standard?: boolean
+    readonly sort?: "created" | "last"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly expand?: number
+  }["expand"]
+}
+
+export type MessagingTopicsOutput = { data: MessagingTopicList }["data"]
+
+export type MessagingChainInput = {
+  readonly session: {
+    readonly session: string
+    readonly depth?: "self" | "parent" | "all"
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["session"]
+  readonly depth?: {
+    readonly session: string
+    readonly depth?: "self" | "parent" | "all"
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["depth"]
+  readonly detail?: {
+    readonly session: string
+    readonly depth?: "self" | "parent" | "all"
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["detail"]
+  readonly expand?: {
+    readonly session: string
+    readonly depth?: "self" | "parent" | "all"
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["expand"]
+}
+
+export type MessagingChainOutput = { data: MessagingChain }["data"]
+
+export type MessagingSessionsInput = {
+  readonly as?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["as"]
+  readonly ids?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["ids"]
+  readonly parent?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["parent"]
+  readonly ancestor?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["ancestor"]
+  readonly project?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["project"]
+  readonly directory?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["directory"]
+  readonly agent?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["agent"]
+  readonly search?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["search"]
+  readonly active?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["active"]
+  readonly since?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["since"]
+  readonly until?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["until"]
+  readonly sort?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["sort"]
+  readonly order?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["order"]
+  readonly limit?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["limit"]
+  readonly offset?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["offset"]
+  readonly detail?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["detail"]
+  readonly expand?: {
+    readonly as?: string
+    readonly ids?: ReadonlyArray<string>
+    readonly parent?: string
+    readonly ancestor?: string
+    readonly project?: string
+    readonly directory?: string
+    readonly agent?: string
+    readonly search?: string
+    readonly active?: boolean
+    readonly since?: string
+    readonly until?: string
+    readonly sort?: "created" | "updated"
+    readonly order?: "asc" | "desc"
+    readonly limit?: number
+    readonly offset?: number
+    readonly detail?: "brief" | "full"
+    readonly expand?: number
+  }["expand"]
+}
+
+export type MessagingSessionsOutput = { data: MessagingSessionList }["data"]
+
+export type MessagingLogInput = {
+  readonly as?: {
+    readonly as?: string
+    readonly sessions: ReadonlyArray<string>
+    readonly op?: "head" | "tail" | "grep" | "search" | "pull"
+    readonly include?: ReadonlyArray<
+      "user" | "output" | "thinking" | "tools" | "results" | "system" | "synthetic" | "shell" | "events" | "compaction"
+    >
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly context?: number
+    readonly scope?: "all" | "context"
+    readonly since?: string
+    readonly until?: string
+    readonly limit?: number
+    readonly offset?: number
+    readonly chars?: number
+  }["as"]
+  readonly sessions: {
+    readonly as?: string
+    readonly sessions: ReadonlyArray<string>
+    readonly op?: "head" | "tail" | "grep" | "search" | "pull"
+    readonly include?: ReadonlyArray<
+      "user" | "output" | "thinking" | "tools" | "results" | "system" | "synthetic" | "shell" | "events" | "compaction"
+    >
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly context?: number
+    readonly scope?: "all" | "context"
+    readonly since?: string
+    readonly until?: string
+    readonly limit?: number
+    readonly offset?: number
+    readonly chars?: number
+  }["sessions"]
+  readonly op?: {
+    readonly as?: string
+    readonly sessions: ReadonlyArray<string>
+    readonly op?: "head" | "tail" | "grep" | "search" | "pull"
+    readonly include?: ReadonlyArray<
+      "user" | "output" | "thinking" | "tools" | "results" | "system" | "synthetic" | "shell" | "events" | "compaction"
+    >
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly context?: number
+    readonly scope?: "all" | "context"
+    readonly since?: string
+    readonly until?: string
+    readonly limit?: number
+    readonly offset?: number
+    readonly chars?: number
+  }["op"]
+  readonly include?: {
+    readonly as?: string
+    readonly sessions: ReadonlyArray<string>
+    readonly op?: "head" | "tail" | "grep" | "search" | "pull"
+    readonly include?: ReadonlyArray<
+      "user" | "output" | "thinking" | "tools" | "results" | "system" | "synthetic" | "shell" | "events" | "compaction"
+    >
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly context?: number
+    readonly scope?: "all" | "context"
+    readonly since?: string
+    readonly until?: string
+    readonly limit?: number
+    readonly offset?: number
+    readonly chars?: number
+  }["include"]
+  readonly query?: {
+    readonly as?: string
+    readonly sessions: ReadonlyArray<string>
+    readonly op?: "head" | "tail" | "grep" | "search" | "pull"
+    readonly include?: ReadonlyArray<
+      "user" | "output" | "thinking" | "tools" | "results" | "system" | "synthetic" | "shell" | "events" | "compaction"
+    >
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly context?: number
+    readonly scope?: "all" | "context"
+    readonly since?: string
+    readonly until?: string
+    readonly limit?: number
+    readonly offset?: number
+    readonly chars?: number
+  }["query"]
+  readonly match?: {
+    readonly as?: string
+    readonly sessions: ReadonlyArray<string>
+    readonly op?: "head" | "tail" | "grep" | "search" | "pull"
+    readonly include?: ReadonlyArray<
+      "user" | "output" | "thinking" | "tools" | "results" | "system" | "synthetic" | "shell" | "events" | "compaction"
+    >
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly context?: number
+    readonly scope?: "all" | "context"
+    readonly since?: string
+    readonly until?: string
+    readonly limit?: number
+    readonly offset?: number
+    readonly chars?: number
+  }["match"]
+  readonly context?: {
+    readonly as?: string
+    readonly sessions: ReadonlyArray<string>
+    readonly op?: "head" | "tail" | "grep" | "search" | "pull"
+    readonly include?: ReadonlyArray<
+      "user" | "output" | "thinking" | "tools" | "results" | "system" | "synthetic" | "shell" | "events" | "compaction"
+    >
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly context?: number
+    readonly scope?: "all" | "context"
+    readonly since?: string
+    readonly until?: string
+    readonly limit?: number
+    readonly offset?: number
+    readonly chars?: number
+  }["context"]
+  readonly scope?: {
+    readonly as?: string
+    readonly sessions: ReadonlyArray<string>
+    readonly op?: "head" | "tail" | "grep" | "search" | "pull"
+    readonly include?: ReadonlyArray<
+      "user" | "output" | "thinking" | "tools" | "results" | "system" | "synthetic" | "shell" | "events" | "compaction"
+    >
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly context?: number
+    readonly scope?: "all" | "context"
+    readonly since?: string
+    readonly until?: string
+    readonly limit?: number
+    readonly offset?: number
+    readonly chars?: number
+  }["scope"]
+  readonly since?: {
+    readonly as?: string
+    readonly sessions: ReadonlyArray<string>
+    readonly op?: "head" | "tail" | "grep" | "search" | "pull"
+    readonly include?: ReadonlyArray<
+      "user" | "output" | "thinking" | "tools" | "results" | "system" | "synthetic" | "shell" | "events" | "compaction"
+    >
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly context?: number
+    readonly scope?: "all" | "context"
+    readonly since?: string
+    readonly until?: string
+    readonly limit?: number
+    readonly offset?: number
+    readonly chars?: number
+  }["since"]
+  readonly until?: {
+    readonly as?: string
+    readonly sessions: ReadonlyArray<string>
+    readonly op?: "head" | "tail" | "grep" | "search" | "pull"
+    readonly include?: ReadonlyArray<
+      "user" | "output" | "thinking" | "tools" | "results" | "system" | "synthetic" | "shell" | "events" | "compaction"
+    >
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly context?: number
+    readonly scope?: "all" | "context"
+    readonly since?: string
+    readonly until?: string
+    readonly limit?: number
+    readonly offset?: number
+    readonly chars?: number
+  }["until"]
+  readonly limit?: {
+    readonly as?: string
+    readonly sessions: ReadonlyArray<string>
+    readonly op?: "head" | "tail" | "grep" | "search" | "pull"
+    readonly include?: ReadonlyArray<
+      "user" | "output" | "thinking" | "tools" | "results" | "system" | "synthetic" | "shell" | "events" | "compaction"
+    >
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly context?: number
+    readonly scope?: "all" | "context"
+    readonly since?: string
+    readonly until?: string
+    readonly limit?: number
+    readonly offset?: number
+    readonly chars?: number
+  }["limit"]
+  readonly offset?: {
+    readonly as?: string
+    readonly sessions: ReadonlyArray<string>
+    readonly op?: "head" | "tail" | "grep" | "search" | "pull"
+    readonly include?: ReadonlyArray<
+      "user" | "output" | "thinking" | "tools" | "results" | "system" | "synthetic" | "shell" | "events" | "compaction"
+    >
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly context?: number
+    readonly scope?: "all" | "context"
+    readonly since?: string
+    readonly until?: string
+    readonly limit?: number
+    readonly offset?: number
+    readonly chars?: number
+  }["offset"]
+  readonly chars?: {
+    readonly as?: string
+    readonly sessions: ReadonlyArray<string>
+    readonly op?: "head" | "tail" | "grep" | "search" | "pull"
+    readonly include?: ReadonlyArray<
+      "user" | "output" | "thinking" | "tools" | "results" | "system" | "synthetic" | "shell" | "events" | "compaction"
+    >
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly context?: number
+    readonly scope?: "all" | "context"
+    readonly since?: string
+    readonly until?: string
+    readonly limit?: number
+    readonly offset?: number
+    readonly chars?: number
+  }["chars"]
+}
+
+export type MessagingLogOutput = { data: MessagingLog }["data"]
+
+export type MessagingVarsInput = {
+  readonly as?: { readonly as?: string; readonly values?: boolean; readonly render?: string }["as"]
+  readonly values?: { readonly as?: string; readonly values?: boolean; readonly render?: string }["values"]
+  readonly render?: { readonly as?: string; readonly values?: boolean; readonly render?: string }["render"]
+}
+
+export type MessagingVarsOutput = { data: MessagingVars }["data"]
+
+export type MessagingSetVarInput = {
+  readonly as?: { readonly as?: string; readonly scope?: string; readonly name: string; readonly value?: string }["as"]
+  readonly scope?: {
+    readonly as?: string
+    readonly scope?: string
+    readonly name: string
+    readonly value?: string
+  }["scope"]
+  readonly name: {
+    readonly as?: string
+    readonly scope?: string
+    readonly name: string
+    readonly value?: string
+  }["name"]
+  readonly value?: {
+    readonly as?: string
+    readonly scope?: string
+    readonly name: string
+    readonly value?: string
+  }["value"]
+}
+
+export type MessagingSetVarOutput = void
+
+export type MessagingModelStatusOutput = { data: MessagingModelStatus }["data"]
+
+export type MessagingModelConfigureInput = {
+  readonly tier?: {
+    readonly tier?: string
+    readonly url?: string
+    readonly path?: string
+    readonly start?: boolean
+  }["tier"]
+  readonly url?: {
+    readonly tier?: string
+    readonly url?: string
+    readonly path?: string
+    readonly start?: boolean
+  }["url"]
+  readonly path?: {
+    readonly tier?: string
+    readonly url?: string
+    readonly path?: string
+    readonly start?: boolean
+  }["path"]
+  readonly start?: {
+    readonly tier?: string
+    readonly url?: string
+    readonly path?: string
+    readonly start?: boolean
+  }["start"]
+}
+
+export type MessagingModelConfigureOutput = { data: MessagingModelStatus }["data"]
 
 export type VcsInitInput = {
   readonly location?: {

@@ -6,6 +6,7 @@ import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { Bus } from "../bus.js"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Location } from "../location.js"
+import { MessagingVars } from "../messaging/vars.js"
 import { SessionEvent } from "./event.js"
 import { MessageDecodeError } from "./error.js"
 import { SessionMessage } from "./message.js"
@@ -32,6 +33,7 @@ const layer = Layer.effect(
     const fs = yield* FSUtil.Service
     const store = yield* SessionStore.Service
     const location = yield* Location.Service
+    const vars = yield* MessagingVars.Service
     // Resolved once for the Location layer; the synthetic text and dedup ledger keep
     // absolute paths, but the human-facing description shows paths relative to the project
     // root so opening a subdirectory still describes paths from the project root.
@@ -62,7 +64,15 @@ const layer = Layer.effect(
           (path) =>
             fs
               .readFileStringSafe(path)
-              .pipe(Effect.map((content) => (content === undefined ? undefined : { path, content }))),
+              .pipe(
+                Effect.flatMap((content) =>
+                  content === undefined
+                    ? Effect.succeed(undefined)
+                    : vars
+                        .inject(content, input.sessionID)
+                        .pipe(Effect.map((rendered) => ({ path, content: rendered }))),
+                ),
+              ),
           { concurrency: "unbounded" },
         )
         const readable = files.filter((file): file is { path: string; content: string } => file !== undefined)
@@ -121,5 +131,5 @@ function describePath(root: string, path: string) {
 export const node = makeLocationNode({
   name: "session-instructions",
   layer,
-  deps: [Bus.node, FSUtil.node, Location.node, SessionStore.node],
+  deps: [Bus.node, FSUtil.node, Location.node, MessagingVars.node, SessionStore.node],
 })

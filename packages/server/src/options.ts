@@ -26,6 +26,7 @@ export const ServerOptions = Schema.Struct({
     }),
   ),
   models: Schema.optional(ModelsDev.Options),
+  embedding: Schema.optional(Schema.Struct({ autostart: Schema.optional(Schema.Boolean) })),
   config: Schema.optional(
     Schema.Struct({
       directory: Schema.optional(Schema.String),

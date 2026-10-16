@@ -11,6 +11,7 @@ import { Skill } from "@opencode/core/skill"
 import { Config } from "@opencode/core/config"
 import { ManagedPolicy } from "@opencode/core/managed-policy"
 import { SkillTool } from "@opencode/core/tool/plugin/skill"
+import { MessagingVars } from "@opencode/core/messaging/vars"
 import { Tool } from "@opencode/core/tool"
 import { tmpdir } from "./fixture/tmpdir"
 import { Image } from "@opencode/core/image"
@@ -25,7 +26,7 @@ import { registerIntegrationPolicy } from "./fixture/policy"
 const skillToolNode = makeLocationNode({
   name: "test/skill-tool-plugin",
   layer: Layer.effectDiscard(registerToolPlugin(SkillTool.Plugin)),
-  deps: [Tool.node, FSUtil.node, Skill.node, Permission.node],
+  deps: [Tool.node, FSUtil.node, Skill.node, Permission.node, MessagingVars.node],
 })
 
 const sessionID = Session.ID.make("ses_skill_tool_test")

@@ -285,6 +285,8 @@ function toLLMMessage(message: SessionMessage.Info, model: Model.Ref, providerMe
         }),
       ]
     case "synthetic":
+      // Messages addressed only to the user stay visible in the transcript but never reach the model.
+      if (message.metadata?.audience === "user") return []
       return [Message.make({ id: message.id, role: "user", content: message.text })]
     case "skill":
       return [Message.make({ id: message.id, role: "user", content: message.text, metadata: message.metadata })]

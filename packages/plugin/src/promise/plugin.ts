@@ -9,6 +9,7 @@ import type { CommandDomain } from "./command.js"
 import type { EventDomain } from "./event.js"
 import type { IntegrationDomain } from "./integration.js"
 import type { MCPDomain } from "./mcp.js"
+import type { MessagingDomain } from "./messaging.js"
 import type { ModelDomain } from "./model.js"
 import type { PermissionDomain } from "./permission.js"
 import type { ProviderDomain } from "./provider.js"
@@ -37,6 +38,7 @@ export interface Context {
   }
   readonly integration: IntegrationDomain
   readonly mcp: MCPDomain
+  readonly messaging: MessagingDomain
   readonly model: ModelDomain
   readonly generate: GenerateApi
   readonly permission: PermissionDomain

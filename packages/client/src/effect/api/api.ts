@@ -39,6 +39,7 @@ import type { Pty } from "@opencode/schema/pty"
 import type { PtyTicket } from "@opencode/schema/pty-ticket"
 import type { Reference } from "@opencode/schema/reference"
 import type { Worktree } from "@opencode/schema/worktree"
+import type { Messaging } from "@opencode/schema/messaging"
 import type { Vcs } from "@opencode/schema/vcs"
 import type { WebSearch } from "@opencode/schema/websearch"
 import type { Config } from "@opencode/schema/config"
@@ -2146,6 +2147,229 @@ export interface WorktreeApi<E = never> {
   readonly refresh: WorktreeRefreshOperation<E>
 }
 
+export type MessagingSendInput = {
+  readonly as?: string | undefined
+  readonly topic?: string | undefined
+  readonly to?: string | undefined
+  readonly text: string
+  readonly type?: string | undefined
+  readonly meta?: { readonly [x: string]: Schema.Json } | undefined
+  readonly reply?: number | undefined
+  readonly force?: boolean | undefined
+  readonly deliver?: Messaging.Delivery | undefined
+}
+export type MessagingSendOutput = Messaging.SendResult
+export type MessagingSendOperation<E = never> = (input: MessagingSendInput) => Effect.Effect<MessagingSendOutput, E>
+
+export type MessagingUserInput = {
+  readonly as: string
+  readonly text: string
+  readonly title?: string | undefined
+  readonly root?: "hidden" | "visible" | "wake" | undefined
+}
+export type MessagingUserOutput = Messaging.SendResult
+export type MessagingUserOperation<E = never> = (input: MessagingUserInput) => Effect.Effect<MessagingUserOutput, E>
+
+export type MessagingQueryInput = {
+  readonly as?: string | undefined
+  readonly topics?: ReadonlyArray<string> | undefined
+  readonly query?: string | undefined
+  readonly match?: Messaging.MatchMode | undefined
+  readonly from?: ReadonlyArray<string> | undefined
+  readonly types?: ReadonlyArray<string> | undefined
+  readonly kinds?: ReadonlyArray<string> | undefined
+  readonly since?: string | undefined
+  readonly until?: string | undefined
+  readonly after?: number | undefined
+  readonly before?: number | undefined
+  readonly hidden?: Messaging.HiddenMode | undefined
+  readonly hiddenBy?: ReadonlyArray<string> | undefined
+  readonly hiddenFrom?: ReadonlyArray<string> | undefined
+  readonly hiddenSince?: string | undefined
+  readonly hiddenUntil?: string | undefined
+  readonly unread?: boolean | undefined
+  readonly limit?: number | undefined
+  readonly order?: "asc" | "desc" | undefined
+  readonly markRead?: boolean | undefined
+  readonly wait?: number | undefined
+}
+export type MessagingQueryOutput = Messaging.QueryResult
+export type MessagingQueryOperation<E = never> = (input?: MessagingQueryInput) => Effect.Effect<MessagingQueryOutput, E>
+
+export type MessagingInspectInput = { readonly as?: string | undefined; readonly topic: string; readonly seq: number }
+export type MessagingInspectOutput = Messaging.Message
+export type MessagingInspectOperation<E = never> = (
+  input: MessagingInspectInput,
+) => Effect.Effect<MessagingInspectOutput, E>
+
+export type MessagingVisibilityInput = {
+  readonly as?: string | undefined
+  readonly topic: string
+  readonly action: "hide" | "restore"
+  readonly seqs?: ReadonlyArray<number> | undefined
+  readonly for?: ReadonlyArray<string> | undefined
+  readonly reason?: string | undefined
+}
+export type MessagingVisibilityOutput = Messaging.VisibilityResult
+export type MessagingVisibilityOperation<E = never> = (
+  input: MessagingVisibilityInput,
+) => Effect.Effect<MessagingVisibilityOutput, E>
+
+export type MessagingSettingsInput = {
+  readonly as?: string | undefined
+  readonly topic: string
+  readonly mode?: Messaging.WriteMode | undefined
+  readonly writers?: ReadonlyArray<Messaging.Writer> | undefined
+  readonly description?: string | undefined
+}
+export type MessagingSettingsOutput = Messaging.Topic
+export type MessagingSettingsOperation<E = never> = (
+  input: MessagingSettingsInput,
+) => Effect.Effect<MessagingSettingsOutput, E>
+
+export type MessagingSubscribeInput = {
+  readonly as: string
+  readonly topic: string
+  readonly delivery?: Messaging.Delivery | undefined
+  readonly remove?: boolean | undefined
+}
+export type MessagingSubscribeOutput = Messaging.Topic
+export type MessagingSubscribeOperation<E = never> = (
+  input: MessagingSubscribeInput,
+) => Effect.Effect<MessagingSubscribeOutput, E>
+
+export type MessagingTopicInput = {
+  readonly as?: string | undefined
+  readonly topic: string
+  readonly expand?: number | undefined
+}
+export type MessagingTopicOutput = Messaging.Topic
+export type MessagingTopicOperation<E = never> = (input: MessagingTopicInput) => Effect.Effect<MessagingTopicOutput, E>
+
+export type MessagingTopicsInput = {
+  readonly as?: string | undefined
+  readonly topics?: ReadonlyArray<string> | undefined
+  readonly sessions?: ReadonlyArray<string> | undefined
+  readonly role?: "any" | "reader" | "writer" | "subscriber" | undefined
+  readonly kinds?: ReadonlyArray<string> | undefined
+  readonly search?: string | undefined
+  readonly standard?: boolean | undefined
+  readonly sort?: "created" | "last" | undefined
+  readonly order?: "asc" | "desc" | undefined
+  readonly limit?: number | undefined
+  readonly offset?: number | undefined
+  readonly expand?: number | undefined
+}
+export type MessagingTopicsOutput = Messaging.TopicList
+export type MessagingTopicsOperation<E = never> = (
+  input?: MessagingTopicsInput,
+) => Effect.Effect<MessagingTopicsOutput, E>
+
+export type MessagingChainInput = {
+  readonly session: string
+  readonly depth?: "self" | "parent" | "all" | undefined
+  readonly detail?: "brief" | "full" | undefined
+  readonly expand?: number | undefined
+}
+export type MessagingChainOutput = Messaging.Chain
+export type MessagingChainOperation<E = never> = (input: MessagingChainInput) => Effect.Effect<MessagingChainOutput, E>
+
+export type MessagingSessionsInput = {
+  readonly as?: string | undefined
+  readonly ids?: ReadonlyArray<string> | undefined
+  readonly parent?: string | undefined
+  readonly ancestor?: string | undefined
+  readonly project?: string | undefined
+  readonly directory?: string | undefined
+  readonly agent?: string | undefined
+  readonly search?: string | undefined
+  readonly active?: boolean | undefined
+  readonly since?: string | undefined
+  readonly until?: string | undefined
+  readonly sort?: "created" | "updated" | undefined
+  readonly order?: "asc" | "desc" | undefined
+  readonly limit?: number | undefined
+  readonly offset?: number | undefined
+  readonly detail?: "brief" | "full" | undefined
+  readonly expand?: number | undefined
+}
+export type MessagingSessionsOutput = Messaging.SessionList
+export type MessagingSessionsOperation<E = never> = (
+  input?: MessagingSessionsInput,
+) => Effect.Effect<MessagingSessionsOutput, E>
+
+export type MessagingLogInput = {
+  readonly as?: string | undefined
+  readonly sessions: ReadonlyArray<string>
+  readonly op?: "head" | "tail" | "grep" | "search" | "pull" | undefined
+  readonly include?: ReadonlyArray<Messaging.LogPart> | undefined
+  readonly query?: string | undefined
+  readonly match?: Messaging.MatchMode | undefined
+  readonly context?: number | undefined
+  readonly scope?: "all" | "context" | undefined
+  readonly since?: string | undefined
+  readonly until?: string | undefined
+  readonly limit?: number | undefined
+  readonly offset?: number | undefined
+  readonly chars?: number | undefined
+}
+export type MessagingLogOutput = Messaging.Log
+export type MessagingLogOperation<E = never> = (input: MessagingLogInput) => Effect.Effect<MessagingLogOutput, E>
+
+export type MessagingVarsInput = {
+  readonly as?: string | undefined
+  readonly values?: boolean | undefined
+  readonly render?: string | undefined
+}
+export type MessagingVarsOutput = Messaging.Vars
+export type MessagingVarsOperation<E = never> = (input?: MessagingVarsInput) => Effect.Effect<MessagingVarsOutput, E>
+
+export type MessagingSetVarInput = {
+  readonly as?: string | undefined
+  readonly scope?: string | undefined
+  readonly name: string
+  readonly value?: string | undefined
+}
+export type MessagingSetVarOutput = void
+export type MessagingSetVarOperation<E = never> = (
+  input: MessagingSetVarInput,
+) => Effect.Effect<MessagingSetVarOutput, E>
+
+export type MessagingModelStatusOutput = Messaging.ModelStatus
+export type MessagingModelStatusOperation<E = never> = () => Effect.Effect<MessagingModelStatusOutput, E>
+
+export type MessagingModelConfigureInput = {
+  readonly tier?: string | undefined
+  readonly url?: string | undefined
+  readonly path?: string | undefined
+  readonly start?: boolean | undefined
+}
+export type MessagingModelConfigureOutput = Messaging.ModelStatus
+export type MessagingModelConfigureOperation<E = never> = (
+  input?: MessagingModelConfigureInput,
+) => Effect.Effect<MessagingModelConfigureOutput, E>
+
+export interface MessagingApi<E = never> {
+  readonly send: MessagingSendOperation<E>
+  readonly user: MessagingUserOperation<E>
+  readonly query: MessagingQueryOperation<E>
+  readonly inspect: MessagingInspectOperation<E>
+  readonly visibility: MessagingVisibilityOperation<E>
+  readonly settings: MessagingSettingsOperation<E>
+  readonly subscribe: MessagingSubscribeOperation<E>
+  readonly topic: MessagingTopicOperation<E>
+  readonly topics: MessagingTopicsOperation<E>
+  readonly chain: MessagingChainOperation<E>
+  readonly sessions: MessagingSessionsOperation<E>
+  readonly log: MessagingLogOperation<E>
+  readonly vars: MessagingVarsOperation<E>
+  readonly setVar: MessagingSetVarOperation<E>
+  readonly model: {
+    readonly status: MessagingModelStatusOperation<E>
+    readonly configure: MessagingModelConfigureOperation<E>
+  }
+}
+
 export type VcsInitInput = {
   readonly location?: { readonly directory?: string | undefined } | undefined
   readonly provider?: string | undefined
@@ -2290,6 +2514,7 @@ export interface AppApi<E = never> {
   readonly shell: ShellApi<E>
   readonly reference: ReferenceApi<E>
   readonly worktree: WorktreeApi<E>
+  readonly messaging: MessagingApi<E>
   readonly vcs: VcsApi<E>
   readonly debug: DebugApi<E>
   readonly migration: MigrationApi<E>

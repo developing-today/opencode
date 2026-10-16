@@ -16,6 +16,7 @@ import { LegacyEventV1 } from "./legacy-event.js"
 import { LspEvent } from "./lsp-event.js"
 import { LocationEvent } from "./location-event.js"
 import { McpEvent } from "./mcp-event.js"
+import { Messaging } from "./messaging.js"
 import { Model } from "./model.js"
 import { ModelsDev } from "./models-dev.js"
 import { Permission } from "./permission.js"
@@ -66,6 +67,7 @@ const featureDefinitions = Event.inventory(
   ...Shell.Event.Definitions,
   ...Form.Event.Definitions,
   ...WebSearch.Event.Definitions,
+  ...Messaging.Event.Definitions,
 )
 
 export const ServerDefinitions = Event.inventory(

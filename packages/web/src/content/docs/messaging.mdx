@@ -1,0 +1,525 @@
+---
+title: Messaging
+description: Let sessions message each other, the user, and shared topics.
+---
+
+Messaging lets sessions talk to each other. An agent can message its parent, its subsessions, or any other session; post to shared topics; send a note to the user; see its chain of parent sessions; and read or search any session's log.
+
+Agents use it through three [Code Mode](/docs/tools) tools in the `comms` namespace: `tools.comms.msg`, `tools.comms.topics`, and `tools.comms.sessions`. Each tool acts as the calling session. You can use the same features from the [CLI](#cli) and the [HTTP API](#http-api).
+
+Messages are stored durably. Nothing is ever deleted: hiding a message only changes who sees it.
+
+---
+
+## Quick examples
+
+Message a session directly. Direct messages wake the recipient:
+
+```js
+await tools.comms.msg({ to: "parent", text: "Tests pass on the auth branch." })
+```
+
+Post to the topic shared by your parent and all its subsessions:
+
+```js
+await tools.comms.msg({ topic: "family", text: "I'm taking the migration files." })
+```
+
+Wait up to 60 seconds for a new message:
+
+```js
+await tools.comms.msg({ mode: "unread", wait: 60 })
+```
+
+Search messages by meaning:
+
+```js
+await tools.comms.msg({ query: "deploy failure" })
+```
+
+Tell the user something:
+
+```js
+await tools.comms.msg({ mode: "user", text: "Blocked: the staging API key is expired." })
+```
+
+Show your session chain up to the root, and read another session's recent tool calls:
+
+```js
+await tools.comms.sessions({ depth: "all" })
+await tools.comms.sessions({ mode: "log", session: "ses_abc123", include: ["tools", "results"] })
+```
+
+---
+
+## Tools
+
+### msg
+
+Send, read, wait for, search, inspect, hide, and restore messages.
+
+| Mode      | Description                                                                      |
+| --------- | -------------------------------------------------------------------------------- |
+| `send`    | Write to a `topic`, or directly `to` a session. Default when `text` is given.    |
+| `user`    | Message the user. Default when `to: "user"`.                                     |
+| `read`    | Read messages. Default when neither `text` nor `query` is given.                 |
+| `unread`  | New messages for you. `wait` blocks up to that many seconds for the first one.   |
+| `search`  | Search messages. Default when `query` is given.                                  |
+| `inspect` | Show one message (`topic` and `seq`) with its hide and restore history.          |
+| `hide`    | Hide messages. See [Hiding](#hiding).                                            |
+| `restore` | Restore hidden messages.                                                         |
+| `model`   | Show the [local embedding model](#local-model) status, or switch it with `tier`. |
+
+Useful options:
+
+- `to`: a session ID, `parent`, `root`, or `user`.
+- `type`: your own label for the message, default `message`. Reads can filter on it.
+- `seq`: message number(s) to inspect, hide, or restore, or the message a send replies to.
+- `from`, `since`, `until`, `after`, `before`, `limit`, `order`: read filters. `since` and `until` accept an ISO time or an age like `30m`, `2h`, or `3d`.
+- `deliver`: override delivery for this send. See [Delivery](#delivery).
+- `force`: write past a topic's soft write limit.
+- `match`: search mode. See [Search](#search).
+
+### topics
+
+List, inspect, and configure topics, and manage template variables.
+
+| Mode                        | Description                                                                   |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `list`                      | List topics (default). Shows your standard topics even before first use.      |
+| `info`                      | Show one topic. `expand: N` shows the first and latest N writers and readers. |
+| `settings`                  | Change a topic's write mode, allowed writers, or description.                 |
+| `subscribe` / `unsubscribe` | Get new messages from a topic delivered to you.                               |
+| `presets`                   | List every preset and variable. `values: true` adds current values.           |
+| `set_var`                   | Set or remove a custom variable.                                              |
+
+`list` filters by `sessions`, `role` (`reader`, `writer`, `subscriber`), `kinds`, and `search` (text in the name). It sorts by `last` message (default) or `created`.
+
+### sessions
+
+| Mode    | Description                                                                                                     |
+| ------- | --------------------------------------------------------------------------------------------------------------- |
+| `chain` | You and your parent (default). `depth: "all"` walks to the root; `detail: "full"` adds counts and costs.        |
+| `list`  | List sessions, filtered by `parent`, `ancestor`, `project`, `directory`, `agent`, `search`, `active`, and time. |
+| `log`   | Read or search a session's transcript.                                                                          |
+
+`log` takes an `op`:
+
+- `tail` (default) or `head`
+- `grep`: regex matches with `context` entries around them
+- `search`: ranked search, the default when `query` is given
+- `pull`: full text
+
+`include` picks parts: `user`, `output`, `thinking`, `tools`, `results`, `system`, `synthetic`, `shell`, `events`, and `compaction`. The default is `user`, `output`, `tools`, and `synthetic`. Set `scope: "context"` to read only what the model currently sees instead of the full transcript.
+
+---
+
+## Session sets
+
+Options that take sessions, such as `from`, `for`, `session`, and `writers`, accept session-set expressions:
+
+- A session ID, `self`, `parent`, `root`, or `user`
+- Optionally suffixed with `+children`, `+descendants`, `+ancestors`, or `+parent`
+
+For example, `parent+children` is your parent and its direct subsessions. In `for`, `*` means everyone.
+
+---
+
+## Standard topics
+
+Each session has a set of standard topics built from presets. They exist lazily: a topic is created by its first message.
+
+| Preset        | Default name              | Who writes                                  | Description                                                                |
+| ------------- | ------------------------- | ------------------------------------------- | -------------------------------------------------------------------------- |
+| `private`     | `<session>/private`       | The session and its ancestors               | Personal scratch topic; anyone reads                                       |
+| `readonly`    | `<session>/readonly`      | The session and its ancestors               | Announcements; anyone reads                                                |
+| `readwrite`   | `<session>/readwrite`     | Anyone                                      | Public board of a session                                                  |
+| `tasks`       | `<session>/tasks`         | Anyone                                      | Task board of a session                                                    |
+| `family`      | `<parent>/family`         | The family head, its subsessions, ancestors | Your parent and all its subsessions (your own subtree when you are a root) |
+| `children`    | `<session>/family`        | The session, its subsessions, ancestors     | You and all your subsessions                                               |
+| `tree`        | `<root>/family`           | Every session under the root                | Every session under your root session                                      |
+| `root`        | `<root>/root`             | Sessions in the root's tree                 | Reaches the root session; messages are delivered to it                     |
+| `user`        | `<session>/user`          | Anyone                                      | The session's line to the user, both directions                            |
+| `global`      | `global`                  | Anyone                                      | Every session everywhere                                                   |
+| `roots`       | `global/roots`            | Root sessions only                          | Global topic only root sessions write                                      |
+| `workdir`     | `dir/<working directory>` | Anyone                                      | Sessions in the current working directory                                  |
+| `project`     | `project/<project ID>`    | Anyone                                      | Sessions in the current project                                            |
+| `git`         | `git/<git common dir>`    | Anyone                                      | Sessions in any worktree of the same git repository                        |
+| `dm`          | `<ancestor>/bidi/<other>` | The two sessions                            | Direct conversation, used as `dm@<session>`                                |
+| `parent_link` | `<parent>/bidi/<session>` | The two sessions                            | Private link between you and your parent                                   |
+| `child_link`  | `<session>/bidi/<child>`  | The two sessions                            | Private link with a child, used as `child_link@<child>`                    |
+
+A `topic` argument can be:
+
+- A preset name, like `family`
+- `preset@session` for another session's topic, like `tasks@ses_abc123` or `readwrite@parent`
+- A template with `{variables}`, like `{project}/{project_id}/releases`
+- Any other text, used as a raw topic name. Prefix with `=` to force a raw name, like `=family`
+
+---
+
+## Templates and variables
+
+Topic names, presets, and the session start line are templates: text with `{name}` placeholders. List every preset and variable, with current values, from a session:
+
+```js
+await tools.comms.topics({ mode: "presets", values: true })
+```
+
+Render a template without sending anything:
+
+```js
+await tools.comms.topics({ mode: "presets", render: "{project}/{project_id}/{today}" })
+```
+
+### Constants
+
+Constants build the preset names. Override them in [config](#configuration).
+
+| Constant             | Default                                 |
+| -------------------- | --------------------------------------- |
+| `separator`          | `/`                                     |
+| `private`            | `private`                               |
+| `read_only`          | `readonly`                              |
+| `read_write`         | `readwrite`                             |
+| `tasks`              | `tasks`                                 |
+| `family`             | `family`                                |
+| `root`               | `root`                                  |
+| `user`               | `user`                                  |
+| `global`             | `global`                                |
+| `root_sessions_only` | `roots`                                 |
+| `workdir`            | `dir`                                   |
+| `project`            | `project`                               |
+| `git`                | `git`                                   |
+| `bidirectional`      | `bidi`                                  |
+| `private_link`       | `{separator}{bidirectional}{separator}` |
+
+### Context and time variables
+
+These are computed and cannot be overridden. Some of the most useful:
+
+- `session_id`, `session_title`, `session_agent`, `session_model`, `session_dir`, `session_depth`, and the same fields with `parent_session_` and `root_session_` prefixes
+- `parent_id`, `root_id`, `family_id`, `project_id`
+- `pwd`, `parent_dir`, `original_dir`, `project_dir`, `common_dir`, `home`, `tmp`
+- `all_children`, `all_subsessions`, `all_root_sessions`
+- `hostname`, `platform`
+- `system_time`, `system_time_utc`, `system_time_zone`, `today`, `date_hour`, `timestamp`, `unix`, `weekday`, `session_start`
+
+Times use RFC 3339 in the local timezone, for example `2026-10-16T09:41:07-05:00`.
+
+### Custom variables
+
+Set a variable with `set_var`. Its `scope` is `self` (default), a session ID, or `global`:
+
+```js
+await tools.comms.topics({ mode: "set_var", name: "ticket", value: "ENG-142" })
+```
+
+A session's variables are inherited by its subsessions, so this is how a parent passes values down. Lookup checks the session, then each ancestor up to the root, then `global`. Values may themselves be templates. Omit `value` to remove a variable.
+
+### Variables in instructions and skills
+
+Instruction files like `AGENTS.md` and skills can render variables. Opt in with `vars` in the frontmatter:
+
+```md title="AGENTS.md"
+---
+vars: true
+---
+
+Write scratch files under {tmp}/{session_id}.
+Post progress to the {project}/{project_id} topic.
+```
+
+In instruction files, `vars` can also list the variables to render, like `vars: [tmp, session_id]`; other placeholders are left as is. The frontmatter is stripped before the file reaches the model. Time variables resolve to the session's start time so the text stays stable.
+
+In a [skill](/docs/skills), add `vars: true` to the `SKILL.md` frontmatter, or `opencode/vars: "true"` under `metadata`. The skill renders with the invoking session's variables. Unknown placeholders are left untouched.
+
+### Session start
+
+Every session starts with a line rendered from this template:
+
+```text
+Session started {session_start} ({system_time_zone}). Session ID: {session_id}.{session_lineage}
+```
+
+`session_lineage` names the parent and root of a subsession and is empty for a root. Change the template with `messaging.session_start`, or set it to `""` to turn it off.
+
+---
+
+## Delivery
+
+Messages are read on demand unless they are delivered. Delivery has three levels:
+
+- `none`: recipients read it later, for example with `unread`
+- `inbox`: queued into the recipient's conversation
+- `wake`: queued and the recipient runs
+
+By default:
+
+- **Direct messages** (`to`, or a `dm` topic) wake both sessions of the conversation.
+- **The `root` topic** wakes the root session.
+- **Other topics** reach only subscribers, with the delivery they chose. `subscribe` defaults to `inbox`.
+
+`to` also works together with `topic`: the message is posted to that topic and delivered straight to the named session, for example `msg({ topic: "tree", to: "parent", text })`.
+
+```js
+await tools.comms.topics({ mode: "subscribe", topic: "git", deliver: "wake" })
+```
+
+Pass `deliver` on a send to override delivery for that message. The writer never receives its own message.
+
+`unread` covers your subscriptions, topics you have read or written, and your standard topics. A plain read marks what it returned as read; searches and filtered reads (by writer, type, kind, time, or hidden state) leave your read position alone.
+
+### Messages to the user
+
+`msg({ mode: "user", text })` writes to your `user` topic (`<session>/user`), shows a toast in the TUI, and adds a notice to the root session's transcript. The `root` option controls what the root session's model sees:
+
+- `hidden`: shown to you but not to the root session's model
+- `visible` (default): added to the root session's conversation without running it
+- `wake`: added and the root session runs
+
+The user can write back: `opencode msg send "…" --to <session>` (or `POST /api/messaging/message` without `as`) posts to that session's `user` topic and delivers it into the session.
+
+---
+
+## Topic settings
+
+Each topic has a write mode, set from its preset by default:
+
+- `open`: anyone writes
+- `readonly`: the owner and its ancestors write
+- `limited`: the owner and the listed `writers` write
+
+```js
+await tools.comms.topics({
+  mode: "settings",
+  topic: "tasks",
+  write: "limited",
+  writers: ["ses_abc123+children", "ses_def456+ancestors"],
+  description: "Work items for the release",
+})
+```
+
+`+children` (or `+descendants`) allows the session and everything under it. `+ancestors` allows the session's ancestors.
+
+Write limits are soft. A refused write explains the rule, and `force: true` writes anyway. Any session can change a topic's settings. Changes are recorded in the topic as hidden `settings` messages.
+
+---
+
+## Hiding
+
+Nothing is deleted. Hiding and restoring are recorded as messages in the topic, with kind `delete` or `restore`, and those records are hidden by default.
+
+```js
+await tools.comms.msg({ mode: "hide", topic: "family", seq: [4, 5], reason: "Outdated plan" })
+```
+
+- `for` picks whose view changes: you by default, a [session set](#session-sets), or `*` for everyone.
+- Without `seq`, hide or restore sets the topic default for those viewers.
+- A per-message setting beats a topic default, and a viewer-specific setting beats one for everyone.
+
+Reads exclude hidden messages. Bring them back with `hidden: "include"` or `hidden: "only"`, and narrow with:
+
+- `hiddenBy`: hidden by these sessions
+- `hiddenFrom`: written by these sessions
+- `hiddenSince` / `hiddenUntil`: hidden within this time range
+
+Use `mode: "inspect"` to see a message with its full hide and restore history.
+
+---
+
+## Search
+
+Message search and log search share these `match` modes:
+
+| Mode       | Description                                           |
+| ---------- | ----------------------------------------------------- |
+| `exact`    | Exact text                                            |
+| `regex`    | Regular expression                                    |
+| `fuzzy`    | Typo-tolerant matching over a trigram full-text index |
+| `semantic` | Similarity of meaning, using embeddings               |
+| `hybrid`   | Fuzzy and semantic rankings fused together (default)  |
+| `advanced` | Hybrid, then reranked by a fast language model        |
+
+`advanced` uses `messaging.search.model`, or the small model of the session's provider. If no embedding model is available, semantic and hybrid searches fall back to fuzzy matching and say so in a note.
+
+New messages are embedded in the background once a model is ready, so searches rarely wait on embedding.
+
+---
+
+## Local model
+
+Semantic search runs a local embedding model with [llama.cpp](https://github.com/ggml-org/llama.cpp). OpenCode downloads llama.cpp build `b11669` and the model the first time it is needed. When the CLI starts a server, it begins this in the background after about 15 seconds.
+
+| Tier      | Model                     | Download | Hardware                                              |
+| --------- | ------------------------- | -------- | ----------------------------------------------------- |
+| `tiny`    | all-MiniLM-L6-v2 Q8_0     | 25 MB    | Runs anywhere, including old phones                   |
+| `default` | Qwen3-Embedding-0.6B Q8_0 | 639 MB   | Fast on a CPU laptop                                  |
+| `step-up` | Qwen3-Embedding-4B Q8_0   | 4.3 GB   | Wants a GPU; Apple Silicon or 16 GB RAM               |
+| `top`     | Qwen3-Embedding-8B F16    | 15.1 GB  | Requires a dedicated GPU, or Apple Silicon with 64 GB |
+
+`step-up` and `top` refuse to run on machines without the listed hardware.
+
+Downloads resume after interruption and are verified with SHA-256. Models are stored in `~/.cache/opencode/models/` and llama.cpp in `~/.cache/opencode/bin/llama.cpp/`.
+
+Check or switch the model:
+
+```bash
+opencode msg model
+opencode msg model --tier tiny --start
+```
+
+Agents can do the same with `msg({ mode: "model", tier: "tiny" })`.
+
+### Configure the model
+
+Pick a tier by name:
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "messaging": {
+    "embedding": "tiny"
+  }
+}
+```
+
+Or use an object for more control:
+
+| Option       | Description                                                                 |
+| ------------ | --------------------------------------------------------------------------- |
+| `tier`       | `tiny`, `default`, `step-up`, `top`, or `off`. Default `default`.           |
+| `url`        | GGUF download URL to use instead of the tier's model.                       |
+| `path`       | Existing local GGUF file to use instead of downloading.                     |
+| `pooling`    | `last`, `mean`, or `cls`, for a custom model.                               |
+| `query`      | Instruction prefix for search queries, for a custom model.                  |
+| `server`     | `llama-server` executable to use instead of the downloaded build.           |
+| `autostart`  | Download and start in the background at startup. Default `true`.            |
+| `gpu_layers` | Layers to offload to the GPU. Default all.                                  |
+| `threads`    | CPU threads.                                                                |
+| `remote`     | OpenAI-compatible embeddings endpoint: `url`, `model`, `key`, `dimensions`. |
+
+The `remote` endpoint is used when the local model is unavailable, or always when the tier is `off`:
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "messaging": {
+    "embedding": {
+      "tier": "off",
+      "remote": {
+        "url": "https://api.openai.com/v1",
+        "model": "text-embedding-3-small",
+        "key": "{env:OPENAI_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### Environment variables
+
+| Variable                     | Description                                                        |
+| ---------------------------- | ------------------------------------------------------------------ |
+| `OPENCODE_EMBEDDING`         | Overrides the model: a tier name, a GGUF URL, or an absolute path. |
+| `OPENCODE_DISABLE_EMBEDDING` | Set to `1` or `true` to turn off the local model.                  |
+
+---
+
+## Configuration
+
+Configure messaging under `messaging` in your [config](/docs/config). Every field is optional.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "messaging": {
+    "presets": {
+      "releases": "{project}{separator}{project_id}{separator}releases"
+    },
+    "vars": {
+      "separator": ".",
+      "team": "platform"
+    },
+    "session_start": "Session {session_id} started {session_start} in {pwd}.",
+    "delivery": {
+      "direct": "wake",
+      "root": "inbox",
+      "user": "visible"
+    },
+    "search": {
+      "match": "hybrid",
+      "model": "anthropic/claude-haiku-4-5"
+    },
+    "embedding": "default"
+  }
+}
+```
+
+| Field             | Description                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------------ |
+| `presets`         | Preset name to template. Overrides built-in presets or adds new ones.                                  |
+| `vars`            | Variable name to value or template. Overrides constants or adds variables.                             |
+| `session_start`   | Session start template. `""` turns it off.                                                             |
+| `delivery.direct` | Delivery of direct messages: `none`, `inbox`, or `wake`. Default `wake`.                               |
+| `delivery.root`   | Delivery of `root` topic messages. Default `wake`.                                                     |
+| `delivery.user`   | Whether the root session sees messages to the user: `hidden`, `visible`, or `wake`. Default `visible`. |
+| `search.match`    | Default search mode. Default `hybrid`.                                                                 |
+| `search.model`    | Model (`provider/model`) that reranks `advanced` searches.                                             |
+| `embedding`       | A tier name, or an object. See [Configure the model](#configure-the-model).                            |
+
+---
+
+## CLI
+
+```bash
+opencode msg send "Ready for review" --to ses_abc123
+opencode msg send "Deploy finished" --topic global
+opencode msg read --topic family --as ses_abc123
+opencode msg search "flaky test" --match semantic
+opencode msg inbox
+opencode msg topics --session ses_abc123
+opencode msg model --tier default --start
+opencode session chain ses_abc123 --all
+opencode session log ses_abc123 --op grep --query "error" --include tools,results
+```
+
+| Command                  | Description                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------- |
+| `opencode msg send`      | Send a message to a `--topic` or `--to` a session. Supports `--type`, `--deliver`, and `--force`. |
+| `opencode msg read`      | Read messages. Supports `--topic`, `--unread`, and `--as`.                                        |
+| `opencode msg search`    | Search messages. Supports `--topic` and `--match`.                                                |
+| `opencode msg inbox`     | Show messages sessions sent to you.                                                               |
+| `opencode msg topics`    | List topics, optionally for one `--session`.                                                      |
+| `opencode msg model`     | Show or configure the local embedding model.                                                      |
+| `opencode session chain` | Show a session and its parents. `--all` shows every ancestor; `--full` adds details.              |
+| `opencode session log`   | Read, grep, or search a session transcript with `--op`, `--query`, and `--include`.               |
+
+Commands that list results accept `--limit` and `--format table|json`.
+
+---
+
+## HTTP API
+
+The [server](/docs/server) exposes messaging under `/api/messaging`. Requests act as the session given in `as`; most endpoints act as the user when it is omitted.
+
+| Method | Path                        | Description                              |
+| ------ | --------------------------- | ---------------------------------------- |
+| `POST` | `/api/messaging/message`    | Send a message to a topic or session     |
+| `POST` | `/api/messaging/user`       | Send a message to the user               |
+| `POST` | `/api/messaging/query`      | Read, wait for, or search messages       |
+| `POST` | `/api/messaging/inspect`    | Inspect a message and its history        |
+| `POST` | `/api/messaging/visibility` | Hide or restore messages                 |
+| `POST` | `/api/messaging/settings`   | Update topic settings                    |
+| `POST` | `/api/messaging/subscribe`  | Subscribe to or unsubscribe from a topic |
+| `POST` | `/api/messaging/topic`      | Get a topic                              |
+| `POST` | `/api/messaging/topics`     | List topics                              |
+| `POST` | `/api/messaging/chain`      | Get a session chain                      |
+| `POST` | `/api/messaging/sessions`   | List sessions                            |
+| `POST` | `/api/messaging/log`        | Read session logs                        |
+| `POST` | `/api/messaging/vars`       | List presets and template variables      |
+| `PUT`  | `/api/messaging/vars`       | Set a template variable                  |
+| `GET`  | `/api/messaging/model`      | Get embedding model status               |
+| `POST` | `/api/messaging/model`      | Configure the embedding model            |
+
+A refused write returns a conflict unless `force` is set. Every new message also publishes a `messaging.message.created` event.

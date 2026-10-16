@@ -246,6 +246,37 @@ import type {
   WorktreeRemoveOutput,
   WorktreeRefreshInput,
   WorktreeRefreshOutput,
+  MessagingSendInput,
+  MessagingSendOutput,
+  MessagingUserInput,
+  MessagingUserOutput,
+  MessagingQueryInput,
+  MessagingQueryOutput,
+  MessagingInspectInput,
+  MessagingInspectOutput,
+  MessagingVisibilityInput,
+  MessagingVisibilityOutput,
+  MessagingSettingsInput,
+  MessagingSettingsOutput,
+  MessagingSubscribeInput,
+  MessagingSubscribeOutput,
+  MessagingTopicInput,
+  MessagingTopicOutput,
+  MessagingTopicsInput,
+  MessagingTopicsOutput,
+  MessagingChainInput,
+  MessagingChainOutput,
+  MessagingSessionsInput,
+  MessagingSessionsOutput,
+  MessagingLogInput,
+  MessagingLogOutput,
+  MessagingVarsInput,
+  MessagingVarsOutput,
+  MessagingSetVarInput,
+  MessagingSetVarOutput,
+  MessagingModelStatusOutput,
+  MessagingModelConfigureInput,
+  MessagingModelConfigureOutput,
   VcsInitInput,
   VcsInitOutput,
   VcsGetInput,
@@ -1509,6 +1540,266 @@ const adaptGroupWorktree = (raw: RawClient["server.worktree"]) => ({
   refresh: EndpointWorktreeRefresh(raw),
 })
 
+const EndpointMessagingSend = (raw: RawClient["server.messaging"]) => (input: MessagingSendInput) =>
+  preserveEffect<MessagingSendOutput>()(
+    raw["messaging.send"]({
+      payload: {
+        as: input["as"],
+        topic: input["topic"],
+        to: input["to"],
+        text: input["text"],
+        type: input["type"],
+        meta: input["meta"],
+        reply: input["reply"],
+        force: input["force"],
+        deliver: input["deliver"],
+      },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingUser = (raw: RawClient["server.messaging"]) => (input: MessagingUserInput) =>
+  preserveEffect<MessagingUserOutput>()(
+    raw["messaging.user"]({
+      payload: { as: input["as"], text: input["text"], title: input["title"], root: input["root"] },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingQuery = (raw: RawClient["server.messaging"]) => (input?: MessagingQueryInput) =>
+  preserveEffect<MessagingQueryOutput>()(
+    raw["messaging.query"]({
+      payload: {
+        as: input?.["as"],
+        topics: input?.["topics"],
+        query: input?.["query"],
+        match: input?.["match"],
+        from: input?.["from"],
+        types: input?.["types"],
+        kinds: input?.["kinds"],
+        since: input?.["since"],
+        until: input?.["until"],
+        after: input?.["after"],
+        before: input?.["before"],
+        hidden: input?.["hidden"],
+        hiddenBy: input?.["hiddenBy"],
+        hiddenFrom: input?.["hiddenFrom"],
+        hiddenSince: input?.["hiddenSince"],
+        hiddenUntil: input?.["hiddenUntil"],
+        unread: input?.["unread"],
+        limit: input?.["limit"],
+        order: input?.["order"],
+        markRead: input?.["markRead"],
+        wait: input?.["wait"],
+      },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingInspect = (raw: RawClient["server.messaging"]) => (input: MessagingInspectInput) =>
+  preserveEffect<MessagingInspectOutput>()(
+    raw["messaging.inspect"]({ payload: { as: input["as"], topic: input["topic"], seq: input["seq"] } }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingVisibility = (raw: RawClient["server.messaging"]) => (input: MessagingVisibilityInput) =>
+  preserveEffect<MessagingVisibilityOutput>()(
+    raw["messaging.visibility"]({
+      payload: {
+        as: input["as"],
+        topic: input["topic"],
+        action: input["action"],
+        seqs: input["seqs"],
+        for: input["for"],
+        reason: input["reason"],
+      },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingSettings = (raw: RawClient["server.messaging"]) => (input: MessagingSettingsInput) =>
+  preserveEffect<MessagingSettingsOutput>()(
+    raw["messaging.settings"]({
+      payload: {
+        as: input["as"],
+        topic: input["topic"],
+        mode: input["mode"],
+        writers: input["writers"],
+        description: input["description"],
+      },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingSubscribe = (raw: RawClient["server.messaging"]) => (input: MessagingSubscribeInput) =>
+  preserveEffect<MessagingSubscribeOutput>()(
+    raw["messaging.subscribe"]({
+      payload: { as: input["as"], topic: input["topic"], delivery: input["delivery"], remove: input["remove"] },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingTopic = (raw: RawClient["server.messaging"]) => (input: MessagingTopicInput) =>
+  preserveEffect<MessagingTopicOutput>()(
+    raw["messaging.topic"]({ payload: { as: input["as"], topic: input["topic"], expand: input["expand"] } }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingTopics = (raw: RawClient["server.messaging"]) => (input?: MessagingTopicsInput) =>
+  preserveEffect<MessagingTopicsOutput>()(
+    raw["messaging.topics"]({
+      payload: {
+        as: input?.["as"],
+        topics: input?.["topics"],
+        sessions: input?.["sessions"],
+        role: input?.["role"],
+        kinds: input?.["kinds"],
+        search: input?.["search"],
+        standard: input?.["standard"],
+        sort: input?.["sort"],
+        order: input?.["order"],
+        limit: input?.["limit"],
+        offset: input?.["offset"],
+        expand: input?.["expand"],
+      },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingChain = (raw: RawClient["server.messaging"]) => (input: MessagingChainInput) =>
+  preserveEffect<MessagingChainOutput>()(
+    raw["messaging.chain"]({
+      payload: { session: input["session"], depth: input["depth"], detail: input["detail"], expand: input["expand"] },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingSessions = (raw: RawClient["server.messaging"]) => (input?: MessagingSessionsInput) =>
+  preserveEffect<MessagingSessionsOutput>()(
+    raw["messaging.sessions"]({
+      payload: {
+        as: input?.["as"],
+        ids: input?.["ids"],
+        parent: input?.["parent"],
+        ancestor: input?.["ancestor"],
+        project: input?.["project"],
+        directory: input?.["directory"],
+        agent: input?.["agent"],
+        search: input?.["search"],
+        active: input?.["active"],
+        since: input?.["since"],
+        until: input?.["until"],
+        sort: input?.["sort"],
+        order: input?.["order"],
+        limit: input?.["limit"],
+        offset: input?.["offset"],
+        detail: input?.["detail"],
+        expand: input?.["expand"],
+      },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingLog = (raw: RawClient["server.messaging"]) => (input: MessagingLogInput) =>
+  preserveEffect<MessagingLogOutput>()(
+    raw["messaging.log"]({
+      payload: {
+        as: input["as"],
+        sessions: input["sessions"],
+        op: input["op"],
+        include: input["include"],
+        query: input["query"],
+        match: input["match"],
+        context: input["context"],
+        scope: input["scope"],
+        since: input["since"],
+        until: input["until"],
+        limit: input["limit"],
+        offset: input["offset"],
+        chars: input["chars"],
+      },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingVars = (raw: RawClient["server.messaging"]) => (input?: MessagingVarsInput) =>
+  preserveEffect<MessagingVarsOutput>()(
+    raw["messaging.vars"]({
+      payload: { as: input?.["as"], values: input?.["values"], render: input?.["render"] },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingSetVar = (raw: RawClient["server.messaging"]) => (input: MessagingSetVarInput) =>
+  preserveEffect<MessagingSetVarOutput>()(
+    raw["messaging.setVar"]({
+      payload: { as: input["as"], scope: input["scope"], name: input["name"], value: input["value"] },
+    }).pipe(Effect.mapError(mapClientError)),
+  )
+
+const EndpointMessagingModelStatus = (raw: RawClient["server.messaging"]) => () =>
+  preserveEffect<MessagingModelStatusOutput>()(
+    raw["messaging.model.status"]({}).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointMessagingModelConfigure =
+  (raw: RawClient["server.messaging"]) => (input?: MessagingModelConfigureInput) =>
+    preserveEffect<MessagingModelConfigureOutput>()(
+      raw["messaging.model.configure"]({
+        payload: { tier: input?.["tier"], url: input?.["url"], path: input?.["path"], start: input?.["start"] },
+      }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const adaptGroupMessaging = (raw: RawClient["server.messaging"]) => ({
+  send: EndpointMessagingSend(raw),
+  user: EndpointMessagingUser(raw),
+  query: EndpointMessagingQuery(raw),
+  inspect: EndpointMessagingInspect(raw),
+  visibility: EndpointMessagingVisibility(raw),
+  settings: EndpointMessagingSettings(raw),
+  subscribe: EndpointMessagingSubscribe(raw),
+  topic: EndpointMessagingTopic(raw),
+  topics: EndpointMessagingTopics(raw),
+  chain: EndpointMessagingChain(raw),
+  sessions: EndpointMessagingSessions(raw),
+  log: EndpointMessagingLog(raw),
+  vars: EndpointMessagingVars(raw),
+  setVar: EndpointMessagingSetVar(raw),
+  model: { status: EndpointMessagingModelStatus(raw), configure: EndpointMessagingModelConfigure(raw) },
+})
+
 const EndpointVcsInit = (raw: RawClient["server.vcs"]) => (input?: VcsInitInput) =>
   preserveEffect<VcsInitOutput>()(
     raw["vcs.init"]({ query: { location: input?.["location"], provider: input?.["provider"] } }).pipe(
@@ -1634,6 +1925,7 @@ const adaptClient = (raw: RawClient) => ({
   shell: adaptGroupShell(raw["server.shell"]),
   reference: adaptGroupReference(raw["server.reference"]),
   worktree: adaptGroupWorktree(raw["server.worktree"]),
+  messaging: adaptGroupMessaging(raw["server.messaging"]),
   vcs: adaptGroupVcs(raw["server.vcs"]),
   debug: adaptGroupDebug(raw["server.debug"]),
   migration: adaptGroupMigration(raw["server.migration"]),

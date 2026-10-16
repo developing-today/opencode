@@ -1997,9 +1997,16 @@ function SessionNoticeMessageV2(props: { message: SessionMessageInfo }) {
     <Show
       when={completion()}
       fallback={
-        <InlineToolRow icon="◈" color={theme.text.muted} pending="Notice" complete={true}>
-          {text()}
-        </InlineToolRow>
+        <Show
+          when={source() === "messaging" && props.message.type === "synthetic" && props.message}
+          fallback={
+            <InlineToolRow icon="◈" color={theme.text.muted} pending="Notice" complete={true}>
+              {text()}
+            </InlineToolRow>
+          }
+        >
+          {(message) => <SessionMessagingNotice message={message()} />}
+        </Show>
       }
     >
       <box
@@ -2016,6 +2023,82 @@ function SessionNoticeMessageV2(props: { message: SessionMessageInfo }) {
           <span style={{ fg: color() }}>{heading()}</span>
           <span style={{ fg: theme.text.muted }}>{suffix()}</span>
         </text>
+      </box>
+    </Show>
+  )
+}
+
+// Messaging notices wrap the delivered body as `<message attr="..." ...>\nBODY\n</message>` for the model.
+function SessionMessagingNotice(props: { message: Extract<SessionMessageInfo, { type: "synthetic" }> }) {
+  const ctx = use()
+  const theme = useTheme()
+  const renderer = useRenderer()
+  const { navigate } = useRoute()
+  const [hover, setHover] = createSignal(false)
+  const metadata = () => props.message.metadata
+  const from = () => stringValue(metadata()?.from)
+  // Attribute values escape `"` but not `>`, so skip over quoted values when finding the tag end.
+  const title = () =>
+    props.message.text
+      .match(/^<message\b(?:[^>"]|"[^"]*")*?\sfrom_title="([^"]*)"/)?.[1]
+      ?.replaceAll("&quot;", '"')
+      .replaceAll("&lt;", "<")
+      .replaceAll("&amp;", "&")
+  const sender = () => title() || from() || "unknown"
+  const body = () =>
+    props.message.text.match(/^<message\b(?:[^>"]|"[^"]*")*>\n?([\s\S]*?)\n?<\/message>\s*$/)?.[1] ?? props.message.text
+  const senderID = () => (from()?.startsWith("ses") ? from() : undefined)
+  const heading = () => `✉ ${sender()} → ${stringValue(metadata()?.topic) ?? "message"}`
+  const suffix = () =>
+    Locale.truncateWidth(
+      ` · ${body().trim().split("\n")[0] ?? ""}`,
+      Math.max(0, ctx.width - 3 - stringWidth(heading())),
+    )
+  return (
+    <Show
+      when={stringValue(metadata()?.type) === "user"}
+      fallback={
+        <box
+          marginLeft={3}
+          onMouseOver={() => senderID() && setHover(true)}
+          onMouseOut={() => setHover(false)}
+          onMouseUp={() => {
+            if (renderer.getSelection()?.getSelectedText()) return
+            const id = senderID()
+            if (id) navigate({ type: "session", sessionID: id })
+          }}
+        >
+          <text wrapMode="none">
+            <span
+              style={{
+                fg: senderID()
+                  ? hover()
+                    ? theme.text.action.secondary.hovered
+                    : theme.text.action.secondary.base
+                  : theme.text.base,
+              }}
+            >
+              {heading()}
+            </span>
+            <span style={{ fg: theme.text.muted }}>{suffix()}</span>
+          </text>
+        </box>
+      }
+    >
+      <box marginLeft={3}>
+        <text>
+          <span style={{ fg: theme.text.base, attributes: TextAttributes.BOLD }}>
+            ✉ Message for you from {sender()}
+          </span>
+          <Show when={stringValue(metadata()?.audience) === "user"}>
+            <span style={{ fg: theme.text.muted }}> (only you see this)</span>
+          </Show>
+        </text>
+        <box paddingLeft={2}>
+          <text fg={theme.text.base} wrapMode="word">
+            {body()}
+          </text>
+        </box>
       </box>
     </Show>
   )

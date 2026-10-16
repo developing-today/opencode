@@ -193,3 +193,85 @@ test.each([40, 120])("subagent completion notices navigate to the child session 
     await server.stop()
   }
 })
+
+test.each([40, 120])("messaging notices show user messages and navigate to the sender at width %s", async (width) => {
+  await using state = await tmpdir()
+  const setup = await createTestRenderer({ width, height: 30, useThread: false, kittyKeyboard: true })
+  setup.renderer.start()
+  const parent = {
+    id: "ses_parent",
+    title: "Parent session",
+    projectID: "project",
+    location: { directory },
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: { created: 0, updated: 0 },
+  }
+  const sender = { ...parent, id: "ses_sender", title: "Worker <a>" }
+  const messages = [
+    { id: "user-0", type: "user", text: "Coordinate the workers", time: { created: 0 } },
+    {
+      id: "notice-0",
+      type: "synthetic",
+      text: '<message to="user" from="ses_sender" from_title="Worker &lt;a>" topic="status" seq="1">\nBuild is green.\nPlease review the deploy plan.\n</message>',
+      description: "✉ Worker <a> → status: Build is green.",
+      metadata: { source: "messaging", topic: "status", seq: 1, from: sender.id, type: "user", audience: "user" },
+      time: { created: 1 },
+    },
+    {
+      id: "notice-1",
+      type: "synthetic",
+      text: '<message topic="plan" seq="2" from="ses_sender" from_title="Worker &lt;a>" time="2026-01-01T00:00:00Z">\nStarting phase two\nDetails follow\n</message>',
+      description: "✉ Worker <a> → plan: Starting phase two",
+      metadata: { source: "messaging", topic: "plan", seq: 2, from: sender.id, type: "message" },
+      time: { created: 2 },
+    },
+  ]
+  const senderMessages = [{ id: "sender-user", type: "user", text: "Run phase two", time: { created: 0 } }]
+  const calls = createFetch((url) => {
+    if (url.pathname === "/api/session") return json({ data: [parent, sender], cursor: {} })
+    if (url.pathname === `/api/session/${parent.id}`) return json({ data: parent })
+    if (url.pathname === `/api/session/${sender.id}`) return json({ data: sender })
+    if (url.pathname === `/api/session/${parent.id}/message`) return json({ data: messages.toReversed(), cursor: {} })
+    if (url.pathname === `/api/session/${sender.id}/message`)
+      return json({ data: senderMessages.toReversed(), cursor: {} })
+    if (url.pathname.endsWith("/inbox") || url.pathname.endsWith("/permission")) return json({ data: [] })
+    return undefined
+  }, createEventStream())
+  const server = Bun.serve({ port: 0, idleTimeout: 0, fetch: (request) => calls.fetch(request) })
+  const { run } = await import("../src/app")
+  const task = Effect.runPromise(
+    run({
+      app: { name: "test", version: "test", channel: "test" },
+      server: { endpoint: { url: server.url.toString() } },
+      config: {
+        get: async () => ({ animations: false, tabs: { mode: "off" } }),
+        update: async () => ({}),
+      },
+      packages: { prepare: async () => ({ directory: "" }) },
+      args: { sessionID: parent.id },
+      terminalHandoff: async () => ({ renderer: setup.renderer, mode: "dark", complete: () => {} }),
+      log: () => {},
+    }).pipe(Effect.provide(Global.layerWith({ state: state.path })), Effect.provide(FileSystem.layerNoop({}))),
+  )
+  try {
+    await setup.waitForFrame((frame) => frame.includes("→ plan · Starting"))
+    await setup.waitForVisualIdle()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Message for you from Worker <a>")
+    expect(frame).toContain("only you see this")
+    expect(frame).toContain("Build is green.")
+    expect(frame).toContain("Please review the deploy plan.")
+    expect(frame).not.toContain("</message>")
+    expect(frame).not.toContain("Details follow")
+    const lines = frame.split("\n")
+    const y = lines.findIndex((line) => line.includes("→ plan"))
+    expect(y).toBeGreaterThanOrEqual(0)
+    await setup.mockMouse.click(lines[y].indexOf("Worker") + 1, y)
+    await setup.waitForFrame((frame) => frame.includes("Run phase two"))
+  } finally {
+    setup.renderer.destroy()
+    await task
+    await server.stop()
+  }
+})
