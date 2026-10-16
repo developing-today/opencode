@@ -721,17 +721,21 @@ describe("github review tools", () => {
     withEnv(env, () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse("2026-01-01T11:00:00Z"))
-        let pending = false
+        // As on github.com: the request answers without listing Copilot, Copilot never shows up in
+        // requested_reviewers, and progress is visible only as timeline events.
+        const events: Array<Record<string, unknown>> = []
         let reviewsList = [copilotReview({ id: 900, commit: OLD, at: "2026-01-01T10:00:00Z", body: changesBody })]
         const github = fakeGitHub(
           baseRoutes({
             "GET /repos/acme/widgets/pulls/7/reviews": () => ({ body: reviewsList }),
-            "GET /repos/acme/widgets/pulls/7/requested_reviewers": () => ({
-              body: { users: pending ? [{ login: "Copilot" }] : [], teams: [] },
-            }),
+            "GET /repos/acme/widgets/issues/7/timeline": () => ({ body: events }),
             "POST /repos/acme/widgets/pulls/7/requested_reviewers": () => {
-              pending = true
-              return { body: { requested_reviewers: [{ login: "Copilot" }] } }
+              events.push({
+                event: "review_requested",
+                created_at: "2026-01-01T11:00:01Z",
+                requested_reviewer: { login: "Copilot" },
+              })
+              return { status: 201, body: { requested_reviewers: [] } }
             },
           }),
         )
@@ -747,11 +751,11 @@ describe("github review tools", () => {
         expect(result).toMatchObject({ status: "running", requested: "requested" })
         expect(notified).toEqual([])
 
+        events.push({ event: "copilot_work_started", created_at: "2026-01-01T11:00:20Z" })
         yield* TestClock.adjust("30 seconds")
         yield* Effect.yieldNow
         expect(notified).toEqual([])
 
-        pending = false
         reviewsList = [
           ...reviewsList,
           copilotReview({ id: 901, commit: HEAD, at: "2026-01-01T11:00:45Z", body: approvalBody }),

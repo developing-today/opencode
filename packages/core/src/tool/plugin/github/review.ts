@@ -2070,26 +2070,19 @@ const requestCopilot = Effect.fn("GitHubReview.requestCopilot")(function* (
   const body = { reviewers: [GitHubCopilot.REVIEWER] }
   // Removing first makes GitHub treat the request as new; a plain re-request of a pending reviewer is ignored.
   if (again) yield* api.request("DELETE", path, { body, allow: [404, 422] })
-  const result = yield* api
-    .json<{ requested_reviewers?: ReadonlyArray<{ login: string }> }>("POST", path, { body })
-    .pipe(
-      Effect.mapError((error) =>
-        error.kind === "validation"
-          ? new GitHubClient.Error({
-              ...error,
-              message: error.message,
-              hint: "Copilot code review may not be enabled for this repository or account, or the pull request is closed.",
-            })
-          : error,
-      ),
-    )
-  const listed = result.requested_reviewers?.some((user) => GitHubCopilot.authorKind(user.login) === "copilot")
-  if (listed === false)
-    return yield* new GitHubClient.Error({
-      kind: "unsupported",
-      message: "GitHub accepted the request but Copilot is not among the requested reviewers.",
-      hint: "Copilot code review may not be available for this repository, or the account has no Copilot review quota.",
-    })
+  // GitHub answers 201 without listing Copilot among requested_reviewers, even when the request starts a review, so
+  // progress is read from the timeline (review_requested, copilot_work_started) instead of this response.
+  yield* api.request("POST", path, { body }).pipe(
+    Effect.mapError((error) =>
+      error.kind === "validation"
+        ? new GitHubClient.Error({
+            ...error,
+            message: error.message,
+            hint: "Copilot code review may not be enabled for this repository or account, or the pull request is closed.",
+          })
+        : error,
+    ),
+  )
 })
 
 const WaitResult = Schema.Struct({
