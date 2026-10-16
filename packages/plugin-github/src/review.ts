@@ -52,9 +52,18 @@ export type CopilotStatus = typeof CopilotStatus.Type
 
 const Checks = Schema.Struct({
   state: Schema.String.annotate({ description: "SUCCESS, FAILURE, PENDING, ERROR, EXPECTED or NONE." }),
-  total: Schema.Int,
+  total: Schema.Int.annotate({ description: "Distinct checks; a re-run counts once, by its latest result." }),
   passed: Schema.Int,
   pending: Schema.Array(Schema.String),
+  required_pending: Schema.Array(Schema.String),
+  stalled: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      queued_minutes: Schema.Int,
+      url: Schema.optionalKey(Schema.String),
+      runner: Schema.optionalKey(Schema.String).annotate({ description: "The runner labels the job is waiting for." }),
+    }),
+  ).annotate({ description: "Queued for over 10 minutes without starting, usually because no runner matches." }),
   failing: Schema.Array(
     Schema.Struct({
       name: Schema.String,
@@ -111,9 +120,13 @@ interface CheckNode {
   readonly status?: string
   readonly conclusion?: string | null
   readonly detailsUrl?: string | null
+  readonly startedAt?: string | null
+  readonly completedAt?: string | null
+  readonly checkSuite?: { readonly createdAt: string } | null
   readonly context?: string
   readonly state?: string
   readonly targetUrl?: string | null
+  readonly createdAt?: string
   readonly isRequired?: boolean
 }
 
@@ -178,8 +191,8 @@ const PULL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
       autoMergeRequest { mergeMethod }
       commits(last: 1) { totalCount nodes { commit { oid statusCheckRollup { state contexts(first: 100) { totalCount nodes {
         __typename
-        ... on CheckRun { name status conclusion detailsUrl isRequired(pullRequestNumber: $number) }
-        ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $number) }
+        ... on CheckRun { name status conclusion detailsUrl startedAt completedAt checkSuite { createdAt } isRequired(pullRequestNumber: $number) }
+        ... on StatusContext { context state targetUrl createdAt isRequired(pullRequestNumber: $number) }
       } } } } } }
       reviewRequests(first: 30) { nodes { requestedReviewer { ... on User { login } ... on Bot { login } ... on Team { name } } } }
       latestOpinionatedReviews(first: 30) { nodes { state author { login __typename } } }
@@ -388,16 +401,28 @@ function status(state: GitHubCopilot.State, head: string): CopilotStatus {
   }
 }
 
-function checks(data: PullData) {
+export const STALLED_MS = 10 * 60_000
+
+function checks(data: PullData, now: number) {
   const rollup = data.commits.nodes[0]?.commit.statusCheckRollup
-  const nodes = rollup?.contexts.nodes ?? []
-  const entries = nodes.map((node) => {
+  const time = (node: CheckNode) =>
+    Date.parse(node.completedAt ?? node.startedAt ?? node.createdAt ?? node.checkSuite?.createdAt ?? "") || 0
+  // A workflow that runs again for the same commit (another event, a re-run) adds a second check of the same name;
+  // only the latest one says anything about the commit now.
+  const latest = new Map<string, CheckNode>()
+  for (const node of rollup?.contexts.nodes ?? []) {
     const name = node.name ?? node.context ?? "check"
+    const current = latest.get(name)
+    if (!current || time(node) >= time(current)) latest.set(name, node)
+  }
+  const entries = [...latest].map(([name, node]) => {
     const url = node.detailsUrl ?? node.targetUrl ?? undefined
     const required = node.isRequired === true
     if (node.__typename === "CheckRun") {
-      if (node.status !== "COMPLETED")
-        return { name, result: "pending" as const, conclusion: node.status ?? "PENDING", required, url }
+      if (node.status !== "COMPLETED") {
+        const queued = node.startedAt ? 0 : now - (Date.parse(node.checkSuite?.createdAt ?? "") || now)
+        return { name, result: "pending" as const, conclusion: node.status ?? "PENDING", required, url, queued }
+      }
       const ok = node.conclusion === "SUCCESS" || node.conclusion === "NEUTRAL" || node.conclusion === "SKIPPED"
       return {
         name,
@@ -405,23 +430,34 @@ function checks(data: PullData) {
         conclusion: node.conclusion ?? "UNKNOWN",
         required,
         url,
+        queued: 0,
       }
     }
     if (node.state === "PENDING" || node.state === "EXPECTED")
-      return { name, result: "pending" as const, conclusion: node.state, required, url }
+      return { name, result: "pending" as const, conclusion: node.state, required, url, queued: 0 }
     return {
       name,
       result: node.state === "SUCCESS" ? ("passed" as const) : ("failed" as const),
       conclusion: node.state ?? "UNKNOWN",
       required,
       url,
+      queued: 0,
     }
   })
+  const pending = entries.filter((entry) => entry.result === "pending")
   return {
     state: rollup?.state ?? "NONE",
-    total: rollup?.contexts.totalCount ?? 0,
+    total: entries.length,
     passed: entries.filter((entry) => entry.result === "passed").length,
-    pending: entries.filter((entry) => entry.result === "pending").map((entry) => entry.name),
+    pending: pending.map((entry) => entry.name),
+    required_pending: pending.filter((entry) => entry.required).map((entry) => entry.name),
+    stalled: pending
+      .filter((entry) => entry.queued > STALLED_MS)
+      .map((entry) => ({
+        name: entry.name,
+        queued_minutes: Math.floor(entry.queued / 60_000),
+        ...(entry.url ? { url: entry.url } : {}),
+      })),
     failing: entries
       .filter((entry) => entry.result === "failed")
       .map((entry) => ({
@@ -432,6 +468,23 @@ function checks(data: PullData) {
       })),
   }
 }
+
+/** Adds the runner labels a stalled Actions job waits for, which usually explains why it never starts. */
+const explainStalled = (api: Api, repo: GitHubRepo.Ref, summary: ReturnType<typeof checks>) =>
+  Effect.forEach(
+    summary.stalled,
+    (check) => {
+      const job = /\/actions\/runs\/\d+\/job\/(\d+)/.exec(check.url ?? "")?.[1]
+      if (!job) return Effect.succeed(check)
+      return api
+        .json<{ labels?: ReadonlyArray<string> }>("GET", `/repos/${GitHubRepo.slug(repo)}/actions/jobs/${job}`)
+        .pipe(
+          Effect.map((data) => (data.labels?.length ? { ...check, runner: data.labels.join(", ") } : check)),
+          Effect.orElseSucceed(() => check),
+        )
+    },
+    { concurrency: 4 },
+  ).pipe(Effect.map((stalled) => ({ ...summary, stalled })))
 
 const alerts = Effect.fn("GitHubReview.alerts")(function* (
   api: Api,
@@ -468,6 +521,24 @@ const seenKey = (sessionID: string, repo: GitHubRepo.Ref, number: number) =>
 const handledKey = (repo: GitHubRepo.Ref, number: number) => `github.handled/${prKey(repo, number)}`
 const cursorKey = (sessionID: string, repo: GitHubRepo.Ref, number: number) =>
   `github.cursor/${sessionID}/${prKey(repo, number)}`
+
+// Items with no thread to resolve (Copilot body findings, review summaries, comments that cannot be hidden) are
+// recorded as handled in a hidden marker in a pull request comment, so every session and machine sees the same state.
+const MARKER = /<!-- opencode-github (handled|reopened): ([^>]*?) -->/g
+const marker = (kind: "handled" | "reopened", ids: ReadonlyArray<string>) =>
+  ids.length ? `<!-- opencode-github ${kind}: ${ids.join(" ")} -->` : ""
+
+/** Replays handled and reopened markers in comment order. */
+export function markedHandled(comments: ReadonlyArray<{ readonly body: string }>) {
+  const handled = new Set<string>()
+  for (const comment of comments)
+    for (const match of comment.body.matchAll(MARKER))
+      for (const id of match[2].split(/\s+/).filter(Boolean)) {
+        if (match[1] === "handled") handled.add(id)
+        else handled.delete(id)
+      }
+  return handled
+}
 
 const stringList = Schema.decodeUnknownOption(Schema.Array(Schema.String))
 const readList = (deps: Deps, key: string) =>
@@ -745,7 +816,7 @@ export function tools(deps: Deps): Tool.Info[] {
             thread.comments.nodes[0]?.author?.login,
             thread.comments.nodes[0]?.author?.__typename,
           )
-        const checkSummary = checks(data)
+        const checkSummary = yield* explainStalled(api, repo, checks(data, yield* Clock.currentTimeMillis))
         const localHead =
           (resolved.local?.push?.branch ?? resolved.local?.branch) === data.headRefName
             ? resolved.local?.head
@@ -894,7 +965,7 @@ export function tools(deps: Deps): Tool.Info[] {
           threads: threadList,
           reviews: reviewList,
           alerts: alertList.items,
-          handled: new Set(handled),
+          handled: new Set([...handled, ...markedHandled(data.comments.nodes)]),
           seen: new Set(seen),
           viewer,
           open,
@@ -1173,7 +1244,7 @@ export function tools(deps: Deps): Tool.Info[] {
           ]
             .toSorted((left, right) => left.at.localeCompare(right.at))
             .slice(since === undefined ? -FIRST_CHECK_LIMIT : 0),
-          checks: checks(data),
+          checks: checks(data, now),
           copilot,
         }
       }),
@@ -1612,6 +1683,7 @@ function collect(input: {
   const commentItems = input.data.comments.nodes.flatMap((comment): Item[] => {
     const author = authorOf(comment.author)
     if (author.login.toLowerCase() === viewer) return []
+    if (comment.body.includes("<!-- opencode-github ")) return []
     const handled = comment.isMinimized || input.handled.has(comment.id)
     if (input.open && handled) return []
     if (!authorMatches(author.kind, true)) return []
@@ -1812,6 +1884,7 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
     : new Map<string, GitHubCopilot.BodyFinding>()
   const pendingReviews = new Map<string, number>()
   const bodyReplies: string[] = []
+  const marks = { handled: [] as string[], reopened: [] as string[], titles: [] as string[] }
   const results: Result[] = []
 
   // {sha} lets a reply written before the push name the commit reviewers will see.
@@ -1879,8 +1952,15 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
           .filter(Boolean)
           .join(" ")
         if (body) bodyReplies.push(`${heading}\n\n${body}`)
-        if (response.resolve === true) yield* addToList(input.deps, handledKey(repo, number), [response.id])
-        if (response.resolve === false) yield* removeFromList(input.deps, handledKey(repo, number), response.id)
+        if (response.resolve === true) {
+          yield* addToList(input.deps, handledKey(repo, number), [response.id])
+          marks.handled.push(response.id)
+          if (!body) marks.titles.push(finding?.title ?? response.id)
+        }
+        if (response.resolve === false) {
+          yield* removeFromList(input.deps, handledKey(repo, number), response.id)
+          marks.reopened.push(response.id)
+        }
         return {
           id: response.id,
           kind: "copilot_body",
@@ -1958,16 +2038,25 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
             ? undefined
             : [text, issue ? `Tracked in #${issue.number}.` : ""].filter(Boolean).join("\n\n")
         const quote = (node.body ?? "").split("\n").find((line) => line.trim()) ?? ""
+        // GitHub can hide a comment as resolved; anything else is recorded with a marker in the reply.
+        const durable = kind === "comment" && node.viewerCanMinimize === true
+        const state =
+          durable || response.resolve === undefined ? "" : marker(response.resolve ? "handled" : "reopened", [node.id])
         const posted = body
           ? yield* api.json<{ html_url: string }>("POST", `/repos/${slug}/issues/${number}/comments`, {
               body: {
                 body: withPrefix(
-                  `> ${GitHubShared.clip(quote, 200).replace(/\n/g, " ")}\n> — @${node.author?.login ?? "ghost"} ([${kind}](${node.url}))\n\n${body}`,
+                  `> ${GitHubShared.clip(quote, 200).replace(/\n/g, " ")}\n> — @${node.author?.login ?? "ghost"} ([${kind}](${node.url}))\n\n${body}${state ? `\n\n${state}` : ""}`,
                   node.author,
                 ),
               },
             })
           : undefined
+        if (!posted && state) {
+          if (response.resolve) marks.handled.push(node.id)
+          else marks.reopened.push(node.id)
+          if (response.resolve) marks.titles.push(`${kind} by @${node.author?.login ?? "ghost"}`)
+        }
         let resolved: boolean | undefined
         if (response.resolve === true) {
           if (kind === "comment" && node.viewerCanMinimize)
@@ -2016,9 +2105,20 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
     results.push(outcome)
   }
 
-  if (bodyReplies.length > 0)
+  const state = [marker("handled", marks.handled), marker("reopened", marks.reopened)].filter(Boolean).join("\n")
+  if (bodyReplies.length > 0 || state)
     yield* api.json("POST", `/repos/${slug}/issues/${number}/comments`, {
-      body: { body: [`Replies to findings in Copilot's review summary:`, ...bodyReplies].join("\n\n---\n\n") },
+      body: {
+        body: [
+          ...(bodyReplies.length ? [`Replies to findings in Copilot's review summary:`, ...bodyReplies] : []),
+          ...(marks.titles.length ? [`Handled without a reply: ${marks.titles.join("; ")}.`] : []),
+          ...(marks.reopened.length && !bodyReplies.length && !marks.titles.length
+            ? ["Reopened for another look."]
+            : []),
+        ]
+          .join("\n\n---\n\n")
+          .concat(state ? `\n\n${state}` : ""),
+      },
     })
 
   // A thread reply can land in the viewer's pending review, where nobody else can see it. Submit only reviews that
@@ -2203,14 +2303,16 @@ const poll = Effect.fn("GitHubReview.poll")(function* (input: {
     const data = snapshot.success.data
     const copilot = snapshot.success.copilot
     const now = yield* Clock.currentTimeMillis
-    const checkSummary = input.goal === "copilot" ? undefined : checks(data)
+    const checkSummary = input.goal === "copilot" ? undefined : checks(data, now)
     const reviewedSinceStart =
       copilot?.reviewed_at !== undefined && Date.parse(copilot.reviewed_at) >= input.started - 5_000
     const copilotDone =
       copilot === undefined || copilot.state === "reviewed" || (reviewedSinceStart && copilot.state !== "in_progress")
     const checksDone =
       checkSummary === undefined ||
-      (checkSummary.pending.length === 0 && checkSummary.state !== "PENDING" && checkSummary.state !== "EXPECTED")
+      // Checks queued with no runner never finish; waiting on them would only run into the timeout.
+      (checkSummary.pending.every((name) => checkSummary.stalled.some((check) => check.name === name)) &&
+        checkSummary.state !== "EXPECTED")
     const waited = Math.round((now - input.started) / 1000)
     const base = {
       pr: label,
@@ -2283,7 +2385,7 @@ function summarize(input: {
   }
   if (input.checks)
     lines.push(
-      `Checks ${input.checks.state}: ${input.checks.passed}/${input.checks.total} passed${input.checks.failing.length ? `, failing: ${input.checks.failing.map((check) => check.name).join(", ")}` : ""}${input.checks.pending.length ? `, pending: ${input.checks.pending.length}` : ""}.`,
+      `Checks ${input.checks.state}: ${input.checks.passed}/${input.checks.total} passed${input.checks.failing.length ? `, failing: ${input.checks.failing.map((check) => check.name).join(", ")}` : ""}${input.checks.pending.length ? `, pending: ${input.checks.pending.length}` : ""}${input.checks.stalled.length ? `, never started (no runner?): ${input.checks.stalled.map((check) => check.name).join(", ")}` : ""}.`,
     )
   lines.push(`Next: call github feedback for ${input.pr} to read and respond to findings.`)
   return lines.join("\n")
@@ -2398,7 +2500,24 @@ function readiness(input: {
         .map((check) => check.name)
         .join(", ")}.`,
     )
-  if (input.checks.pending.length) blockers.push(`${input.checks.pending.length} check(s) still running.`)
+  const stalled = new Set(input.checks.stalled.map((check) => check.name))
+  const running = input.checks.pending.filter((name) => !stalled.has(name))
+  const requiredRunning = running.filter((name) => input.checks.required_pending.includes(name))
+  if (requiredRunning.length) blockers.push(`Required checks still running: ${requiredRunning.join(", ")}.`)
+  if (running.length > requiredRunning.length)
+    warnings.push(`${running.length - requiredRunning.length} optional check(s) still running.`)
+  const runners = Array.from(new Set(input.checks.stalled.flatMap((check) => (check.runner ? [check.runner] : []))))
+  const stalledRequired = input.checks.stalled.filter((check) => input.checks.required_pending.includes(check.name))
+  const stalledText = `queued for over ${STALLED_MS / 60_000} minutes without starting${runners.length ? `; they wait for runners labeled ${runners.join(" | ")}, which this repository may not have` : ""}`
+  if (stalledRequired.length)
+    blockers.push(`Required checks ${stalledRequired.map((check) => check.name).join(", ")} ${stalledText}.`)
+  if (input.checks.stalled.length > stalledRequired.length)
+    warnings.push(
+      `Optional checks ${input.checks.stalled
+        .filter((check) => !stalledRequired.includes(check))
+        .map((check) => check.name)
+        .join(", ")} ${stalledText}.`,
+    )
   if (input.data.reviewDecision === "CHANGES_REQUESTED") blockers.push("A reviewer requested changes.")
   if (input.data.reviewDecision === "REVIEW_REQUIRED") blockers.push("An approving review is required.")
   const human = input.threads.filter((thread) => thread.kind === "human")
@@ -2440,7 +2559,9 @@ function nextSteps(input: {
     steps.push("Head commit not reviewed by Copilot: wait requests a review and notifies you.")
   if (input.copilot.stuck) steps.push("Copilot's review looks stuck: copilot re-requests it.")
   if (input.checks.failing.length > 0) steps.push("Checks failing: inspect with run and logs.")
-  if (input.checks.pending.length > 0) steps.push("Checks pending: wait with for: checks.")
+  if (input.checks.pending.length > input.checks.stalled.length) steps.push("Checks pending: wait with for: checks.")
+  if (input.checks.stalled.length > 0)
+    steps.push("Some checks never started: look at their runs (run) and the runner labels they need.")
   if (input.data.mergeable === "CONFLICTING")
     steps.push(`Merge conflicts with ${input.data.baseRefName}: merge or rebase the target branch.`)
   if (input.data.mergeStateStatus === "BEHIND")

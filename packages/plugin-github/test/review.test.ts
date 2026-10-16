@@ -662,7 +662,7 @@ describe("github review tools", () => {
             (request) => request.method === "POST" && request.path.endsWith("/issues/7/comments"),
           )
           expect((combined?.body as { body: string }).body).toBe(
-            "Replies to findings in Copilot's review summary:\n\n---\n\n**Re: Guard the retry loop** (`src/retry.ts:40`)\n\nCapped at five attempts.",
+            "Replies to findings in Copilot's review summary:\n\n---\n\n**Re: Guard the retry loop** (`src/retry.ts:40`)\n\nCapped at five attempts.\n\n<!-- opencode-github handled: copilot:900:0 -->",
           )
 
           const after = yield* run<object, { items: GitHubReview.Item[] }>(find(tools, "feedback"), {
@@ -673,6 +673,156 @@ describe("github review tools", () => {
           expect(after.items).toEqual([])
         }),
       ),
+  )
+
+  it.live("checks count a re-run once and call out jobs that never found a runner", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
+        const checkRun = (name: string, fields: Record<string, unknown>) => ({
+          __typename: "CheckRun",
+          name,
+          isRequired: false,
+          detailsUrl: null,
+          startedAt: null,
+          completedAt: null,
+          checkSuite: { createdAt: ago(1) },
+          ...fields,
+        })
+        const data = pullData()
+        const commit = data.repository.pullRequest.commits.nodes[0]!.commit
+        const nodes = [
+          checkRun("standards", {
+            status: "COMPLETED",
+            conclusion: "FAILURE",
+            startedAt: ago(21),
+            completedAt: ago(20),
+          }),
+          checkRun("standards", { status: "COMPLETED", conclusion: "SUCCESS", startedAt: ago(6), completedAt: ago(5) }),
+          checkRun("unit", {
+            status: "QUEUED",
+            checkSuite: { createdAt: ago(30) },
+            detailsUrl: "https://github.com/acme/widgets/actions/runs/5/job/77",
+          }),
+          checkRun("build", { status: "QUEUED" }),
+        ]
+        const github = fakeGitHub(
+          baseRoutes({
+            "GRAPHQL latestOpinionatedReviews": {
+              body: {
+                repository: {
+                  pullRequest: {
+                    ...data.repository.pullRequest,
+                    commits: {
+                      totalCount: 3,
+                      nodes: [
+                        {
+                          commit: {
+                            ...commit,
+                            statusCheckRollup: { state: "PENDING", contexts: { totalCount: 4, nodes } },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+            "GET /repos/acme/widgets/actions/jobs/77": { body: { labels: ["blacksmith-4vcpu-ubuntu-2404"] } },
+          }),
+        )
+        const { deps } = yield* makeDeps({ http: github.http })
+        const result = yield* run<
+          object,
+          { checks: Record<string, unknown>; ready: { warnings: string[]; blockers: string[] } }
+        >(find(GitHubReview.tools(deps), "pr"), { repo: "acme/widgets", pr: 7 })
+        expect(result.checks).toMatchObject({
+          total: 3,
+          passed: 1,
+          failing: [],
+          pending: ["unit", "build"],
+          required_pending: [],
+          stalled: [
+            {
+              name: "unit",
+              queued_minutes: 30,
+              url: "https://github.com/acme/widgets/actions/runs/5/job/77",
+              runner: "blacksmith-4vcpu-ubuntu-2404",
+            },
+          ],
+        })
+        expect(result.ready.blockers.some((blocker) => blocker.includes("check"))).toBe(false)
+        expect(result.ready.warnings).toContain("1 optional check(s) still running.")
+        expect(result.ready.warnings).toContain(
+          "Optional checks unit queued for over 10 minutes without starting; they wait for runners labeled blacksmith-4vcpu-ubuntu-2404, which this repository may not have.",
+        )
+        // Waiting on checks stops at the ones still running, not the ones that will never start.
+        nodes.splice(3, 1)
+        const waited = yield* run<object, { status: string; message: string }>(find(GitHubReview.tools(deps), "wait"), {
+          repo: "acme/widgets",
+          pr: 7,
+          for: "checks",
+          background: false,
+        })
+        expect(waited.status).toBe("completed")
+        expect(waited.message).toContain("never started (no runner?): unit")
+      }),
+    ),
+  )
+
+  it.live("handled markers in pull request comments are shared by every session, and a later reopen wins", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const comment = (id: string, body: string) => ({
+          id,
+          author: { login: "dev", __typename: "User" },
+          body,
+          createdAt: "2026-01-01T10:10:00Z",
+          url: `https://github.com/acme/widgets/pull/7#${id}`,
+          isMinimized: false,
+        })
+        const withComments = (comments: ReadonlyArray<ReturnType<typeof comment>>) => {
+          const data = pullData()
+          return {
+            ...data,
+            repository: { pullRequest: { ...data.repository.pullRequest, comments: { nodes: comments } } },
+          }
+        }
+        const sources = ["copilot_body" as const]
+        const handled = fakeGitHub(
+          baseRoutes({
+            "GRAPHQL latestOpinionatedReviews": {
+              body: withComments([comment("IC_mark", "Replies…\n\n<!-- opencode-github handled: copilot:900:0 -->")]),
+            },
+          }),
+        )
+        // A new session with empty local storage still sees the finding as handled.
+        const fresh = yield* makeDeps({ http: handled.http })
+        const open = yield* run<object, FeedbackOutput>(find(GitHubReview.tools(fresh.deps), "feedback"), {
+          repo: "acme/widgets",
+          pr: 7,
+          sources,
+        })
+        expect(open.items).toEqual([])
+        const reopened = fakeGitHub(
+          baseRoutes({
+            "GRAPHQL latestOpinionatedReviews": {
+              body: withComments([
+                comment("IC_mark", "<!-- opencode-github handled: copilot:900:0 -->"),
+                comment("IC_reopen", "Reopened.\n\n<!-- opencode-github reopened: copilot:900:0 -->"),
+              ]),
+            },
+          }),
+        )
+        const again = yield* makeDeps({ http: reopened.http })
+        const back = yield* run<object, FeedbackOutput>(find(GitHubReview.tools(again.deps), "feedback"), {
+          repo: "acme/widgets",
+          pr: 7,
+          sources,
+        })
+        expect(back.items.map((item) => item.id)).toEqual(["copilot:900:0"])
+      }),
+    ),
   )
 
   it.live("an alert fixed in code is left for reanalysis instead of being dismissed", () =>
