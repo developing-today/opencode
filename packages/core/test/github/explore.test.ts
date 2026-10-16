@@ -632,6 +632,27 @@ describe("github explore tools", () => {
           },
           "GET /repos/acme/widgets": { body: detail("acme/widgets", 5) },
           "GET /repos/acme/secret": { body: detail("acme/secret", 1) },
+          "GET /repos/acme/quiet": { body: detail("acme/quiet", 0) },
+          // The calendar knows a repository the capped commit search missed, and a larger count for another.
+          "GRAPHQL commitContributionsByRepository": {
+            body: {
+              user: {
+                contributionsCollection: {
+                  commitContributionsByRepository: [
+                    { repository: { nameWithOwner: "acme/widgets" }, contributions: { totalCount: 40, nodes: [] } },
+                    {
+                      repository: { nameWithOwner: "acme/quiet" },
+                      contributions: { totalCount: 3, nodes: [{ occurredAt: "2025-12-01T00:00:00Z" }] },
+                    },
+                    {
+                      repository: { nameWithOwner: "elsewhere/tool" },
+                      contributions: { totalCount: 9, nodes: [{ occurredAt: "2026-01-20T00:00:00Z" }] },
+                    },
+                  ],
+                },
+              },
+            },
+          },
         })
         const result = yield* run<object, unknown>(tool("repos"), { owner: "acme", contributor: "octo" })
         expect(result).toEqual({
@@ -661,8 +682,21 @@ describe("github explore tools", () => {
               pushed_at: "2026-02-01T00:00:00Z",
               default_branch: "main",
               url: "https://github.com/acme/widgets",
-              commits_by_contributor: 2,
+              commits_by_contributor: 40,
               last_commit_by_contributor: "2026-01-05T00:00:00Z",
+            },
+            {
+              full_name: "acme/quiet",
+              private: false,
+              archived: false,
+              fork: false,
+              language: "Go",
+              stars: 0,
+              pushed_at: "2026-02-01T00:00:00Z",
+              default_branch: "main",
+              url: "https://github.com/acme/quiet",
+              commits_by_contributor: 3,
+              last_commit_by_contributor: "2025-12-01T00:00:00Z",
             },
           ],
         })

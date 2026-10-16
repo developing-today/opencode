@@ -512,6 +512,39 @@ interface ContributionHit {
   readonly repository: RepoListing
 }
 
+interface YearlyContributions {
+  readonly user: {
+    readonly contributionsCollection: {
+      readonly commitContributionsByRepository: ReadonlyArray<{
+        readonly repository: { readonly nameWithOwner: string }
+        readonly contributions: {
+          readonly totalCount: number
+          readonly nodes: ReadonlyArray<{ readonly occurredAt: string }>
+        }
+      }>
+    }
+  } | null
+}
+
+const YEARLY_QUERY = `query($login: String!) {
+  user(login: $login) {
+    contributionsCollection {
+      commitContributionsByRepository(maxRepositories: 100) {
+        repository { nameWithOwner }
+        contributions(first: 1, orderBy: { field: OCCURRED_AT, direction: DESC }) { totalCount nodes { occurredAt } }
+      }
+    }
+  }
+}`
+
+function yearlyRepositories(data: YearlyContributions) {
+  return (data.user?.contributionsCollection.commitContributionsByRepository ?? []).map((entry) => ({
+    full_name: entry.repository.nameWithOwner,
+    count: entry.contributions.totalCount,
+    latest: entry.contributions.nodes[0]?.occurredAt ?? "",
+  }))
+}
+
 /** Groups commit-search hits by repository with a commit count and the latest author date, newest first. */
 export function contributions(hits: ReadonlyArray<ContributionHit>) {
   const grouped = new Map<string, { repo: RepoListing; count: number; latest: string }>()
@@ -1149,7 +1182,8 @@ export function tools(deps: Deps): Tool.Info[] {
       sort: Opt(Schema.Literals(["updated", "pushed", "stars", "name"])).annotate({ description: "Default updated." }),
       limit: GitHubShared.limit(200, 30),
       contributor: Opt(Schema.String).annotate({
-        description: "Login whose commits to look for (default branches only, as GitHub commit search indexes).",
+        description:
+          "Login whose commits to look for: commit search (default branches) plus the login's contribution calendar for the last year. Counts are lower bounds.",
       }),
     }),
     output: Schema.Struct({
@@ -1184,7 +1218,40 @@ export function tools(deps: Deps): Tool.Info[] {
             limit: 300,
             key: "items",
           })
-          const grouped = contributions(hits).slice(0, 100)
+          // Commit search returns newest first and caps results, so one busy repository can hide the rest. The
+          // contribution calendar lists every repository the login committed to in the last year.
+          const yearly = yield* api.graphql<YearlyContributions>(YEARLY_QUERY, { login: input.contributor }).pipe(
+            Effect.map(yearlyRepositories),
+            Effect.orElseSucceed(() => []),
+          )
+          const yearlyCounts = new Map(yearly.map((entry) => [entry.full_name.toLowerCase(), entry.count]))
+          const searched = contributions(hits).map((entry) => ({
+            ...entry,
+            count: Math.max(entry.count, yearlyCounts.get(entry.repo.full_name.toLowerCase()) ?? 0),
+          }))
+          const known = new Set(searched.map((entry) => entry.repo.full_name.toLowerCase()))
+          const grouped = [
+            ...searched,
+            ...yearly
+              .filter(
+                (entry) =>
+                  entry.full_name.toLowerCase().startsWith(`${owner.toLowerCase()}/`) &&
+                  !known.has(entry.full_name.toLowerCase()),
+              )
+              .map((entry) => ({
+                // Placeholder until the detail request below fills in the real repository.
+                repo: {
+                  full_name: entry.full_name,
+                  private: false,
+                  fork: false,
+                  html_url: `${api.web}/${entry.full_name}`,
+                },
+                count: entry.count,
+                latest: entry.latest,
+              })),
+          ]
+            .toSorted((left, right) => right.latest.localeCompare(left.latest))
+            .slice(0, 100)
           const detailed = yield* Effect.all(
             grouped.map((entry) =>
               api.json<RepoListing>("GET", `/repos/${entry.repo.full_name}`).pipe(
