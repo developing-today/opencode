@@ -26,12 +26,15 @@ export const slug = (repo: Ref) => `${repo.owner}/${repo.name}`
 /** Parses `owner/repo`, `host/owner/repo`, an https or ssh remote, or any GitHub web URL inside a repository. */
 export function parse(input: string, host = "github.com"): Ref | undefined {
   const ref = parseLoose(input, host)
-  // Owner and name become API paths and permission resources; a `#`, `?` or `%` would make the two disagree.
-  if (!ref || !NAME.test(ref.owner) || !NAME.test(ref.name) || ref.name === "." || ref.name === "..") return undefined
+  // Owner and name become API paths and permission resources; a `#`, `?` or `%` would make the two disagree. The host
+  // picks the credential, so `example.org#.ghe.com` must not pass for an Enterprise host while requests go elsewhere.
+  if (!ref || !HOST.test(ref.host) || !NAME.test(ref.owner) || !NAME.test(ref.name)) return undefined
+  if (ref.name === "." || ref.name === "..") return undefined
   return ref
 }
 
 const NAME = /^[A-Za-z0-9_.-]+$/
+const HOST = /^[A-Za-z0-9_.-]+(:\d+)?$/
 
 function parseLoose(input: string, host: string): Ref | undefined {
   const text = input.trim().replace(/\.git$/, "")

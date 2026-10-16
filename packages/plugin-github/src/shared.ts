@@ -103,11 +103,10 @@ export const numbered = Effect.fn("GitHubShared.numbered")(function* (
   deps: Deps,
   input: { readonly repo?: string; readonly ref: string | number },
 ) {
-  // A shorthand owner/repo#n reference means the same host as the repository it would otherwise resolve to.
-  const host =
-    (input.repo === undefined ? undefined : GitHubRepo.parse(input.repo, defaultHost())?.host) ??
-    Option.getOrUndefined(yield* localRepo(deps).pipe(Effect.option))?.host ??
-    defaultHost()
+  // A shorthand owner/repo#n reference means the same host as the repository it would otherwise resolve to, and an
+  // unqualified repository means the checkout's host, as in target.
+  const fallback = Option.getOrUndefined(yield* localRepo(deps).pipe(Effect.option))?.host ?? defaultHost()
+  const host = (input.repo === undefined ? undefined : GitHubRepo.parse(input.repo, fallback)?.host) ?? fallback
   const parsed = GitHubRepo.parseNumber(input.ref, host)
   if (!parsed)
     return yield* new GitHubClient.Error({ kind: "validation", message: `Unrecognized reference: ${input.ref}` })

@@ -48,6 +48,15 @@ describe("GitHubFiles", () => {
     }),
   )
 
+  it.live("a directory named ..cache at the project root is inside the project, not above it", () =>
+    Effect.gen(function* () {
+      const { files, asserted } = make()
+      const file = yield* files.authorizeRead("/work/repo/..cache/file", context)
+      expect(file).toEqual({ absolute: "/work/repo/..cache/file", resource: "../../..cache/file" })
+      expect(asserted).toEqual([{ action: "read", resources: ["../../..cache/file"] }])
+    }),
+  )
+
   it.live("paths outside the project need external-directory approval for their directory first", () =>
     Effect.gen(function* () {
       const { files, asserted } = make()

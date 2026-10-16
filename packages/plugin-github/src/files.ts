@@ -29,7 +29,9 @@ export function make(input: {
   const project = path.resolve(input.location.project.directory)
   const inside = (parent: string, child: string) => {
     const relative = path.relative(parent, child)
-    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))
+    // `..cache` is a child named that way; only `..` itself or `../…` leaves the parent.
+    const leaves = relative === ".." || relative.startsWith(`..${path.sep}`)
+    return relative === "" || (!leaves && !path.isAbsolute(relative))
   }
   const source = (context: Tool.Context) => ({
     sessionID: context.sessionID,

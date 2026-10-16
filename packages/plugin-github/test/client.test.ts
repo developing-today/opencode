@@ -176,6 +176,14 @@ describe("GitHubRepo.parse", () => {
       expect(GitHubRepo.parse("acme/secret?ignored=")).toBeUndefined()
       expect(GitHubRepo.parse("https://github.com/acme/se%23cret")).toBeUndefined()
       expect(GitHubRepo.parse("acme/..")).toBeUndefined()
+      // The host chooses the credential; anything but a host name (and port) could send it elsewhere.
+      expect(GitHubRepo.parse("example.org#.ghe.com/acme/widgets")).toBeUndefined()
+      expect(GitHubRepo.parse("user@ghe.example.com/acme/widgets")).toBeUndefined()
+      expect(GitHubRepo.parse("ghe.example.com:8443/acme/widgets")).toEqual({
+        host: "ghe.example.com:8443",
+        owner: "acme",
+        name: "widgets",
+      })
       expect(GitHubRepo.parse("acme/my-repo.js")).toEqual({ host: "github.com", owner: "acme", name: "my-repo.js" })
     }),
   )
@@ -216,6 +224,25 @@ describe("GitHubShared.numbered", () => {
         expect(shorthand.api.host).toBe("ghe.example.com")
         const url = yield* GitHubShared.numbered(deps, { ref: "https://github.com/acme/widgets/issues/4" })
         expect(url.repo.host).toBe("github.com")
+      }),
+    ),
+  )
+})
+
+describe("GitHubShared.numbered in an Enterprise checkout", () => {
+  it.live("an unqualified repository and a shorthand reference stay on the checkout's host", () =>
+    withEnv({ ...env, GH_ENTERPRISE_TOKEN: "ghe-token" }, () =>
+      Effect.gen(function* () {
+        const dir = yield* tmpdirScoped()
+        yield* Effect.promise(async () => {
+          await initRepo(dir.path)
+          await $`git -C ${dir.path} remote add origin git@ghe.example.com:acme/widgets.git`.quiet()
+        })
+        const { deps } = yield* makeDeps({ http: fakeGitHub({}).http, directory: dir.path })
+        const shorthand = yield* GitHubShared.numbered(deps, { repo: "acme/widgets", ref: "acme/other#3" })
+        expect(shorthand.repo).toEqual({ host: "ghe.example.com", owner: "acme", name: "other" })
+        const plain = yield* GitHubShared.numbered(deps, { repo: "acme/widgets", ref: 3 })
+        expect(plain.repo).toEqual({ host: "ghe.example.com", owner: "acme", name: "widgets" })
       }),
     ),
   )
