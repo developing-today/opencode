@@ -795,4 +795,60 @@ describe("github settings tools", () => {
       }),
     ),
   )
+
+  it.live(
+    "repo_update maps settings-page commit message names, toggles release immutability, reports ignored settings",
+    () =>
+      withEnv(env, () =>
+        Effect.gen(function* () {
+          const github = fakeGitHub({
+            // GitHub keeps allow_forking when an organization policy decides it, and still answers 200.
+            "PATCH /repos/acme/widgets": {
+              body: {
+                allow_forking: true,
+                merge_commit_title: "PR_TITLE",
+                merge_commit_message: "PR_BODY",
+                squash_merge_commit_title: "PR_TITLE",
+                squash_merge_commit_message: "COMMIT_MESSAGES",
+              },
+            },
+            "PUT /repos/acme/widgets/immutable-releases": { status: 204 },
+          })
+          const { deps } = yield* makeDeps({ http: github.http })
+          expect(
+            yield* run(find(GitHubSettings.tools(deps), "repo_update"), {
+              repo: "acme/widgets",
+              allow_forking: false,
+              merge_commit_default: "Pull request title and description",
+              squash_commit_default: "Pull request title and commit details",
+              release_immutability: true,
+            }),
+          ).toEqual({
+            repo: "acme/widgets",
+            changed: [
+              "merge_commit_title",
+              "merge_commit_message",
+              "squash_merge_commit_title",
+              "squash_merge_commit_message",
+              "release_immutability",
+            ],
+            not_applied: ["allow_forking"],
+          })
+          expect(writes(github.requests)).toEqual([
+            {
+              method: "PATCH",
+              path: "/repos/acme/widgets",
+              body: {
+                allow_forking: false,
+                merge_commit_title: "PR_TITLE",
+                merge_commit_message: "PR_BODY",
+                squash_merge_commit_title: "PR_TITLE",
+                squash_merge_commit_message: "COMMIT_MESSAGES",
+              },
+            },
+            { method: "PUT", path: "/repos/acme/widgets/immutable-releases", body: undefined },
+          ])
+        }),
+      ),
+  )
 })

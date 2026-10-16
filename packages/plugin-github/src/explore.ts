@@ -44,6 +44,27 @@ const why = (error: GitHubClient.Error, missing: string, forbidden = "requires a
   return `${error.kind}: ${error.message}`
 }
 
+// The settings page offers named choices for each merge method's default commit message; the API stores a title and
+// message pair. Exported for repo_update, which accepts the names too.
+export const MERGE_DEFAULTS = {
+  "Default message": ["MERGE_MESSAGE", "PR_TITLE"],
+  "Pull request title": ["PR_TITLE", "BLANK"],
+  "Pull request title and description": ["PR_TITLE", "PR_BODY"],
+} as const
+
+export const SQUASH_DEFAULTS = {
+  "Default message": ["COMMIT_OR_PR_TITLE", "COMMIT_MESSAGES"],
+  "Pull request title": ["PR_TITLE", "BLANK"],
+  "Pull request title and commit details": ["PR_TITLE", "COMMIT_MESSAGES"],
+  "Pull request title and description": ["PR_TITLE", "PR_BODY"],
+} as const
+
+const commitDefault = (
+  choices: Readonly<Record<string, readonly [string, string]>>,
+  title: string | undefined,
+  message: string | undefined,
+) => Object.entries(choices).find(([, pair]) => pair[0] === title && pair[1] === message)?.[0]
+
 const ownerKind = (api: Api, owner: string) =>
   api
     .json<{ type?: string }>("GET", `/users/${encodeURIComponent(owner)}`)
@@ -99,6 +120,16 @@ const RepoOutput = Schema.Struct({
     has_wiki: Opt(Schema.Boolean),
     has_projects: Opt(Schema.Boolean),
     has_discussions: Opt(Schema.Boolean),
+    has_pull_requests: Opt(Schema.Boolean),
+    pull_request_creation: Opt(Schema.String).annotate({ description: "Who may open pull requests, such as all." }),
+    has_pages: Opt(Schema.Boolean),
+    allow_forking: Opt(Schema.Boolean),
+    is_template: Opt(Schema.Boolean),
+    commit_signoff_required: Opt(Schema.Boolean),
+    release_immutability: Opt(Schema.Boolean).annotate({
+      description: "Published releases' assets and tags are locked.",
+    }),
+    custom_properties: Opt(Schema.Record(Schema.String, Schema.Unknown)),
     permission: Opt(Schema.String).annotate({
       description: "The authenticated account's highest role: admin, maintain, push, triage or pull.",
     }),
@@ -115,6 +146,13 @@ const RepoOutput = Schema.Struct({
     squash_merge_commit_message: Opt(Schema.String),
     merge_commit_title: Opt(Schema.String),
     merge_commit_message: Opt(Schema.String),
+    use_squash_pr_title_as_default: Opt(Schema.Boolean),
+    merge_commit_default: Opt(Schema.String).annotate({
+      description: "The default commit message as the settings page names it.",
+    }),
+    squash_commit_default: Opt(Schema.String).annotate({
+      description: "The default commit message as the settings page names it.",
+    }),
   }),
   protection: section({
     branch: Opt(Schema.String),
@@ -201,6 +239,14 @@ interface RepoPayload {
   readonly has_wiki?: boolean
   readonly has_projects?: boolean
   readonly has_discussions?: boolean
+  readonly has_pull_requests?: boolean
+  readonly pull_request_creation_policy?: string
+  readonly has_pages?: boolean
+  readonly allow_forking?: boolean
+  readonly is_template?: boolean
+  readonly web_commit_signoff_required?: boolean
+  readonly custom_properties?: Readonly<Record<string, unknown>>
+  readonly use_squash_pr_title_as_default?: boolean
   readonly pushed_at?: string | null
   readonly permissions?: Readonly<Record<string, boolean>>
   readonly allow_merge_commit?: boolean
@@ -662,27 +708,45 @@ export function tools(deps: Deps): Tool.Info[] {
         const branch = encodeRef(info.default_branch)
 
         const general = () =>
-          Effect.succeed({
-            available: true,
-            description: info.description,
-            ...(info.visibility
-              ? { visibility: info.visibility }
-              : { visibility: info.private ? "private" : "public" }),
-            default_branch: info.default_branch,
-            ...(info.topics ? { topics: [...info.topics] } : {}),
-            language: info.language,
-            archived: info.archived,
-            fork: info.fork,
-            ...(info.parent ? { parent: info.parent.full_name } : {}),
-            stars: info.stargazers_count,
-            open_issues: info.open_issues_count,
-            ...(info.has_issues !== undefined ? { has_issues: info.has_issues } : {}),
-            ...(info.has_wiki !== undefined ? { has_wiki: info.has_wiki } : {}),
-            ...(info.has_projects !== undefined ? { has_projects: info.has_projects } : {}),
-            ...(info.has_discussions !== undefined ? { has_discussions: info.has_discussions } : {}),
-            ...(info.permissions ? { permission: ROLES.find((role) => info.permissions?.[role]) ?? "none" } : {}),
-            ...(info.pushed_at ? { pushed_at: info.pushed_at } : {}),
-          })
+          attempt(api.json<{ enabled?: boolean }>("GET", `${base}/immutable-releases`)).pipe(
+            Effect.map((immutable) => ({
+              available: true,
+              description: info.description,
+              ...(info.visibility
+                ? { visibility: info.visibility }
+                : { visibility: info.private ? "private" : "public" }),
+              default_branch: info.default_branch,
+              ...(info.topics ? { topics: [...info.topics] } : {}),
+              language: info.language,
+              archived: info.archived,
+              fork: info.fork,
+              ...(info.parent ? { parent: info.parent.full_name } : {}),
+              stars: info.stargazers_count,
+              open_issues: info.open_issues_count,
+              ...(info.has_issues !== undefined ? { has_issues: info.has_issues } : {}),
+              ...(info.has_wiki !== undefined ? { has_wiki: info.has_wiki } : {}),
+              ...(info.has_projects !== undefined ? { has_projects: info.has_projects } : {}),
+              ...(info.has_discussions !== undefined ? { has_discussions: info.has_discussions } : {}),
+              ...(info.has_pull_requests !== undefined ? { has_pull_requests: info.has_pull_requests } : {}),
+              ...(info.pull_request_creation_policy
+                ? { pull_request_creation: info.pull_request_creation_policy }
+                : {}),
+              ...(info.has_pages !== undefined ? { has_pages: info.has_pages } : {}),
+              ...(info.allow_forking !== undefined ? { allow_forking: info.allow_forking } : {}),
+              ...(info.is_template !== undefined ? { is_template: info.is_template } : {}),
+              ...(info.web_commit_signoff_required !== undefined
+                ? { commit_signoff_required: info.web_commit_signoff_required }
+                : {}),
+              ...(immutable.ok && immutable.data.enabled !== undefined
+                ? { release_immutability: immutable.data.enabled }
+                : {}),
+              ...(info.custom_properties && Object.keys(info.custom_properties).length
+                ? { custom_properties: { ...info.custom_properties } }
+                : {}),
+              ...(info.permissions ? { permission: ROLES.find((role) => info.permissions?.[role]) ?? "none" } : {}),
+              ...(info.pushed_at ? { pushed_at: info.pushed_at } : {}),
+            })),
+          )
 
         const merging = () => {
           const keys = [
@@ -696,11 +760,23 @@ export function tools(deps: Deps): Tool.Info[] {
             "squash_merge_commit_message",
             "merge_commit_title",
             "merge_commit_message",
+            "use_squash_pr_title_as_default",
           ] as const
           const data = Object.fromEntries(keys.flatMap((key) => (info[key] === undefined ? [] : [[key, info[key]]])))
           if (Object.keys(data).length === 0)
             return Effect.succeed({ available: false, reason: "merge settings require write access" })
-          return Effect.succeed({ available: true, ...data })
+          const merge = commitDefault(MERGE_DEFAULTS, info.merge_commit_title, info.merge_commit_message)
+          const squash = commitDefault(
+            SQUASH_DEFAULTS,
+            info.squash_merge_commit_title,
+            info.squash_merge_commit_message,
+          )
+          return Effect.succeed({
+            available: true,
+            ...data,
+            ...(merge ? { merge_commit_default: merge } : {}),
+            ...(squash ? { squash_commit_default: squash } : {}),
+          })
         }
 
         const protection = () =>

@@ -42,6 +42,14 @@ const repoPayload = {
   allow_auto_merge: true,
   delete_branch_on_merge: true,
   squash_merge_commit_title: "PR_TITLE",
+  squash_merge_commit_message: "PR_BODY",
+  merge_commit_title: "MERGE_MESSAGE",
+  merge_commit_message: "PR_TITLE",
+  has_pull_requests: true,
+  pull_request_creation_policy: "all",
+  allow_forking: false,
+  web_commit_signoff_required: true,
+  custom_properties: { team: "platform" },
 }
 
 const commit = (sha: string, message: string, parents = 1, login = "octo") => ({
@@ -59,6 +67,7 @@ describe("github explore tools", () => {
       Effect.gen(function* () {
         const { github, tool } = yield* setup({
           "GET /repos/acme/widgets": { body: repoPayload },
+          "GET /repos/acme/widgets/immutable-releases": { body: { enabled: true, enforced_by_owner: false } },
           "GET /repos/acme/widgets/branches/main/protection": {
             status: 403,
             body: { message: "Must have admin rights to Repository." },
@@ -137,6 +146,12 @@ describe("github explore tools", () => {
             has_wiki: false,
             has_projects: false,
             has_discussions: true,
+            has_pull_requests: true,
+            pull_request_creation: "all",
+            allow_forking: false,
+            commit_signoff_required: true,
+            release_immutability: true,
+            custom_properties: { team: "platform" },
             permission: "push",
             pushed_at: "2026-01-02T00:00:00Z",
           },
@@ -148,6 +163,12 @@ describe("github explore tools", () => {
             allow_auto_merge: true,
             delete_branch_on_merge: true,
             squash_merge_commit_title: "PR_TITLE",
+            squash_merge_commit_message: "PR_BODY",
+            merge_commit_title: "MERGE_MESSAGE",
+            merge_commit_message: "PR_TITLE",
+            // The settings page's names for these title and message pairs.
+            merge_commit_default: "Default message",
+            squash_commit_default: "Pull request title and description",
           },
           protection: {
             available: true,

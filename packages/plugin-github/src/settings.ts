@@ -5,6 +5,7 @@ import type { Tool } from "@opencode/schema/tool"
 import { Effect, Option, Schema } from "effect"
 import { GitHubClient } from "./client.js"
 import { GitHubRepo } from "./repo.js"
+import { GitHubExplore } from "./explore.js"
 import { GitHubShared } from "./shared.js"
 
 type Deps = GitHubShared.Deps
@@ -302,6 +303,11 @@ const REPO_FIELDS = [
   "merge_commit_title",
   "merge_commit_message",
   "web_commit_signoff_required",
+  "allow_forking",
+  "is_template",
+  "use_squash_pr_title_as_default",
+  "has_pull_requests",
+  "pull_request_creation_policy",
   "archived",
 ] as const
 
@@ -1225,29 +1231,93 @@ export function tools(deps: Deps): Tool.Info[] {
       merge_commit_title: Opt(Schema.Literals(["PR_TITLE", "MERGE_MESSAGE"])),
       merge_commit_message: Opt(Schema.Literals(["PR_BODY", "PR_TITLE", "BLANK"])),
       web_commit_signoff_required: Opt(Schema.Boolean),
+      allow_forking: Opt(Schema.Boolean),
+      is_template: Opt(Schema.Boolean),
+      use_squash_pr_title_as_default: Opt(Schema.Boolean),
+      has_pull_requests: Opt(Schema.Boolean),
+      pull_request_creation_policy: Opt(Schema.String).annotate({
+        description: "Who may open pull requests, such as all.",
+      }),
+      merge_commit_default: Opt(
+        Schema.Literals(["Default message", "Pull request title", "Pull request title and description"]),
+      ).annotate({
+        description: "The merge commit message by the settings page's name; sets merge_commit_title and _message.",
+      }),
+      squash_commit_default: Opt(
+        Schema.Literals([
+          "Default message",
+          "Pull request title",
+          "Pull request title and commit details",
+          "Pull request title and description",
+        ]),
+      ).annotate({
+        description:
+          "The squash commit message by the settings page's name; sets squash_merge_commit_title and _message.",
+      }),
+      release_immutability: Opt(Schema.Boolean).annotate({
+        description: "Lock assets and tags of published releases.",
+      }),
       archived: Opt(Schema.Boolean),
       topics: Opt(StringList).annotate({ description: "Replaces all topics." }),
     }),
-    output: Schema.Struct({ repo: Schema.String, changed: StringList }),
+    output: Schema.Struct({
+      repo: Schema.String,
+      changed: StringList,
+      not_applied: Opt(StringList).annotate({
+        description:
+          "Settings GitHub accepted without changing, usually because a plan, policy or organization rule decides them.",
+      }),
+    }),
     execute: (input, context) =>
       Effect.gen(function* () {
-        const body = Object.fromEntries(
-          REPO_FIELDS.flatMap((key) => (input[key] === undefined ? [] : [[key, input[key]]])),
-        )
-        const changed = [...Object.keys(body), ...(input.topics === undefined ? [] : ["topics"])]
+        const merge = input.merge_commit_default ? GitHubExplore.MERGE_DEFAULTS[input.merge_commit_default] : undefined
+        const squash = input.squash_commit_default
+          ? GitHubExplore.SQUASH_DEFAULTS[input.squash_commit_default]
+          : undefined
+        const body: Record<string, unknown> = Object.fromEntries([
+          ...REPO_FIELDS.flatMap((key) => (input[key] === undefined ? [] : [[key, input[key]]])),
+          ...(merge ? [["merge_commit_title", merge[0]] as const, ["merge_commit_message", merge[1]] as const] : []),
+          ...(squash
+            ? [["squash_merge_commit_title", squash[0]] as const, ["squash_merge_commit_message", squash[1]] as const]
+            : []),
+        ])
+        const changed = [
+          ...Object.keys(body),
+          ...(input.topics === undefined ? [] : ["topics"]),
+          ...(input.release_immutability === undefined ? [] : ["release_immutability"]),
+        ]
         if (changed.length === 0) return yield* invalid("Nothing to change; pass at least one setting.")
         const resolved = yield* GitHubShared.target(deps, input.repo)
         const slug = GitHubRepo.slug(resolved.repo)
         yield* GitHubShared.authorize(deps, context, "repo_update", resolved.repo, { changed })
+        // GitHub answers 200 and keeps the old value for settings a plan or policy decides, so compare the answer.
         const patch =
-          Object.keys(body).length > 0 ? resolved.api.request("PATCH", `/repos/${slug}`, { body }) : Effect.void
+          Object.keys(body).length > 0
+            ? resolved.api.json<Record<string, unknown>>("PATCH", `/repos/${slug}`, { body }).pipe(
+                Effect.map((after) =>
+                  Object.entries(body)
+                    .filter(([key, value]) => key in after && after[key] !== value)
+                    .map(([key]) => key),
+                ),
+              )
+            : Effect.succeed([] as string[])
         const topics =
           input.topics === undefined
             ? Effect.void
             : resolved.api.request("PUT", `/repos/${slug}/topics`, { body: { names: input.topics } })
-        // An archived repository is read-only, so topics go first when archiving and after unarchiving.
-        yield* input.archived === true ? Effect.andThen(topics, patch) : Effect.andThen(patch, topics)
-        return { repo: slug, changed }
+        const immutability =
+          input.release_immutability === undefined
+            ? Effect.void
+            : resolved.api.request(input.release_immutability ? "PUT" : "DELETE", `/repos/${slug}/immutable-releases`)
+        // An archived repository is read-only, so everything else goes first when archiving and after unarchiving.
+        const others = Effect.andThen(topics, immutability)
+        const ignored =
+          input.archived === true ? yield* Effect.andThen(others, patch) : yield* Effect.tap(patch, () => others)
+        return {
+          repo: slug,
+          changed: changed.filter((key) => !ignored.includes(key)),
+          ...(ignored.length ? { not_applied: ignored } : {}),
+        }
       }),
   })
 
