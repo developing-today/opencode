@@ -1136,6 +1136,9 @@ export function Session(props: {
       title: "Copy last assistant message",
       id: "messages.copy",
       group: "Session",
+      slash: {
+        name: "copy",
+      },
       run: () => {
         const lastAssistantMessage = messagesBeforeRevert().findLast(
           (msg): msg is SessionMessageAssistant => msg.type === "assistant",
@@ -1189,9 +1192,6 @@ export function Session(props: {
       title: "Copy session transcript",
       id: "session.copy",
       group: "Session",
-      slash: {
-        name: "copy",
-      },
       run: async () => {
         try {
           const sessionData = session()
