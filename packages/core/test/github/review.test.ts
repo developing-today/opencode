@@ -1,0 +1,646 @@
+import { describe, expect, test } from "bun:test"
+import { Effect } from "effect"
+import { LayerNode } from "@opencode/util/effect/layer-node"
+import { AppProcess } from "@opencode/util/process"
+import * as TestClock from "effect/testing/TestClock"
+import { GitHubCopilot } from "@opencode/core/tool/plugin/github/copilot"
+import { GitHubRepo } from "@opencode/core/tool/plugin/github/repo"
+import { GitHubReview } from "@opencode/core/tool/plugin/github/review"
+import { withEnv } from "../fixture/env"
+import { testEffect } from "../lib/effect"
+import { fakeGitHub, find, makeDeps, run, type Route } from "./fixture"
+
+const it = testEffect(LayerNode.compile(AppProcess.node))
+
+const HEAD = "a".repeat(40)
+const OLD = "b".repeat(40)
+
+const copilotReview = (input: { id: number; commit: string; at: string; body: string }) => ({
+  id: input.id,
+  node_id: `PRR_${input.id}`,
+  user: { login: "Copilot", type: "Bot" },
+  body: input.body,
+  state: "COMMENTED",
+  commit_id: input.commit,
+  submitted_at: input.at,
+  html_url: `https://github.com/acme/widgets/pull/7#pullrequestreview-${input.id}`,
+})
+
+const changesBody = [
+  "<!-- ccr-overview-v2 -->",
+  "",
+  "### 🟡 Changes recommended",
+  "",
+  "Pagination stops early and a cache key collides.",
+  "",
+  "<details open>",
+  "<summary><strong>2 open findings</strong></summary>",
+  "",
+  '- <picture><img src="x.png" alt="High severity" width="62"></picture> [Pagination stops after one page](https://github.com/acme/widgets/pull/7#discussion_r1001) · New',
+  '- <picture><img src="x.png" alt="Low severity" width="62"></picture> [Cache key collides](https://github.com/acme/widgets/pull/7#discussion_r1002)',
+  "</details>",
+  "",
+  "<details>",
+  "<summary><strong>Previously missed (1)</strong></summary>",
+  "",
+  "In code that hasn't changed since last review",
+  "",
+  "<details>",
+  '<summary><picture><img alt="Medium severity"></picture> Guard the retry loop</summary>',
+  "",
+  "`src/\u200bretry.\u200bts:40–44`",
+  "",
+  "The loop never stops when the server keeps failing. Cap the attempts.",
+  "</details>",
+  "</details>",
+  "",
+  "<details>",
+  "<summary><strong>What changed in this PR</strong></summary>",
+  "",
+  "Adds pagination.",
+  "</details>",
+].join("\n")
+
+const approvalBody = [
+  "<!-- ccr-overview-v2 -->",
+  "",
+  "### 🟢 Approval recommended",
+  "",
+  "No blocking defects remain.",
+  "",
+  "**0 open findings**",
+].join("\n")
+
+const legacyBody = [
+  "## Pull Request Overview",
+  "",
+  "Copilot reviewed 3 out of 3 changed files in this pull request and generated 1 comment.",
+  "",
+  "<details>",
+  "<summary>Comments suppressed due to low confidence (2)</summary>",
+  "",
+  "**src/a.ts:12**",
+  "* [nitpick] Consider a constant here.",
+  "**src/b.ts:3-5**",
+  "* This branch is unreachable.",
+  "</details>",
+].join("\n")
+
+describe("GitHubCopilot.parseReview", () => {
+  test("reads the verdict, listed findings with severity and comment IDs, and body-only findings", () => {
+    const review = GitHubCopilot.parseReview(changesBody)
+    expect(review.verdict).toBe("changes")
+    expect(review.headline).toBe("Changes recommended")
+    expect(review.summary).toBe("Pagination stops early and a cache key collides.")
+    expect(review.open).toBe(2)
+    expect(review.findings).toEqual([
+      { title: "Pagination stops after one page", severity: "high", commentID: 1001, new: true },
+      { title: "Cache key collides", severity: "low", commentID: 1002, new: false },
+    ])
+    expect(review.body).toEqual([
+      {
+        kind: "previously_missed",
+        title: "Guard the retry loop",
+        path: "src/retry.ts",
+        line: 40,
+        endLine: 44,
+        severity: "medium",
+        body: "The loop never stops when the server keeps failing. Cap the attempts.",
+      },
+    ])
+  })
+
+  test("treats an approval recommendation with no findings as approve", () => {
+    const review = GitHubCopilot.parseReview(approvalBody)
+    expect(review.verdict).toBe("approve")
+    expect(review.open).toBe(0)
+    expect(review.body).toEqual([])
+  })
+
+  test("reads low-confidence findings from the legacy overview format", () => {
+    const review = GitHubCopilot.parseReview(legacyBody)
+    expect(review.verdict).toBe("comments")
+    expect(review.generated).toBe(1)
+    expect(review.body).toEqual([
+      { kind: "low_confidence", path: "src/a.ts", line: 12, body: "[nitpick] Consider a constant here." },
+      { kind: "low_confidence", path: "src/b.ts", line: 3, endLine: 5, body: "This branch is unreachable." },
+    ])
+  })
+
+  test("a legacy review that generated no comments is clean", () => {
+    expect(
+      GitHubCopilot.parseReview(
+        "## Pull request overview\n\nCopilot reviewed 1 out of 1 changed files in this pull request and generated no new comments.",
+      ).verdict,
+    ).toBe("clean")
+  })
+})
+
+describe("GitHubCopilot.state", () => {
+  const now = Date.parse("2026-01-01T12:00:00Z")
+  const reviewed = { id: 1, commit: OLD, at: "2026-01-01T10:00:00Z", body: approvalBody }
+
+  test("work started after the latest review is in progress", () => {
+    const state = GitHubCopilot.state({
+      head: HEAD,
+      reviews: [reviewed],
+      events: [
+        { event: "review_requested", at: "2026-01-01T11:50:00Z", reviewer: "Copilot" },
+        { event: "copilot_work_started", at: "2026-01-01T11:51:00Z" },
+      ],
+      pending: true,
+      now,
+    })
+    expect(state).toMatchObject({ state: "in_progress", since: "2026-01-01T11:51:00.000Z", stuck: false, rounds: 1 })
+  })
+
+  test("a request that never started for over ten minutes is stuck", () => {
+    const state = GitHubCopilot.state({
+      head: HEAD,
+      reviews: [reviewed],
+      events: [{ event: "review_requested", at: "2026-01-01T11:30:00Z", reviewer: "Copilot" }],
+      pending: true,
+      now,
+    })
+    expect(state).toMatchObject({ state: "requested", stuck: true })
+  })
+
+  test("a request for someone else does not count", () => {
+    const state = GitHubCopilot.state({
+      head: HEAD,
+      reviews: [reviewed],
+      events: [{ event: "review_requested", at: "2026-01-01T11:30:00Z", reviewer: "octocat" }],
+      pending: false,
+      now,
+    })
+    expect(state.state).toBe("stale")
+  })
+
+  test("a review on the head commit with nothing pending is reviewed", () => {
+    const state = GitHubCopilot.state({ head: OLD, reviews: [reviewed], events: [], pending: false, now })
+    expect(state.state).toBe("reviewed")
+  })
+
+  test("no reviews and no request is none", () => {
+    expect(GitHubCopilot.state({ head: HEAD, reviews: [], events: [], pending: false, now }).state).toBe("none")
+  })
+})
+
+describe("GitHubCopilot.authorKind", () => {
+  test("distinguishes Copilot's reviewer, other bots and people", () => {
+    expect(GitHubCopilot.authorKind("Copilot", "Bot")).toBe("copilot")
+    expect(GitHubCopilot.authorKind("copilot-pull-request-reviewer", "Bot")).toBe("copilot")
+    expect(GitHubCopilot.authorKind("copilot-pull-request-reviewer[bot]")).toBe("copilot")
+    expect(GitHubCopilot.authorKind("copilot-swe-agent[bot]", "Bot")).toBe("bot")
+    expect(GitHubCopilot.authorKind("github-advanced-security", "Bot")).toBe("bot")
+    expect(GitHubCopilot.authorKind("octocat", "User")).toBe("human")
+  })
+})
+
+describe("GitHubRepo", () => {
+  test.each([
+    ["acme/widgets", { host: "github.com", owner: "acme", name: "widgets" }],
+    ["git@github.com:acme/widgets.git", { host: "github.com", owner: "acme", name: "widgets" }],
+    ["ssh://git@github.example.com/acme/widgets.git", { host: "github.example.com", owner: "acme", name: "widgets" }],
+    ["https://github.com/acme/widgets/pull/7", { host: "github.com", owner: "acme", name: "widgets" }],
+    ["ghe.example.com/acme/widgets", { host: "ghe.example.com", owner: "acme", name: "widgets" }],
+  ])("parses %s", (input, expected) => {
+    expect(GitHubRepo.parse(input)).toEqual(expected)
+  })
+
+  test("parses numbered references", () => {
+    expect(GitHubRepo.parseNumber("#12")).toEqual({ number: 12 })
+    expect(GitHubRepo.parseNumber(12)).toEqual({ number: 12 })
+    expect(GitHubRepo.parseNumber("acme/widgets#3")).toEqual({
+      repo: { host: "github.com", owner: "acme", name: "widgets" },
+      number: 3,
+    })
+    expect(GitHubRepo.parseNumber("https://github.com/acme/widgets/discussions/9")).toEqual({
+      repo: { host: "github.com", owner: "acme", name: "widgets" },
+      number: 9,
+    })
+    expect(GitHubRepo.parseNumber("nope")).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------------------------------------------
+
+const pullData = (head = HEAD) => ({
+  repository: {
+    pullRequest: {
+      id: "PR_7",
+      number: 7,
+      title: "Add pagination",
+      url: "https://github.com/acme/widgets/pull/7",
+      state: "OPEN",
+      isDraft: false,
+      author: { login: "dev", __typename: "User" },
+      baseRefName: "main",
+      baseRefOid: OLD,
+      headRefName: "pagination",
+      headRefOid: head,
+      headRepository: { nameWithOwner: "acme/widgets" },
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: null,
+      additions: 10,
+      deletions: 2,
+      changedFiles: 2,
+      autoMergeRequest: null,
+      commits: {
+        totalCount: 3,
+        nodes: [
+          {
+            commit: {
+              oid: head,
+              statusCheckRollup: {
+                state: "FAILURE",
+                contexts: {
+                  totalCount: 2,
+                  nodes: [
+                    { __typename: "CheckRun", name: "unit", status: "COMPLETED", conclusion: "FAILURE", detailsUrl: "https://ci/unit", isRequired: true },
+                    { __typename: "StatusContext", context: "lint", state: "SUCCESS", targetUrl: null, isRequired: false },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+      reviewRequests: { nodes: [] },
+      latestOpinionatedReviews: { nodes: [] },
+      comments: {
+        nodes: [
+          {
+            id: "IC_human",
+            author: { login: "maintainer", __typename: "User" },
+            body: "Please also update the docs.",
+            createdAt: "2026-01-01T10:05:00Z",
+            url: "https://github.com/acme/widgets/pull/7#issuecomment-1",
+            isMinimized: false,
+          },
+          {
+            id: "IC_bot",
+            author: { login: "netlify", __typename: "Bot" },
+            body: "Deploy preview ready",
+            createdAt: "2026-01-01T10:06:00Z",
+            url: "https://github.com/acme/widgets/pull/7#issuecomment-2",
+            isMinimized: false,
+          },
+        ],
+      },
+    },
+  },
+})
+
+const threadsData = {
+  repository: {
+    pullRequest: {
+      reviewThreads: {
+        pageInfo: { hasNextPage: false, endCursor: null },
+        nodes: [
+          {
+            id: "PRRT_copilot",
+            isResolved: false,
+            isOutdated: false,
+            path: "src/page.ts",
+            line: 20,
+            startLine: null,
+            originalLine: 20,
+            comments: {
+              totalCount: 1,
+              nodes: [
+                {
+                  databaseId: 1001,
+                  author: { login: "copilot-pull-request-reviewer", __typename: "Bot" },
+                  body: "The loop exits after the first page.",
+                  createdAt: "2026-01-01T10:00:00Z",
+                  url: "https://github.com/acme/widgets/pull/7#discussion_r1001",
+                },
+              ],
+            },
+          },
+          {
+            id: "PRRT_human",
+            isResolved: false,
+            isOutdated: true,
+            path: "src/cache.ts",
+            line: null,
+            startLine: null,
+            originalLine: 8,
+            comments: {
+              totalCount: 1,
+              nodes: [
+                {
+                  databaseId: 2001,
+                  author: { login: "maintainer", __typename: "User" },
+                  body: "Why a Map here?",
+                  createdAt: "2026-01-01T10:01:00Z",
+                  url: "https://github.com/acme/widgets/pull/7#discussion_r2001",
+                },
+              ],
+            },
+          },
+          {
+            id: "PRRT_done",
+            isResolved: true,
+            isOutdated: false,
+            path: "src/old.ts",
+            line: 1,
+            startLine: null,
+            originalLine: 1,
+            comments: {
+              totalCount: 1,
+              nodes: [
+                {
+                  databaseId: 3001,
+                  author: { login: "copilot-pull-request-reviewer", __typename: "Bot" },
+                  body: "Resolved already.",
+                  createdAt: "2026-01-01T09:00:00Z",
+                  url: "https://github.com/acme/widgets/pull/7#discussion_r3001",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  },
+}
+
+const alert = {
+  number: 5,
+  state: "open",
+  html_url: "https://github.com/acme/widgets/security/code-scanning/5",
+  created_at: "2026-01-01T09:30:00Z",
+  rule: { id: "js/sql-injection", description: "SQL injection", severity: "error", security_severity_level: "high" },
+  tool: { name: "CodeQL" },
+  most_recent_instance: { message: { text: "Query built from user input." }, location: { path: "test/db.test.ts", start_line: 4, end_line: 4 } },
+}
+
+const baseRoutes = (overrides: Record<string, Route | object> = {}) => ({
+  "GRAPHQL latestOpinionatedReviews": { body: pullData() },
+  "GRAPHQL reviewThreads(first: 50": { body: threadsData },
+  "GET /repos/acme/widgets/pulls/7/reviews": {
+    body: [copilotReview({ id: 900, commit: HEAD, at: "2026-01-01T10:00:00Z", body: changesBody })],
+  },
+  "GET /repos/acme/widgets/issues/7/timeline": { body: [] },
+  "GET /repos/acme/widgets/pulls/7/requested_reviewers": { body: { users: [], teams: [] } },
+  "GET /repos/acme/widgets/code-scanning/alerts": { body: [alert] },
+  "GET /repos/acme/widgets/code-scanning/alerts/5": { body: alert },
+  "GET /user": { body: { login: "dev" } },
+  "GRAPHQL viewer { login id }": {
+    body: {
+      viewer: { login: "dev", id: "U_dev" },
+      repository: {
+        nameWithOwner: "acme/widgets",
+        url: "https://github.com/acme/widgets",
+        isPrivate: false,
+        isFork: false,
+        isArchived: false,
+        hasIssuesEnabled: true,
+        hasDiscussionsEnabled: false,
+        viewerPermission: "WRITE",
+        parent: null,
+        owner: { login: "acme" },
+        defaultBranchRef: { name: "main" },
+        mergeCommitAllowed: false,
+        squashMergeAllowed: true,
+        rebaseMergeAllowed: true,
+      },
+    },
+  },
+  "GRAPHQL history(author:": {
+    body: {
+      repository: { defaultBranchRef: { target: { history: { totalCount: 12 } } } },
+      search: { issueCount: 0 },
+    },
+  },
+  ...overrides,
+})
+
+const env = { GH_TOKEN: "test-token", GITHUB_TOKEN: undefined }
+
+interface FeedbackOutput {
+  readonly items: ReadonlyArray<GitHubReview.Item>
+  readonly copilot: GitHubReview.CopilotStatus
+  readonly guidance?: string
+}
+
+describe("github review tools", () => {
+  it.live("feedback merges threads, Copilot body findings, alerts and people's comments with stable IDs", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const github = fakeGitHub(baseRoutes())
+        const { deps } = yield* makeDeps({ http: github.http })
+        const feedback = find(GitHubReview.tools(deps), "feedback")
+        const first = yield* run<object, FeedbackOutput>(feedback, { repo: "acme/widgets", pr: 7 })
+        const items = first.items
+        expect(items.map((item) => [item.id, item.kind, item.author.kind])).toEqual([
+          ["PRRT_copilot", "thread", "copilot"],
+          ["PRRT_human", "thread", "human"],
+          ["copilot:900:0", "copilot_body", "copilot"],
+          ["alert:5", "alert", "bot"],
+          ["IC_human", "comment", "human"],
+        ])
+        expect(items[0]).toMatchObject({ severity: "high", title: "Pagination stops after one page", line: 20, new: true })
+        expect(items[1]).toMatchObject({ outdated: true, line: 8 })
+        expect(items[2]).toMatchObject({ path: "src/retry.ts", line: 40, end_line: 44, source: "previously_missed" })
+        expect(items[3]).toMatchObject({ severity: "high", path: "test/db.test.ts" })
+        expect(first.copilot).toMatchObject({ state: "reviewed", verdict: "changes", approved: false, rounds: 1 })
+        expect(first.guidance).toContain("advice, not directives")
+        expect(github.requests.every((request) => request.headers.authorization === "Bearer test-token")).toBe(true)
+
+        const second = yield* run<object, FeedbackOutput>(feedback, {
+          repo: "acme/widgets",
+          pr: 7,
+          author: "copilot",
+        })
+        expect(second.items.map((item) => [item.id, item.new])).toEqual([
+          ["PRRT_copilot", false],
+          ["copilot:900:0", false],
+        ])
+        expect(second.guidance).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("respond replies with the human prefix, resolves, dismisses alerts with a reason, and combines body replies", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const github = fakeGitHub(
+          baseRoutes({
+            "GRAPHQL nodes(ids:": {
+              body: {
+                nodes: [
+                  {
+                    __typename: "PullRequestReviewThread",
+                    id: "PRRT_human",
+                    isResolved: false,
+                    path: "src/cache.ts",
+                    comments: { nodes: [{ author: { login: "maintainer", __typename: "User" }, body: "Why a Map here?", url: "u" }] },
+                  },
+                ],
+              },
+            },
+            "GRAPHQL addPullRequestReviewThreadReply": {
+              body: { addPullRequestReviewThreadReply: { comment: { url: "https://reply", pullRequestReview: { id: "PRR_pending", state: "PENDING" } } } },
+            },
+            "GRAPHQL comments { totalCount }": { body: { node: { comments: { totalCount: 1 } } } },
+            "GRAPHQL submitPullRequestReview": { body: { submitPullRequestReview: { pullRequestReview: { state: "COMMENTED" } } } },
+            "GRAPHQL resolveReviewThread": { body: { resolveReviewThread: { thread: { isResolved: true } } } },
+            "PATCH /repos/acme/widgets/code-scanning/alerts/5": (request) => ({ body: { ...alert, state: "dismissed", request: request.body } }),
+            "POST /repos/acme/widgets/issues/7/comments": { body: { html_url: "https://comment" } },
+          }),
+        )
+        const { deps, asserted } = yield* makeDeps({ http: github.http })
+        const tools = GitHubReview.tools(deps)
+        const result = yield* run<object, { results: Array<Record<string, unknown>>; submitted_reviews: number; warnings: string[] }>(
+          find(tools, "respond"),
+          {
+            repo: "acme/widgets",
+            pr: 7,
+            responses: [
+              { id: "PRRT_human", body: "A Map keeps insertion order for eviction.", resolve: true },
+              { id: "alert:5", resolve: true },
+              { id: "copilot:900:0", body: "Capped at five attempts.", resolve: true },
+            ],
+          },
+        )
+        expect(result.results.map((item) => [item.id, item.status, item.resolved])).toEqual([
+          ["PRRT_human", "done", true],
+          ["alert:5", "done", true],
+          ["copilot:900:0", "done", true],
+        ])
+        expect(result.submitted_reviews).toBe(1)
+        expect(asserted.map((item) => item.action)).toEqual(["github_respond"])
+
+        const reply = github.requests.find((request) => JSON.stringify(request.body).includes("addPullRequestReviewThreadReply"))
+        const replyBody = (reply?.body as { variables: { body: string } }).variables.body
+        expect(replyBody.startsWith("> *Automated response from an AI coding agent*\n\n")).toBe(true)
+        // The alert is in a test file, so dismissing without a reason picks "used in tests".
+        const dismissal = github.requests.find((request) => request.method === "PATCH")
+        expect(dismissal?.body).toMatchObject({ state: "dismissed", dismissed_reason: "used in tests" })
+        const combined = github.requests.find((request) => request.method === "POST" && request.path.endsWith("/issues/7/comments"))
+        expect(JSON.stringify(combined?.body)).toContain("Capped at five attempts.")
+
+        const after = yield* run<object, { items: GitHubReview.Item[] }>(find(tools, "feedback"), {
+          repo: "acme/widgets",
+          pr: 7,
+          sources: ["copilot_body"],
+        })
+        expect(after.items).toEqual([])
+      }),
+    ),
+  )
+
+  it.live("an alert fixed in code is left for reanalysis instead of being dismissed", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const github = fakeGitHub(baseRoutes())
+        const { deps } = yield* makeDeps({ http: github.http })
+        const result = yield* run<object, { results: Array<{ status: string }> }>(find(GitHubReview.tools(deps), "respond"), {
+          repo: "acme/widgets",
+          pr: 7,
+          responses: [{ id: "alert:5", resolve: true, reason: "fixed" }],
+        })
+        expect(result.results[0]?.status).toBe("awaiting_reanalysis")
+        expect(github.requests.some((request) => request.method === "PATCH")).toBe(false)
+      }),
+    ),
+  )
+
+  it.live("copilot requests a review when the head commit has not been reviewed", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const github = fakeGitHub(
+          baseRoutes({
+            "GRAPHQL latestOpinionatedReviews": { body: pullData("c".repeat(40)) },
+            "POST /repos/acme/widgets/pulls/7/requested_reviewers": { body: { requested_reviewers: [{ login: "Copilot" }] } },
+          }),
+        )
+        const { deps } = yield* makeDeps({ http: github.http })
+        const result = yield* run<object, { action: string }>(find(GitHubReview.tools(deps), "copilot"), { repo: "acme/widgets", pr: 7 })
+        expect(result.action).toBe("requested")
+        const post = github.requests.find((request) => request.method === "POST" && request.path.endsWith("/requested_reviewers"))
+        expect(post?.body).toEqual({ reviewers: ["copilot-pull-request-reviewer[bot]"] })
+      }),
+    ),
+  )
+
+  it.live("copilot does not re-request a review of an already reviewed head", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const github = fakeGitHub(baseRoutes())
+        const { deps } = yield* makeDeps({ http: github.http })
+        const result = yield* run<object, { action: string; note?: string }>(find(GitHubReview.tools(deps), "copilot"), {
+          repo: "acme/widgets",
+          pr: 7,
+        })
+        expect(result.action).toBe("none")
+        expect(result.note).toContain("already reviewed")
+        expect(github.requests.some((request) => request.method === "POST" && request.path.endsWith("/requested_reviewers"))).toBe(false)
+      }),
+    ),
+  )
+
+  it.live("a foreground wait on an already reviewed head completes at once", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const github = fakeGitHub(baseRoutes())
+        const { deps } = yield* makeDeps({ http: github.http })
+        const result = yield* run<object, { status: string; requested: string; message: string }>(find(GitHubReview.tools(deps), "wait"), {
+          repo: "acme/widgets",
+          pr: 7,
+          background: false,
+        })
+        expect(result).toMatchObject({ status: "completed", requested: "none" })
+        expect(result.message).toContain("Changes recommended")
+      }),
+    ),
+  )
+
+  it.effect("a background wait requests a review, polls, and notifies the session when Copilot finishes", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-01-01T11:00:00Z"))
+        let pending = false
+        let reviewsList = [copilotReview({ id: 900, commit: OLD, at: "2026-01-01T10:00:00Z", body: changesBody })]
+        const github = fakeGitHub(
+          baseRoutes({
+            "GET /repos/acme/widgets/pulls/7/reviews": () => ({ body: reviewsList }),
+            "GET /repos/acme/widgets/pulls/7/requested_reviewers": () => ({
+              body: { users: pending ? [{ login: "Copilot" }] : [], teams: [] },
+            }),
+            "POST /repos/acme/widgets/pulls/7/requested_reviewers": () => {
+              pending = true
+              return { body: { requested_reviewers: [{ login: "Copilot" }] } }
+            },
+          }),
+        )
+        const { deps, notified } = yield* makeDeps({ http: github.http })
+        const result = yield* run<object, { status: string; requested: string }>(find(GitHubReview.tools(deps), "wait"), {
+          repo: "acme/widgets",
+          pr: 7,
+          interval_seconds: 30,
+        })
+        expect(result).toMatchObject({ status: "running", requested: "requested" })
+        expect(notified).toEqual([])
+
+        yield* TestClock.adjust("30 seconds")
+        yield* Effect.yieldNow
+        expect(notified).toEqual([])
+
+        pending = false
+        reviewsList = [...reviewsList, copilotReview({ id: 901, commit: HEAD, at: "2026-01-01T11:00:45Z", body: approvalBody })]
+        yield* TestClock.adjust("30 seconds")
+        for (let attempt = 0; attempt < 50 && notified.length === 0; attempt++) yield* Effect.yieldNow
+        expect(notified).toHaveLength(1)
+        expect(notified[0]?.text).toContain('state="completed"')
+        expect(notified[0]?.text).toContain("Approval recommended")
+        expect(notified[0]?.metadata).toMatchObject({ source: "github.wait", pr: "acme/widgets#7" })
+      }),
+    ),
+  )
+})
+
