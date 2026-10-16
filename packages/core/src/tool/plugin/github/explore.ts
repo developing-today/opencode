@@ -709,8 +709,10 @@ export function tools(deps: Deps): Tool.Info[] {
           Effect.gen(function* () {
             const [classic, rules] = yield* Effect.all(
               [
-                attempt(api.json<ProtectionPayload>("GET", `${base}/branches/${branch}/protection`)),
-                attempt(api.json<RulePayload[]>("GET", `${base}/rules/branches/${branch}`)),
+                attempt(
+                  api.json<ProtectionPayload>("GET", `${base}/branches/${GitHubShared.refPath(branch)}/protection`),
+                ),
+                attempt(api.json<RulePayload[]>("GET", `${base}/rules/branches/${GitHubShared.refPath(branch)}`)),
               ],
               { concurrency: "unbounded" },
             )
@@ -1357,7 +1359,8 @@ export function tools(deps: Deps): Tool.Info[] {
             message: `${api.host} does not support user attachment uploads.`,
             hint: "Attach the file to a release as an asset, or commit it to a branch and link to it.",
           })
-        const file = path.isAbsolute(input.path) ? input.path : path.join(deps.directory, input.path)
+        // Uploads publish the file, so reading it needs the same approval as the read tool.
+        const file = yield* GitHubShared.readable(deps, context, input.path)
         const name = path.basename(file)
         const media = MEDIA[path.extname(file).toLowerCase()]
         if (!media)

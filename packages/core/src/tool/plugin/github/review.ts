@@ -592,7 +592,7 @@ export function tools(deps: Deps): Tool.Info[] {
         const target = yield* GitHubShared.target(deps, input.repo)
         const [found, token] = yield* Effect.all([discover(target), target.api.token], { concurrency: 2 })
         const prefs = yield* GitHubPreferences.effective(deps.kv, target.repo, found.defaults)
-        const branch = target.local?.upstream ?? target.local?.branch
+        const branch = target.local?.push?.branch ?? target.local?.branch
         const current =
           branch && target.local
             ? yield* GitHubShared.pullRequest(deps, { repo: input.repo }).pipe(
@@ -744,7 +744,10 @@ export function tools(deps: Deps): Tool.Info[] {
             thread.comments.nodes[0]?.author?.__typename,
           )
         const checkSummary = checks(data)
-        const localHead = resolved.local?.branch === data.headRefName ? resolved.local.head : undefined
+        const localHead =
+          (resolved.local?.push?.branch ?? resolved.local?.branch) === data.headRefName
+            ? resolved.local?.head
+            : undefined
         const severities = findingIndex(
           copilotReviews(reviewList).map((review) => GitHubCopilot.parseReview(review.body)),
         )
@@ -1063,7 +1066,7 @@ export function tools(deps: Deps): Tool.Info[] {
         const slug = GitHubRepo.slug(repo)
         const branch = yield* api.json<{ commit: { sha: string } }>(
           "GET",
-          `/repos/${slug}/branches/${encodeURIComponent(data.baseRefName)}`,
+          `/repos/${slug}/branches/${GitHubShared.refPath(data.baseRefName)}`,
         )
         const baseSha = branch.commit.sha
         const compare = (from: string, to: string): Effect.Effect<Option.Option<CompareData>> =>
@@ -1756,7 +1759,10 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
   const byID = new Map(nodes.flatMap((node) => (node ? [[node.id, node] as const] : [])))
   const data = yield* pull(api, repo, number)
   const short = data.headRefOid.slice(0, 7)
-  const localHead = input.target.local?.branch === data.headRefName ? input.target.local.head : undefined
+  const localHead =
+    (input.target.local?.push?.branch ?? input.target.local?.branch) === data.headRefName
+      ? input.target.local?.head
+      : undefined
   if (localHead && localHead !== data.headRefOid && input.responses.some((response) => response.reason === "fixed"))
     warnings.push(
       `Local HEAD ${localHead.slice(0, 7)} differs from the pushed head ${short}. Push before claiming fixes so reviewers can see them.`,

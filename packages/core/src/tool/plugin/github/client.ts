@@ -1,7 +1,7 @@
 export * as GitHubClient from "./client.js"
 
 import { AppProcess } from "@opencode/util/process"
-import { Duration, Effect, Option, Schedule, Schema } from "effect"
+import { Duration, Effect, Option, Schedule, Schema, Stream } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http"
 import { ChildProcess } from "effect/process"
 
@@ -70,7 +70,12 @@ export interface Api {
   readonly graphql: <A = unknown>(query: string, variables?: Record<string, unknown>) => Effect.Effect<A, Error>
   readonly download: (
     path: string,
-    options?: { readonly accept?: string; readonly maxBytes?: number },
+    options?: {
+      readonly accept?: string
+      readonly maxBytes?: number
+      /** tail keeps the last maxBytes (logs); all fails once the body passes maxBytes (files). Default all. */
+      readonly keep?: "tail" | "all"
+    },
   ) => Effect.Effect<Download, Error>
   readonly upload: (input: {
     readonly url: string
@@ -268,7 +273,7 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
               path,
             })
           }
-          return yield* collect(response, options.maxBytes ?? DEFAULT_DOWNLOAD_BYTES)
+          return yield* collect(response, options.maxBytes ?? DEFAULT_DOWNLOAD_BYTES, options.keep ?? "all")
         }),
       upload: (upload) =>
         Effect.gen(function* () {
@@ -444,14 +449,43 @@ function forbiddenHint(host: string, headers: Readonly<Record<string, string | u
     .join(" ")
 }
 
-function collect(response: HttpClientResponse.HttpClientResponse, maxBytes: number) {
-  return response.arrayBuffer.pipe(
-    Effect.map((buffer) => ({
-      bytes: new Uint8Array(buffer.byteLength > maxBytes ? buffer.slice(buffer.byteLength - maxBytes) : buffer),
-      contentType: response.headers["content-type"] ?? "application/octet-stream",
-      truncated: buffer.byteLength > maxBytes,
-    })),
+// Streams the body so a large log or asset never sits in memory whole: a tail keeps a sliding window of the last
+// maxBytes, and a full download stops as soon as it passes the limit.
+function collect(response: HttpClientResponse.HttpClientResponse, maxBytes: number, keep: "tail" | "all") {
+  const contentType = response.headers["content-type"] ?? "application/octet-stream"
+  const declared = Number(response.headers["content-length"])
+  const tooLarge = (size: number) =>
+    new Error({
+      kind: "validation",
+      message: `Download is ${size} bytes, over the ${maxBytes}-byte limit.`,
+      hint: "Use the gh CLI for very large files (see the github skill).",
+    })
+  if (keep === "all" && Number.isFinite(declared) && declared > maxBytes) return Effect.fail(tooLarge(declared))
+  const chunks: Uint8Array[] = []
+  let size = 0
+  let dropped = false
+  return Stream.runForEach(response.stream, (chunk) => {
+    chunks.push(chunk)
+    size += chunk.byteLength
+    if (keep === "all") return size > maxBytes ? Effect.fail(tooLarge(size)) : Effect.void
+    while (chunks.length > 1 && size - chunks[0].byteLength >= maxBytes) {
+      size -= chunks.shift()?.byteLength ?? 0
+      dropped = true
+    }
+    return Effect.void
+  }).pipe(
     Effect.timeout(Duration.minutes(5)),
-    Effect.mapError((error) => new Error({ kind: "network", message: `Download failed: ${error.message}` })),
+    Effect.mapError((error) =>
+      error instanceof Error ? error : new Error({ kind: "network", message: `Download failed: ${error.message}` }),
+    ),
+    Effect.map(() => {
+      const joined = Buffer.concat(chunks)
+      const truncated = dropped || joined.byteLength > maxBytes
+      return {
+        bytes: new Uint8Array(truncated ? joined.subarray(joined.byteLength - maxBytes) : joined),
+        contentType,
+        truncated,
+      }
+    }),
   )
 }

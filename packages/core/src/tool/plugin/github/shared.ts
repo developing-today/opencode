@@ -4,6 +4,7 @@ import { ToolFailure } from "@opencode/ai"
 import type { Tool } from "@opencode/schema/tool"
 import type { AppProcess } from "@opencode/util/process"
 import { Clock, Effect, Exit, Option, Schema, type Scope } from "effect"
+import type { FileAccess } from "../../../file-access.js"
 import type { Job } from "../../../job.js"
 import type { KV } from "../../../kv.js"
 import type { Permission } from "../../../permission.js"
@@ -21,6 +22,8 @@ export interface Deps {
   readonly permission: Pick<Permission.Interface, "assert">
   /** Delivers background results into a session. */
   readonly sessions: Pick<Session.Interface, "synthetic">
+  /** Approves reading local files (uploads) and writing downloads, like the read and write tools do. */
+  readonly files: Pick<FileAccess.Interface, "resolve" | "authorizeExternal" | "authorizeRead">
   readonly jobs: Job.Interface
   readonly scope: Scope.Scope
   readonly directory: string
@@ -105,7 +108,12 @@ export const numbered = Effect.fn("GitHubShared.numbered")(function* (
   deps: Deps,
   input: { readonly repo?: string; readonly ref: string | number },
 ) {
-  const parsed = GitHubRepo.parseNumber(input.ref)
+  // A shorthand owner/repo#n reference means the same host as the repository it would otherwise resolve to.
+  const host =
+    (input.repo === undefined ? undefined : GitHubRepo.parse(input.repo, defaultHost())?.host) ??
+    Option.getOrUndefined(yield* localRepo(deps).pipe(Effect.option))?.host ??
+    defaultHost()
+  const parsed = GitHubRepo.parseNumber(input.ref, host)
   if (!parsed)
     return yield* new GitHubClient.Error({ kind: "validation", message: `Unrecognized reference: ${input.ref}` })
   const resolved = yield* target(
@@ -128,7 +136,9 @@ export const pullRequest = Effect.fn("GitHubShared.pullRequest")(function* (
 ) {
   if (input.pr !== undefined) return yield* numbered(deps, { repo: input.repo, ref: input.pr })
   const resolved = yield* target(deps, input.repo)
-  const branch = resolved.local?.upstream ?? resolved.local?.branch
+  // The pull request's head is where the branch is pushed, which can be a fork of the selected repository.
+  const branch = resolved.local?.push?.branch ?? resolved.local?.branch
+  const headOwner = resolved.local?.push?.owner ?? resolved.repo.owner
   if (!branch)
     return yield* new GitHubClient.Error({
       kind: "validation",
@@ -139,12 +149,12 @@ export const pullRequest = Effect.fn("GitHubShared.pullRequest")(function* (
     Effect.gen(function* () {
       const api = deps.client.forHost(repo.host)
       const open = yield* api.json<PullSummary[]>("GET", `/repos/${GitHubRepo.slug(repo)}/pulls`, {
-        query: { head: `${resolved.repo.owner}:${branch}`, state: "open", per_page: 5 },
+        query: { head: `${headOwner}:${branch}`, state: "open", per_page: 5 },
       })
       if (open[0]) return open[0].number
       const any = yield* api.json<PullSummary[]>("GET", `/repos/${GitHubRepo.slug(repo)}/pulls`, {
         query: {
-          head: `${resolved.repo.owner}:${branch}`,
+          head: `${headOwner}:${branch}`,
           state: "all",
           sort: "updated",
           direction: "desc",
@@ -193,6 +203,35 @@ export const authorize = (
     agent: context.agent,
     source: { type: "tool", messageID: context.messageID, id: context.id },
   })
+
+/** Approves reading a local file the tool is about to upload, and returns its absolute path. */
+export const readable = (deps: Deps, context: Tool.Context, file: string) =>
+  deps.files.authorizeRead(file, context).pipe(Effect.map((target) => target.absolute as string))
+
+/**
+ * Approves writing into a local directory the caller chose, with the same external-directory and edit rules as the
+ * write tool, and returns its absolute path. Tool-owned scratch directories under the system temp directory skip this.
+ */
+export const writable = Effect.fn("GitHubShared.writable")(function* (
+  deps: Deps,
+  context: Tool.Context,
+  directory: string,
+) {
+  const target = yield* deps.files.resolve({ path: directory, kind: "directory" })
+  yield* deps.files.authorizeExternal([target], context)
+  yield* deps.permission.assert({
+    action: "edit",
+    resources: [target.resource],
+    save: ["*"],
+    sessionID: context.sessionID,
+    agent: context.agent,
+    source: { type: "tool", messageID: context.messageID, id: context.id },
+  })
+  return target.absolute as string
+})
+
+/** Encodes a branch or tag for a URL path, keeping the slashes GitHub expects between ref segments. */
+export const refPath = (ref: string) => ref.split("/").map(encodeURIComponent).join("/")
 
 /** Turns any typed failure into a model-facing ToolFailure, appending recovery hints and the fallback skill. */
 export function failure(tool: string, error: unknown) {

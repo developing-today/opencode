@@ -6,6 +6,7 @@ import type { Context } from "@opencode/plugin/effect/plugin"
 import { AppProcess } from "@opencode/util/process"
 import { Effect, Scope } from "effect"
 import { HttpClient } from "effect/http"
+import { FileAccess } from "../../../file-access.js"
 import { Job } from "../../../job.js"
 import { KV } from "../../../kv.js"
 import { Permission } from "../../../permission.js"
@@ -47,6 +48,7 @@ export const Plugin = {
       kv: yield* KV.Service,
       permission: yield* Permission.Service,
       sessions: yield* Session.Service,
+      files: yield* FileAccess.Service,
       jobs: yield* Job.Service,
       scope: yield* Scope.Scope,
       directory: ctx.location.directory,

@@ -764,15 +764,17 @@ const resolveHead = Effect.fn("GitHubPulls.resolveHead")(function* (
     const name = local && local.owner.toLowerCase() === owner.toLowerCase() ? local.name : repo.name
     return { owner, name, branch: head.slice(split + 1), ref: head }
   }
-  const branch = local?.upstream ?? local?.branch
+  const branch = local?.push?.branch ?? local?.branch
   if (!local || !branch)
     return yield* new GitHubClient.Error({
       kind: "validation",
       message: "No current local branch to open a pull request from.",
       hint: "Pass `head` explicitly.",
     })
-  if (GitHubShared.sameRepo(local, repo)) return { owner: repo.owner, name: repo.name, branch, ref: branch }
-  return { owner: local.owner, name: local.name, branch, ref: `${local.owner}:${branch}` }
+  // The head lives where the branch is pushed, which may be a fork even when the selected repository is the parent.
+  const pushed = local.push ?? local
+  if (GitHubShared.sameRepo(pushed, repo)) return { owner: repo.owner, name: repo.name, branch, ref: branch }
+  return { owner: pushed.owner, name: pushed.name, branch, ref: `${pushed.owner}:${branch}` }
 })
 
 /** Requests reviewers together, then one at a time if that fails, so one bad login does not drop the rest. */

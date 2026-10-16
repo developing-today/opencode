@@ -448,6 +448,29 @@ export function tools(deps: Deps): Tool.Info[] {
           input.category === undefined
             ? undefined
             : yield* resolveCategory(data.repository.discussionCategories.nodes, input.category)
+        // Comment IDs are global; refuse one from another discussion before authorizing against this one.
+        yield* Effect.forEach(
+          [input.answer, input.unanswer].filter((id): id is string => id !== undefined),
+          (id) =>
+            api
+              .graphql<{
+                node: { discussion?: { id: string } } | null
+              }>(`query($id: ID!) { node(id: $id) { ... on DiscussionComment { discussion { id } } } }`, { id })
+              .pipe(
+                Effect.flatMap((comment) =>
+                  comment.node?.discussion?.id === found.id
+                    ? Effect.void
+                    : Effect.fail(
+                        new GitHubClient.Error({
+                          kind: "validation",
+                          message: `${id} is not a comment on ${GitHubRepo.slug(resolved.repo)} discussion #${resolved.number}.`,
+                          hint: "Use comment IDs from discussion for this discussion.",
+                        }),
+                      ),
+                ),
+              ),
+          { discard: true },
+        )
         yield* GitHubShared.authorize(deps, context, "discussion_update", resolved.repo)
 
         const changed: string[] = []

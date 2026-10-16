@@ -268,6 +268,7 @@ describe("github discussions", () => {
             body: { markDiscussionCommentAsAnswer: { discussion: { id: "D_5" } } },
           },
           "GRAPHQL closeDiscussion(": { body: { closeDiscussion: { discussion: { closed: true } } } },
+          "GRAPHQL ... on DiscussionComment { discussion { id } }": { body: { node: { discussion: { id: "D_5" } } } },
         })
         const { deps, asserted } = yield* makeDeps({ http: github.http })
         const result = yield* run(find(GitHubDiscussions.tools(deps), "discussion_update"), {
@@ -284,11 +285,45 @@ describe("github discussions", () => {
         const calls = graphql(github.requests)
         expect(calls.slice(1).map((body) => body.variables)).toEqual([
           { id: "DC_2" },
+          { id: "DC_2" },
           { discussionId: "D_5", reason: "RESOLVED" },
         ])
-        expect(calls[1]?.query).toContain("{ markDiscussionCommentAsAnswer(input: { id: $id })")
-        expect(calls[2]?.query).toContain("closeDiscussion(input: { discussionId: $discussionId, reason: $reason })")
+        expect(calls[2]?.query).toContain("{ markDiscussionCommentAsAnswer(input: { id: $id })")
+        expect(calls[3]?.query).toContain("closeDiscussion(input: { discussionId: $discussionId, reason: $reason })")
         expect(asserted.map((item) => item.action)).toEqual(["github_discussion_update"])
+      }),
+    ),
+  )
+
+  it.live("discussion_update refuses an answer comment from another discussion before changing anything", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const github = fakeGitHub({
+          "GRAPHQL discussion(number: $number) { id url }": {
+            body: {
+              repository: {
+                discussion: { id: "D_5", url: "https://github.com/acme/widgets/discussions/5" },
+                discussionCategories: categories,
+              },
+            },
+          },
+          "GRAPHQL ... on DiscussionComment { discussion { id } }": {
+            body: { node: { discussion: { id: "D_OTHER" } } },
+          },
+        })
+        const { deps, asserted } = yield* makeDeps({ http: github.http })
+        const failure = yield* run(find(GitHubDiscussions.tools(deps), "discussion_update"), {
+          repo: "acme/widgets",
+          discussion: 5,
+          answer: "DC_9",
+        }).pipe(Effect.flip)
+        expect(String((failure as { message?: string }).message)).toContain(
+          "DC_9 is not a comment on acme/widgets discussion #5",
+        )
+        expect(asserted).toEqual([])
+        expect(
+          graphql(github.requests).some((body) => String(body.query).includes("markDiscussionCommentAsAnswer")),
+        ).toBe(false)
       }),
     ),
   )

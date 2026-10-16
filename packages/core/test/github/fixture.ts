@@ -9,6 +9,8 @@ import type { GitHubShared } from "@opencode/core/tool/plugin/github/shared"
 import { Tool } from "@opencode/schema/tool"
 import { AppProcess } from "@opencode/util/process"
 import { Effect, Schema, Scope } from "effect"
+import path from "node:path"
+import { AbsolutePath } from "@opencode/core/schema"
 import { HttpClient, HttpClientResponse } from "effect/http"
 
 export interface Request {
@@ -129,18 +131,37 @@ export const makeDeps = Effect.fn("test.github.deps")(function* (input: {
   const sessions: GitHubShared.Deps["sessions"] = {
     synthetic: (message) => Effect.sync(() => void notified.push(message)).pipe(Effect.andThen(Effect.never)),
   }
+  // Local file approvals resolve against the working directory and are recorded, like the real FileAccess.
+  const approvals: Array<{ readonly kind: "read" | "external"; readonly path: string }> = []
+  const directory = input.directory ?? "/nonexistent-github-test-directory"
+  const resolve = (file: string) => {
+    const absolute = AbsolutePath.make(path.resolve(directory, file))
+    return { absolute, resource: absolute }
+  }
+  const files: GitHubShared.Deps["files"] = {
+    resolve: (target) => Effect.succeed(resolve(target.path)),
+    authorizeExternal: (targets) =>
+      Effect.sync(() => targets.forEach((target) => approvals.push({ kind: "external", path: target.absolute }))),
+    authorizeRead: (file) =>
+      Effect.sync(() => {
+        const target = resolve(file)
+        approvals.push({ kind: "read", path: target.absolute })
+        return target
+      }),
+  }
   const deps: GitHubShared.Deps = {
     client: GitHubClient.make({ http: input.http, process }),
     process,
     kv,
     permission,
     sessions,
+    files,
     jobs,
     scope,
-    directory: input.directory ?? "/nonexistent-github-test-directory",
+    directory,
     codemode: true,
   }
-  return { deps, kv, asserted, notified }
+  return { deps, kv, asserted, notified, approvals }
 })
 
 /** Runs a tool's executor and checks its output against the declared schema, as the registry would. */

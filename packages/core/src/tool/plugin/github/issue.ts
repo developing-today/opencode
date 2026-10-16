@@ -203,14 +203,36 @@ const DISCUSSION_ID_QUERY = `query($owner: String!, $name: String!, $number: Int
   repository(owner: $owner, name: $name) { discussion(number: $number) { id } }
 }`
 
+// Node IDs are global, so a comment's own repository decides which repository the change is authorized against.
 const NODE_TYPE_QUERY = `query($id: ID!) {
   node(id: $id) {
     __typename
-    ... on IssueComment { url }
-    ... on DiscussionComment { url }
-    ... on PullRequestReviewComment { url }
+    ... on IssueComment { url repository { nameWithOwner } }
+    ... on DiscussionComment { url discussion { repository { nameWithOwner } } }
+    ... on PullRequestReviewComment { url repository { nameWithOwner } }
   }
 }`
+
+interface CommentNode {
+  readonly __typename: string
+  readonly url?: string
+  readonly repository?: { readonly nameWithOwner: string }
+  readonly discussion?: { readonly repository: { readonly nameWithOwner: string } }
+}
+
+/** Looks up a comment by node ID and the repository it belongs to. */
+const commentNode = Effect.fn("GitHubIssues.commentNode")(function* (api: GitHubClient.Api, id: string, host: string) {
+  const node = (yield* api.graphql<{ node: CommentNode | null }>(NODE_TYPE_QUERY, { id })).node
+  if (!node) return yield* new GitHubClient.Error({ kind: "not_found", message: `No comment ${id}` })
+  const owner = node.repository?.nameWithOwner ?? node.discussion?.repository.nameWithOwner
+  const repo = owner ? GitHubRepo.parse(owner, host) : undefined
+  if (!repo)
+    return yield* new GitHubClient.Error({
+      kind: "validation",
+      message: `${id} is a ${node.__typename}, not a comment this tool can change.`,
+    })
+  return { node, repo }
+})
 
 // Aliased to `result { comment { url } }` so every edit mutation reads the same way.
 const EDIT_MUTATIONS: Record<string, string> = {
@@ -634,7 +656,8 @@ export function tools(deps: Deps): Tool.Info[] {
 
         if (input.hide !== undefined || input.unhide === true) {
           const nodeId = numeric ? (yield* api.json<{ node_id: string }>("GET", restPath)).node_id : input.id
-          yield* GitHubShared.authorize(deps, context, "comment_update", resolved.repo)
+          const owner = numeric ? resolved.repo : (yield* commentNode(api, nodeId, resolved.repo.host)).repo
+          yield* GitHubShared.authorize(deps, context, "comment_update", owner)
           if (input.hide !== undefined)
             yield* api.graphql(MINIMIZE, { id: nodeId, classifier: input.hide.toUpperCase() })
           if (input.hide === undefined) yield* api.graphql(UNMINIMIZE, { id: nodeId })
@@ -653,10 +676,8 @@ export function tools(deps: Deps): Tool.Info[] {
           return { id: edited.node_id, action: "edited" as const, url: edited.html_url }
         }
 
-        const node = (yield* api.graphql<{ node: { __typename: string; url?: string } | null }>(NODE_TYPE_QUERY, {
-          id: input.id,
-        })).node
-        if (!node) return yield* new GitHubClient.Error({ kind: "not_found", message: `No comment ${input.id}` })
+        const found = yield* commentNode(api, input.id, resolved.repo.host)
+        const node = found.node
         const edit = EDIT_MUTATIONS[node.__typename]
         const remove = DELETE_MUTATIONS[node.__typename]
         if (!edit || !remove)
@@ -664,7 +685,7 @@ export function tools(deps: Deps): Tool.Info[] {
             kind: "validation",
             message: `${input.id} is a ${node.__typename}, not a comment this tool can change.`,
           })
-        yield* GitHubShared.authorize(deps, context, "comment_update", resolved.repo)
+        yield* GitHubShared.authorize(deps, context, "comment_update", found.repo)
         if (input.delete) {
           yield* api.graphql(remove, { id: input.id })
           return { id: input.id, action: "deleted" as const }

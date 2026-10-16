@@ -15,8 +15,11 @@ export interface Local extends Ref {
   readonly remote: string
   readonly branch?: string
   readonly head?: string
-  /** Remote branch the current branch pushes to, when it differs from `branch`. */
-  readonly upstream?: string
+  /**
+   * Where the current branch is pushed, which is where its pull request's head lives. It can differ from the selected
+   * repository (a fork when `gh repo set-default` picks the upstream) and from `branch` (push.default=upstream).
+   */
+  readonly push?: Ref & { readonly remote: string; readonly branch: string }
 }
 
 export const slug = (repo: Ref) => `${repo.owner}/${repo.name}`
@@ -96,21 +99,27 @@ export const local = Effect.fn("GitHubRepo.local")(function* (process: AppProces
       message: `${directory} is not a git repository with remotes`,
       hint: "Pass `repo` as owner/name, or run from a clone of the repository.",
     })
-  const pushRemote = branch
+  // `@{push}` applies push.default, remote.pushDefault and branch.<name>.pushRemote; the fetch tracking branch
+  // (branch.<name>.merge) can name another repository's branch entirely.
+  const pushRef = branch ? yield* git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}"]) : ""
+  const pushRemote = [...urls.keys()]
+    .filter((name) => pushRef.startsWith(`${name}/`))
+    .toSorted((left, right) => right.length - left.length)[0]
+  const configuredRemote = branch
     ? (yield* git(["config", "--get", `branch.${branch}.pushRemote`])) ||
+      (yield* git(["config", "--get", "remote.pushDefault"])) ||
       (yield* git(["config", "--get", `branch.${branch}.remote`]))
     : ""
-  const merge = branch ? yield* git(["config", "--get", `branch.${branch}.merge`]) : ""
   const selected = resolved
     .split("\n")
     .map((line) => /^remote\.(.+)\.gh-resolved\s+base$/.exec(line.trim())?.[1])
     .find((name) => name !== undefined && urls.has(name))
-  const order = [selected, pushRemote, "origin", ...urls.keys()].filter(
+  const order = [selected, pushRemote, configuredRemote, "origin", ...urls.keys()].filter(
     (name): name is string => !!name && urls.has(name),
   )
   const found = order.flatMap((name) => {
     const repo = parse(urls.get(name) ?? "")
-    return repo ? [{ ...repo, remote: name }] : []
+    return repo ? [{ ...repo, host: normalizeHost(repo.host), remote: name }] : []
   })[0]
   if (!found)
     return yield* new GitHubClient.Error({
@@ -118,13 +127,16 @@ export const local = Effect.fn("GitHubRepo.local")(function* (process: AppProces
       message: `No GitHub remote found in ${directory}`,
       hint: "Pass `repo` as owner/name.",
     })
-  const upstream = merge.replace(/^refs\/heads\//, "")
+  const pushName = pushRemote ?? (configuredRemote && urls.has(configuredRemote) ? configuredRemote : found.remote)
+  const pushRepo = parse(urls.get(pushName) ?? "")
+  const pushBranch = pushRemote ? pushRef.slice(pushRemote.length + 1) : branch
   return {
     ...found,
-    host: normalizeHost(found.host),
     ...(branch ? { branch } : {}),
     ...(head ? { head } : {}),
-    ...(upstream && upstream !== branch ? { upstream } : {}),
+    ...(pushRepo && pushBranch
+      ? { push: { ...pushRepo, host: normalizeHost(pushRepo.host), remote: pushName, branch: pushBranch } }
+      : {}),
   } satisfies Local
 })
 

@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
 import { Effect } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/http"
@@ -278,7 +279,7 @@ describe("github release tools", () => {
         const dir = yield* tmpdirScoped()
         const github = fakeGitHub({ "GET /repos/acme/widgets/releases/tags/v1.0.0": { body: release } })
         const http = wrap(github, { "GET /repos/acme/widgets/releases/assets/7": "zip-bytes-here" })
-        const { deps, asserted } = yield* makeDeps({ http: http.http, directory: dir.path })
+        const { deps, asserted, approvals } = yield* makeDeps({ http: http.http, directory: dir.path })
         const output = yield* run(find(GitHubReleases.tools(deps), "release_asset"), {
           repo: "acme/widgets",
           action: "download",
@@ -294,6 +295,27 @@ describe("github release tools", () => {
           url: "https://api.github.com/repos/acme/widgets/releases/assets/7",
           accept: "application/octet-stream",
         })
+        // A caller-chosen destination needs the write tool's approvals before anything is written there.
+        const destination = path.join(dir.path, "downloads")
+        expect(approvals).toEqual([{ kind: "external", path: destination }])
+        expect(asserted.map((item) => [item.action, item.resources])).toEqual([["edit", [destination]]])
+      }),
+    ),
+  )
+
+  it.live("release_asset download defaults to a scratch directory per repository and tag", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const github = fakeGitHub({ "GET /repos/acme/widgets/releases/tags/v1.0.0": { body: release } })
+        const http = wrap(github, { "GET /repos/acme/widgets/releases/assets/7": "zip-bytes-here" })
+        const { deps, asserted } = yield* makeDeps({ http: http.http })
+        const output = yield* run<object, { files: Array<{ path: string }> }>(
+          find(GitHubReleases.tools(deps), "release_asset"),
+          { repo: "acme/widgets", action: "download", tag: "v1.0.0", name: "app.zip" },
+        )
+        expect(output.files[0]?.path).toBe(
+          path.join(os.tmpdir(), "opencode-github", "releases", "github.com", "acme", "widgets", "v1.0.0", "app.zip"),
+        )
         expect(asserted).toEqual([])
       }),
     ),

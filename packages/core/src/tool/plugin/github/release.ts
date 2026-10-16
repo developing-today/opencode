@@ -38,7 +38,7 @@ interface ReleaseData {
   readonly assets: ReadonlyArray<AssetData>
 }
 
-const ASSET_BYTES = 2 * 1024 * 1024 * 1024
+const ASSET_BYTES = 512 * 1024 * 1024
 
 // Common release asset types; anything else uploads as application/octet-stream.
 const MIME: Record<string, string> = {
@@ -82,7 +82,7 @@ const io = <A>(label: string, run: () => Promise<A>) =>
 /** Finds a release by tag, including drafts, which the tags endpoint does not return. */
 const byTag = Effect.fn("GitHubReleases.byTag")(function* (api: Api, slug: string, tag: string) {
   if (tag === "latest") return yield* api.json<ReleaseData>("GET", `/repos/${slug}/releases/latest`)
-  const direct = yield* api.request<ReleaseData>("GET", `/repos/${slug}/releases/tags/${encodeURIComponent(tag)}`, {
+  const direct = yield* api.request<ReleaseData>("GET", `/repos/${slug}/releases/tags/${GitHubShared.refPath(tag)}`, {
     allow: [404],
   })
   if (direct.status !== 404) return direct.data
@@ -96,17 +96,20 @@ const byTag = Effect.fn("GitHubReleases.byTag")(function* (api: Api, slug: strin
   })
 })
 
-const readAssets = (deps: Deps, paths: ReadonlyArray<string>) =>
-  Effect.forEach(paths, (file) => {
-    const resolved = path.resolve(deps.directory, file)
-    return io(`Unable to read ${file}`, () => readFile(resolved)).pipe(
-      Effect.map((bytes) => ({
-        name: path.basename(resolved),
-        bytes: new Uint8Array(bytes),
-        contentType: MIME[path.extname(resolved).toLowerCase()] ?? "application/octet-stream",
-      })),
-    )
-  })
+const readAssets = (deps: Deps, context: Tool.Context, paths: ReadonlyArray<string>) =>
+  Effect.forEach(paths, (file) =>
+    GitHubShared.readable(deps, context, file).pipe(
+      Effect.flatMap((resolved) =>
+        io(`Unable to read ${file}`, () => readFile(resolved)).pipe(
+          Effect.map((bytes) => ({
+            name: path.basename(resolved),
+            bytes: new Uint8Array(bytes),
+            contentType: MIME[path.extname(resolved).toLowerCase()] ?? "application/octet-stream",
+          })),
+        ),
+      ),
+    ),
+  )
 
 const uploadAsset = (
   api: Api,
@@ -258,7 +261,7 @@ export function tools(deps: Deps): Tool.Info[] {
         const resolved = yield* GitHubShared.target(deps, input.repo)
         const slug = GitHubRepo.slug(resolved.repo)
         // Read every file first so a bad path fails before the release exists.
-        const files = yield* readAssets(deps, input.assets ?? [])
+        const files = yield* readAssets(deps, context, input.assets ?? [])
         yield* GitHubShared.authorize(deps, context, "release_create", resolved.repo, { tag: input.tag })
         const release = yield* resolved.api.json<ReleaseData>("POST", `/repos/${slug}/releases`, {
           body: {
@@ -343,7 +346,8 @@ export function tools(deps: Deps): Tool.Info[] {
         })
         if (input.delete) {
           yield* api.request("DELETE", `/repos/${slug}/releases/${release.id}`)
-          if (input.delete_tag) yield* api.request("DELETE", `/repos/${slug}/git/refs/tags/${release.tag_name}`)
+          if (input.delete_tag)
+            yield* api.request("DELETE", `/repos/${slug}/git/refs/tags/${GitHubShared.refPath(release.tag_name)}`)
           return {
             tag: release.tag_name,
             changed: ["deleted release", ...(input.delete_tag ? [`deleted tag ${release.tag_name}`] : [])],
@@ -456,7 +460,7 @@ export function tools(deps: Deps): Tool.Info[] {
         if (input.action === "upload") {
           if (!input.paths?.length)
             return yield* new GitHubClient.Error({ kind: "validation", message: "upload needs paths." })
-          const files = yield* readAssets(deps, input.paths)
+          const files = yield* readAssets(deps, context, input.paths)
           const clashes = release.assets.filter((asset) => files.some((file) => file.name === asset.name))
           if (clashes.length > 0 && !input.overwrite)
             return yield* new GitHubClient.Error({
@@ -487,9 +491,18 @@ export function tools(deps: Deps): Tool.Info[] {
             message: `No matching asset on ${release.tag_name}.`,
             hint: `Assets: ${release.assets.map((asset) => asset.name).join(", ") || "none"}.`,
           })
+        // The default scratch directory is per host, repository and tag so downloads from different repositories never
+        // overwrite each other; a caller-chosen directory needs write approval.
         const directory = input.path
-          ? path.resolve(deps.directory, input.path)
-          : path.join(os.tmpdir(), "opencode-github", "releases", release.tag_name.replace(/[^\w.-]/g, "_"))
+          ? yield* GitHubShared.writable(deps, context, input.path)
+          : path.join(
+              os.tmpdir(),
+              "opencode-github",
+              "releases",
+              ...[resolved.repo.host, resolved.repo.owner, resolved.repo.name, release.tag_name].map((part) =>
+                part.replace(/[^\w.-]/g, "_"),
+              ),
+            )
         yield* io("Unable to create directory", () => mkdir(directory, { recursive: true }))
         const files = yield* Effect.forEach(
           chosen,
@@ -502,14 +515,15 @@ export function tools(deps: Deps): Tool.Info[] {
               if (download.truncated)
                 return yield* new GitHubClient.Error({
                   kind: "unsupported",
-                  message: `${asset.name} is larger than 2 GB.`,
+                  message: `${asset.name} is larger than 512 MB.`,
                 })
               // Asset names cannot contain path separators on GitHub, but guard against writing outside the directory.
               const file = path.join(directory, path.basename(asset.name))
               yield* io(`Unable to write ${file}`, () => writeFile(file, download.bytes))
               return { name: asset.name, path: file, bytes: download.bytes.byteLength }
             }),
-          { concurrency: 4 },
+          // One at a time, so at most one asset is held in memory.
+          { concurrency: 1 },
         )
         return { action: "download", files }
       }),

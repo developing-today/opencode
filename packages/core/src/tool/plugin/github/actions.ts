@@ -667,6 +667,7 @@ export function tools(deps: Deps): Tool.Info[] {
             Effect.gen(function* () {
               const download = yield* api.download(`/repos/${slug}/actions/jobs/${job.id}/logs`, {
                 maxBytes: input.save ? SAVED_LOG_BYTES : LOG_BYTES,
+                keep: "tail",
               })
               const raw = new TextDecoder().decode(download.bytes)
               const file = input.save
@@ -904,7 +905,7 @@ export function tools(deps: Deps): Tool.Info[] {
       bytes: Schema.Int,
       note: Schema.optionalKey(Schema.String),
     }),
-    execute: (input) =>
+    execute: (input, context) =>
       Effect.gen(function* () {
         if (input.artifact === undefined && input.name === undefined)
           return yield* new GitHubClient.Error({ kind: "validation", message: "Pass artifact (id) or name." })
@@ -947,7 +948,9 @@ export function tools(deps: Deps): Tool.Info[] {
             message: `Artifact ${meta.name} is larger than ${ARTIFACT_BYTES / 1024 / 1024} MB.`,
             hint: `Download it with \`gh run download --name ${meta.name}\`.`,
           })
-        const directory = input.path ? path.resolve(deps.directory, input.path) : scratch("artifacts", String(meta.id))
+        const directory = input.path
+          ? yield* GitHubShared.writable(deps, context, input.path)
+          : scratch("artifacts", resolved.repo.host, resolved.repo.owner, resolved.repo.name, String(meta.id))
         yield* io("Unable to create directory", () => mkdir(directory, { recursive: true }))
         const result = { id: meta.id, name: meta.name, path: directory, bytes: download.bytes.byteLength }
         if (input.extract === false) {

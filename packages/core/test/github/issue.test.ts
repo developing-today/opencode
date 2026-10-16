@@ -306,7 +306,25 @@ describe("github issues", () => {
     withEnv(env, () =>
       Effect.gen(function* () {
         const github = fakeGitHub({
-          "GRAPHQL node(id: $id)": { body: { node: { __typename: "DiscussionComment", url: "https://old" } } },
+          "GRAPHQL node(id: $id)": (request) => {
+            const id = (request.body as { variables: { id: string } }).variables.id
+            if (id === "DC_9")
+              return {
+                body: {
+                  node: {
+                    __typename: "DiscussionComment",
+                    url: "https://old",
+                    discussion: { repository: { nameWithOwner: "acme/widgets" } },
+                  },
+                },
+              }
+            // A comment from another repository is authorized against that repository, not the one passed in.
+            return {
+              body: {
+                node: { __typename: "IssueComment", url: "https://x", repository: { nameWithOwner: "acme/other" } },
+              },
+            }
+          },
           "GRAPHQL updateDiscussionComment(": {
             body: { result: { comment: { url: "https://github.com/acme/widgets/discussions/5#c" } } },
           },
@@ -315,7 +333,7 @@ describe("github issues", () => {
             body: { node_id: "IC_555", html_url: "https://github.com/acme/widgets/issues/1#issuecomment-555" },
           },
         })
-        const { deps } = yield* makeDeps({ http: github.http })
+        const { deps, asserted } = yield* makeDeps({ http: github.http })
         const tool = find(GitHubIssues.tools(deps), "comment_update")
         const edited = yield* run(tool, { repo: "acme/widgets", id: "DC_9", body: "Edited" })
         const hidden = yield* run(tool, { repo: "acme/widgets", id: "IC_3", hide: "off_topic" })
@@ -331,10 +349,16 @@ describe("github issues", () => {
         expect(calls.map((body) => body.variables)).toEqual([
           { id: "DC_9" },
           { id: "DC_9", body: "Edited" },
+          { id: "IC_3" },
           { id: "IC_3", classifier: "OFF_TOPIC" },
         ])
         expect(calls[1]?.query).toContain("updateDiscussionComment(input: { commentId: $id")
-        expect(calls[2]?.query).toContain("minimizeComment(input:")
+        expect(calls[3]?.query).toContain("minimizeComment(input:")
+        expect(asserted.map((item) => item.resources)).toEqual([
+          ["github.com/acme/widgets"],
+          ["github.com/acme/other"],
+          ["github.com/acme/widgets"],
+        ])
         expect(rest(github.requests)).toEqual([
           ["PATCH", "/repos/acme/widgets/issues/comments/555", { body: "REST edit" }],
         ])
