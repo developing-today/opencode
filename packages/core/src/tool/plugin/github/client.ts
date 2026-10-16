@@ -187,7 +187,8 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
     ): Effect.Effect<Response<unknown>, Error> =>
       Effect.gen(function* () {
         const response = yield* send(build(method, path, options))
-        const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""))
+        // A connection that drops after the headers is a network failure, not an empty body.
+        const text = yield* response.text.pipe(Effect.mapError((error) => bodyError(host, path, error)))
         const data = parseJson(text)
         const headers = response.headers
         if (response.status === 401 && !retried) {
@@ -284,7 +285,16 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
             headers: { Accept: "application/vnd.github+json" },
           }).pipe((request) => HttpClientRequest.bodyUint8Array(request, upload.bytes, upload.contentType))
           const response = yield* send(request, upload.scheme ?? "Bearer")
-          const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""))
+          const text = yield* response.text.pipe(
+            Effect.mapError(
+              (error) =>
+                new Error({
+                  kind: "network",
+                  message: `The upload to ${upload.url.replace(/\?.*$/, "")} lost its connection before GitHub answered: ${error.message}`,
+                  hint: "The upload may have succeeded. Check for the asset before retrying.",
+                }),
+            ),
+          )
           const data = parseJson(text)
           if (response.status >= 400)
             return yield* statusError({
@@ -348,6 +358,14 @@ export function link(header: string | undefined, rel: string) {
 }
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
+function bodyError(host: string, path: string, error: { readonly message: string }) {
+  return new Error({
+    kind: "network",
+    message: `Lost the connection to ${host} while reading ${path.replace(/^https:\/\/[^/]+/, "")}: ${error.message}`,
+    hint: networkHint(host),
+  })
+}
 
 // Error pages and log downloads are not JSON; keep their text so error messages can quote it.
 function parseJson(text: string): unknown {

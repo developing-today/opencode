@@ -80,6 +80,34 @@ describe("GitHubClient.download", () => {
   )
 })
 
+describe("GitHubClient requests", () => {
+  it.live("a body that breaks off after the headers is a network failure, not an empty answer", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        let calls = 0
+        const http = HttpClient.make((request) =>
+          Effect.sync(() => {
+            calls++
+            const stream = new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode('[{"id":'))
+                controller.error(new globalThis.Error("connection reset"))
+              },
+            })
+            return HttpClientResponse.fromWeb(request, new Response(stream, { status: 200 }))
+          }),
+        )
+        const api = GitHubClient.make({ http, process: yield* AppProcess.Service }).forHost("github.com")
+        const failure = yield* api.json("GET", "/repos/acme/widgets/issues").pipe(Effect.flip)
+        expect(failure.kind).toBe("network")
+        expect(failure.message).toContain("Lost the connection to github.com while reading /repos/acme/widgets/issues")
+        // GETs are retried twice before giving up.
+        expect(calls).toBe(3)
+      }),
+    ),
+  )
+})
+
 describe("GitHubRepo.local", () => {
   it.live("a fork branch that tracks the upstream default branch is still found where it is pushed", () =>
     Effect.gen(function* () {

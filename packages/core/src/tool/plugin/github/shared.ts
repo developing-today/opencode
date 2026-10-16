@@ -230,6 +230,24 @@ export const writable = Effect.fn("GitHubShared.writable")(function* (
   return target.absolute as string
 })
 
+/** Approves writing one file, as the write tool does before it creates or overwrites a path. */
+export const writableFile = Effect.fn("GitHubShared.writableFile")(function* (
+  deps: Deps,
+  context: Tool.Context,
+  file: string,
+) {
+  const target = yield* deps.files.resolve({ path: file, kind: "file" })
+  yield* deps.permission.assert({
+    action: "edit",
+    resources: [target.resource],
+    save: ["*"],
+    sessionID: context.sessionID,
+    agent: context.agent,
+    source: { type: "tool", messageID: context.messageID, id: context.id },
+  })
+  return target.absolute as string
+})
+
 /** Encodes a branch or tag for a URL path, keeping the slashes GitHub expects between ref segments. */
 export const refPath = (ref: string) => ref.split("/").map(encodeURIComponent).join("/")
 

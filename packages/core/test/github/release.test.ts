@@ -298,7 +298,11 @@ describe("github release tools", () => {
         // A caller-chosen destination needs the write tool's approvals before anything is written there.
         const destination = path.join(dir.path, "downloads")
         expect(approvals).toEqual([{ kind: "external", path: destination }])
-        expect(asserted.map((item) => [item.action, item.resources])).toEqual([["edit", [destination]]])
+        // The file itself is approved too, so a rule denying one path inside the directory still holds.
+        expect(asserted.map((item) => [item.action, item.resources])).toEqual([
+          ["edit", [destination]],
+          ["edit", [file]],
+        ])
       }),
     ),
   )

@@ -955,6 +955,7 @@ export function tools(deps: Deps): Tool.Info[] {
         const result = { id: meta.id, name: meta.name, path: directory, bytes: download.bytes.byteLength }
         if (input.extract === false) {
           const zip = path.join(directory, `${meta.name}.zip`)
+          if (input.path) yield* GitHubShared.writableFile(deps, context, zip)
           yield* io("Unable to write artifact", () => writeFile(zip, download.bytes))
           return { ...result, zip }
         }
@@ -962,6 +963,26 @@ export function tools(deps: Deps): Tool.Info[] {
         yield* io("Unable to write artifact", () =>
           mkdir(path.dirname(zip), { recursive: true }).then(() => writeFile(zip, download.bytes)),
         )
+        // Extraction writes every entry into the caller's directory, so each one needs the same approval as a write.
+        if (input.path) {
+          const listing = yield* deps.process
+            .run(ChildProcess.make("unzip", ["-Z1", zip], { extendEnv: true, stdin: "ignore" }), {
+              timeout: "1 minute",
+            })
+            .pipe(
+              Effect.flatMap(AppProcess.requireSuccess),
+              Effect.map((output) => output.stdout.toString("utf8")),
+              Effect.orElseSucceed(() => ""),
+            )
+          yield* Effect.forEach(
+            listing
+              .split("\n")
+              .map((entry) => entry.trim())
+              .filter((entry) => entry && !entry.endsWith("/")),
+            (entry) => GitHubShared.writableFile(deps, context, path.join(directory, entry)),
+            { discard: true },
+          )
+        }
         const failure = yield* deps.process
           .run(ChildProcess.make("unzip", ["-o", "-q", zip, "-d", directory], { extendEnv: true, stdin: "ignore" }), {
             timeout: "5 minutes",

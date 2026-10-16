@@ -1,6 +1,6 @@
 export * as GitHubReleases from "./release.js"
 
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { Tool } from "@opencode/schema/tool"
@@ -76,7 +76,10 @@ const io = <A>(label: string, run: () => Promise<A>) =>
   Effect.tryPromise({
     try: run,
     catch: (cause) =>
-      new globalThis.Error(`${label}: ${cause instanceof globalThis.Error ? cause.message : String(cause)}`),
+      new GitHubClient.Error({
+        kind: "validation",
+        message: `${label}: ${cause instanceof globalThis.Error ? cause.message : String(cause)}`,
+      }),
   })
 
 /** Finds a release by tag, including drafts, which the tags endpoint does not return. */
@@ -96,16 +99,24 @@ const byTag = Effect.fn("GitHubReleases.byTag")(function* (api: Api, slug: strin
   })
 })
 
-const readAssets = (deps: Deps, context: Tool.Context, paths: ReadonlyArray<string>) =>
+/**
+ * Approves and checks every local asset before anything is created, without reading their contents: uploads then read
+ * one file at a time, so a release with many large binaries never holds them all in memory.
+ */
+const checkAssets = (deps: Deps, context: Tool.Context, paths: ReadonlyArray<string>) =>
   Effect.forEach(paths, (file) =>
     GitHubShared.readable(deps, context, file).pipe(
       Effect.flatMap((resolved) =>
-        io(`Unable to read ${file}`, () => readFile(resolved)).pipe(
-          Effect.map((bytes) => ({
-            name: path.basename(resolved),
-            bytes: new Uint8Array(bytes),
-            contentType: MIME[path.extname(resolved).toLowerCase()] ?? "application/octet-stream",
-          })),
+        io(`Unable to read ${file}`, () => stat(resolved)).pipe(
+          Effect.flatMap((info) =>
+            info.isFile()
+              ? Effect.succeed({
+                  name: path.basename(resolved),
+                  path: resolved,
+                  contentType: MIME[path.extname(resolved).toLowerCase()] ?? "application/octet-stream",
+                })
+              : Effect.fail(new GitHubClient.Error({ kind: "validation", message: `${file} is not a file.` })),
+          ),
         ),
       ),
     ),
@@ -115,7 +126,7 @@ const uploadAsset = (
   api: Api,
   slug: string,
   release: ReleaseData,
-  asset: { readonly name: string; readonly bytes: Uint8Array; readonly contentType: string },
+  asset: { readonly name: string; readonly path: string; readonly contentType: string },
   label?: string,
 ) => {
   // GitHub Enterprise Server has no uploads host; its release carries the upload URL template instead.
@@ -123,9 +134,10 @@ const uploadAsset = (
     ? `${api.uploads}/repos/${slug}/releases/${release.id}/assets`
     : (release.upload_url ?? "").replace(/\{.*\}$/, "")
   const query = new URLSearchParams({ name: asset.name, ...(label ? { label } : {}) })
-  return api
-    .upload({ url: `${base}?${query}`, bytes: asset.bytes, contentType: asset.contentType })
-    .pipe(Effect.map((data) => data as AssetData))
+  return io(`Unable to read ${asset.path}`, () => readFile(asset.path)).pipe(
+    Effect.flatMap((bytes) => api.upload({ url: `${base}?${query}`, bytes, contentType: asset.contentType })),
+    Effect.map((data) => data as AssetData),
+  )
 }
 
 const Summary = Schema.Struct({
@@ -260,8 +272,8 @@ export function tools(deps: Deps): Tool.Info[] {
       Effect.gen(function* () {
         const resolved = yield* GitHubShared.target(deps, input.repo)
         const slug = GitHubRepo.slug(resolved.repo)
-        // Read every file first so a bad path fails before the release exists.
-        const files = yield* readAssets(deps, context, input.assets ?? [])
+        // Check every file first so a bad path fails before the release exists.
+        const files = yield* checkAssets(deps, context, input.assets ?? [])
         yield* GitHubShared.authorize(deps, context, "release_create", resolved.repo, { tag: input.tag })
         const release = yield* resolved.api.json<ReleaseData>("POST", `/repos/${slug}/releases`, {
           body: {
@@ -460,7 +472,7 @@ export function tools(deps: Deps): Tool.Info[] {
         if (input.action === "upload") {
           if (!input.paths?.length)
             return yield* new GitHubClient.Error({ kind: "validation", message: "upload needs paths." })
-          const files = yield* readAssets(deps, context, input.paths)
+          const files = yield* checkAssets(deps, context, input.paths)
           const clashes = release.assets.filter((asset) => files.some((file) => file.name === asset.name))
           if (clashes.length > 0 && !input.overwrite)
             return yield* new GitHubClient.Error({
@@ -519,6 +531,8 @@ export function tools(deps: Deps): Tool.Info[] {
                 })
               // Asset names cannot contain path separators on GitHub, but guard against writing outside the directory.
               const file = path.join(directory, path.basename(asset.name))
+              // Approve the file itself: a rule can deny one path inside a directory that is otherwise writable.
+              if (input.path) yield* GitHubShared.writableFile(deps, context, file)
               yield* io(`Unable to write ${file}`, () => writeFile(file, download.bytes))
               return { name: asset.name, path: file, bytes: download.bytes.byteLength }
             }),

@@ -127,6 +127,30 @@ describe("GitHubCopilot.parseReview", () => {
     ])
   })
 
+  test("a picture without a severity badge does not swallow the headline before a later badge", () => {
+    const review = GitHubCopilot.parseReview(
+      [
+        '<picture><img src="logo.png" alt="Copilot"></picture>',
+        "",
+        "### 🟡 Changes recommended",
+        "",
+        "One defect remains.",
+        "",
+        "<details open>",
+        "<summary><strong>1 open finding</strong></summary>",
+        "",
+        '- <picture><img alt="Low severity"></picture> [Tidy](https://github.com/acme/widgets/pull/7#discussion_r5)',
+        "</details>",
+      ].join("\n"),
+    )
+    expect(review).toMatchObject({
+      verdict: "changes",
+      headline: "Changes recommended",
+      summary: "One defect remains.",
+    })
+    expect(review.findings).toEqual([{ title: "Tidy", severity: "low", commentID: 5, new: false }])
+  })
+
   test("a legacy review that generated no comments is clean", () => {
     expect(
       GitHubCopilot.parseReview(
@@ -179,6 +203,21 @@ describe("GitHubCopilot.state", () => {
   test("a review on the head commit with nothing pending is reviewed", () => {
     const state = GitHubCopilot.state({ head: OLD, reviews: [reviewed], events: [], pending: false, now })
     expect(state.state).toBe("reviewed")
+  })
+
+  test("work that ended in failure ends the request, so the next wait or copilot call requests again", () => {
+    const state = GitHubCopilot.state({
+      head: HEAD,
+      reviews: [reviewed],
+      events: [
+        { event: "review_requested", at: "2026-01-01T11:50:00Z", reviewer: "Copilot" },
+        { event: "copilot_work_started", at: "2026-01-01T11:51:00Z" },
+        { event: "copilot_work_finished_failure", at: "2026-01-01T11:52:00Z" },
+      ],
+      pending: false,
+      now,
+    })
+    expect(state.state).toBe("stale")
   })
 
   test("no reviews and no request is none", () => {

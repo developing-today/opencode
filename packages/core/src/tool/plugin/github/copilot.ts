@@ -217,11 +217,16 @@ function details(body: string): Section[] {
 
 // Copilot inserts zero-width spaces after path separators so long paths wrap; they break path matching.
 function clean(text: string) {
-  return text
-    .replace(/\u200b/g, "")
-    .replace(/<picture>[\s\S]*?<img[^>]*alt="(\w+) severity"[^>]*>[\s\S]*?<\/picture>/gi, "[$1]")
-    .replace(/<picture>[\s\S]*?<\/picture>/g, "")
-    .replace(/\r\n/g, "\n")
+  return (
+    text
+      .replace(/\u200b/g, "")
+      // Inspect one picture block at a time, so a badge-less picture cannot swallow text up to a later badge.
+      .replace(/<picture>[\s\S]*?<\/picture>/g, (block) => {
+        const severity = /<img[^>]*alt="(\w+) severity"/i.exec(block)?.[1]
+        return severity ? `[${severity}]` : ""
+      })
+      .replace(/\r\n/g, "\n")
+  )
 }
 
 function number(value: string | undefined) {
@@ -289,7 +294,8 @@ export function state(input: {
   if (started > reviewed && started > finished)
     return { ...base, state: "in_progress", since: iso(started), stuck: input.now - started > STUCK_WORK_MS }
   const pendingSince = Math.max(requested, started)
-  if (input.pending || (requested > reviewed && requested > removed))
+  // Work that ended without a review (copilot_work_finished_failure) also ends the request.
+  if (input.pending || (requested > reviewed && requested > removed && requested > finished))
     return {
       ...base,
       state: "requested",
