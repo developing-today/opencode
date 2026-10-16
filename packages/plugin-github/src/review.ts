@@ -1,7 +1,8 @@
 export * as GitHubReview from "./review.js"
 
+import { Session } from "@opencode/schema/session"
 import type { Tool } from "@opencode/schema/tool"
-import { Cause, Clock, Duration, Effect, Exit, Option, Result, Schema } from "effect"
+import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Result, Schema } from "effect"
 import { GitHubClient } from "./client.js"
 import { GitHubCopilot } from "./copilot.js"
 import { GitHubPreferences } from "./preferences.js"
@@ -587,7 +588,6 @@ export function guidance(preferences: GitHubPreferences.Info & typeof GitHubPref
 
 export function tools(deps: Deps): Tool.Info[] {
   const shownGuidance = new Set<string>()
-  const waits = new Set<string>()
   const discovered = new Map<string, { at: number; value: Discovery }>()
 
   const discover = Effect.fn("GitHubReview.discover")(function* (target: GitHubShared.Target) {
@@ -1337,7 +1337,7 @@ export function tools(deps: Deps): Tool.Info[] {
 
         // One background wait per pull request and goal: a second call joins the first instead of polling twice.
         const key = `${context.sessionID}:${prKey(repo, number)}:${goal}`
-        if (input.background !== false && waits.has(key))
+        if (input.background !== false && running.has(key))
           return {
             ...backgroundResult(label, goal, "none"),
             message: `A wait for ${goal} on ${label} is already running in the background. You will be notified when it finishes; DO NOT poll.`,
@@ -1371,15 +1371,35 @@ export function tools(deps: Deps): Tool.Info[] {
           }
         }
 
-        const work = poll({ api, repo, number, goal, started, timeout, interval, requested, allowRequest, lastRequest })
-        if (input.background === false) return yield* work
-        waits.add(key)
-        yield* work.pipe(
-          Effect.exit,
-          Effect.flatMap((exit) => notify(deps, context.sessionID, label, exit)),
-          Effect.ensuring(Effect.sync(() => waits.delete(key))),
-          Effect.forkIn(deps.scope, { startImmediately: true }),
-        )
+        if (input.background === false)
+          return yield* poll({
+            api,
+            repo,
+            number,
+            goal,
+            started,
+            timeout,
+            interval,
+            requested,
+            allowRequest,
+            lastRequest,
+          })
+        yield* background(deps, {
+          key,
+          sessionID: context.sessionID,
+          directory: deps.directory,
+          host: repo.host,
+          owner: repo.owner,
+          name: repo.name,
+          number,
+          goal,
+          started,
+          timeout: Duration.toMillis(timeout),
+          interval: Duration.toMillis(interval),
+          requested,
+          allowRequest,
+          lastRequest,
+        })
         return backgroundResult(label, goal, requested)
       }),
   })
@@ -2390,6 +2410,94 @@ function summarize(input: {
   lines.push(`Next: call github feedback for ${input.pr} to read and respond to findings.`)
   return lines.join("\n")
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Background waits that outlive the plugin
+// ---------------------------------------------------------------------------------------------------------------
+
+const PendingWait = Schema.Struct({
+  key: Schema.String,
+  sessionID: Session.ID,
+  directory: Schema.String,
+  host: Schema.String,
+  owner: Schema.String,
+  name: Schema.String,
+  number: Schema.Int,
+  goal: Schema.Literals(["copilot", "checks", "both"]),
+  started: Schema.Number,
+  timeout: Schema.Number,
+  interval: Schema.Number,
+  requested: Schema.Literals(["none", "requested", "re-requested"]),
+  allowRequest: Schema.Boolean,
+  lastRequest: Schema.Number,
+})
+type PendingWait = typeof PendingWait.Type
+const decodeWait = Schema.decodeUnknownOption(PendingWait)
+const WAIT_PREFIX = "github.wait/"
+
+/** Fibers of the background waits in this process, by session, pull request and goal. */
+const running = new Map<string, Fiber.Fiber<unknown, unknown>>()
+
+/**
+ * Runs a wait on the plugin's scope and records it in storage until it settles. A plugin reload or a server restart
+ * interrupts the fiber but keeps the record, and `resume` picks it up again, so the session still gets its message.
+ */
+const background = Effect.fn("GitHubReview.background")(function* (deps: Deps, wait: PendingWait) {
+  yield* deps.kv.set(`${WAIT_PREFIX}${wait.key}`, wait)
+  const repo = { host: wait.host, owner: wait.owner, name: wait.name }
+  const label = `${GitHubRepo.slug(repo)}#${wait.number}`
+  const fiber = yield* poll({
+    api: deps.client.forHost(wait.host),
+    repo,
+    number: wait.number,
+    goal: wait.goal,
+    started: wait.started,
+    timeout: Duration.millis(wait.timeout),
+    interval: Duration.millis(wait.interval),
+    requested: wait.requested,
+    allowRequest: wait.allowRequest,
+    lastRequest: wait.lastRequest,
+  }).pipe(
+    Effect.exit,
+    // Settled either way: drop the record while the message is delivered, so a slow admission cannot resend it.
+    Effect.flatMap((exit) =>
+      Effect.all([notify(deps, wait.sessionID, label, exit), deps.kv.remove(`${WAIT_PREFIX}${wait.key}`)], {
+        concurrency: "unbounded",
+        discard: true,
+      }),
+    ),
+    Effect.ensuring(
+      Effect.sync(() => {
+        // A resumed wait may already have replaced this one.
+        if (running.get(wait.key) === fiber) running.delete(wait.key)
+      }),
+    ),
+    // Not started immediately, so the fiber is registered before it can finish.
+    Effect.forkIn(deps.scope),
+  )
+  running.set(wait.key, fiber)
+})
+
+/** Restarts the waits recorded for this working directory, replacing any left over from an earlier plugin load. */
+export const resume = Effect.fn("GitHubReview.resume")(function* (deps: Deps) {
+  const records: PendingWait[] = []
+  let after: string | undefined
+  do {
+    const page = yield* deps.kv.scan({ prefix: WAIT_PREFIX, ...(after ? { after } : {}) })
+    records.push(...page.entries.flatMap((entry) => Option.toArray(decodeWait(entry.value))))
+    after = page.next
+  } while (after)
+  yield* Effect.forEach(
+    records.filter((wait) => wait.directory === deps.directory),
+    (wait) =>
+      Effect.gen(function* () {
+        const stale = running.get(wait.key)
+        if (stale) yield* Fiber.interrupt(stale)
+        yield* background(deps, wait)
+      }),
+    { discard: true },
+  )
+})
 
 /** Posts a finished background wait into its session, which wakes the session if it is idle. */
 const notify = (

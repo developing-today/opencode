@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Exit, Scope } from "effect"
 import * as TestClock from "effect/testing/TestClock"
 import { GitHubCopilot } from "../src/copilot.js"
 import { GitHubRepo } from "../src/repo.js"
@@ -1021,6 +1021,49 @@ describe("github review tools", () => {
         expect(notified[0]?.text).toContain(
           "Open items:\n- PRRT_copilot [high] src/page.ts:20 Pagination stops after one page\n- PRRT_human [human] src/cache.ts:8 Why a Map here?",
         )
+      }),
+    ),
+  )
+
+  it.effect("a background wait interrupted by a plugin reload resumes from storage and still notifies", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-01-01T11:00:00Z"))
+        const events: Array<Record<string, unknown>> = [
+          { event: "review_requested", created_at: "2026-01-01T10:59:00Z", requested_reviewer: { login: "Copilot" } },
+          { event: "copilot_work_started", created_at: "2026-01-01T10:59:30Z" },
+        ]
+        let reviewsList = [copilotReview({ id: 900, commit: OLD, at: "2026-01-01T10:00:00Z", body: changesBody })]
+        const github = fakeGitHub(
+          baseRoutes({
+            "GET /repos/acme/widgets/pulls/7/reviews": () => ({ body: reviewsList }),
+            "GET /repos/acme/widgets/issues/7/timeline": () => ({ body: events }),
+          }),
+        )
+        const made = yield* makeDeps({ http: github.http })
+        const first = yield* Scope.make()
+        yield* run(find(GitHubReview.tools({ ...made.deps, scope: first }), "wait"), {
+          repo: "acme/widgets",
+          pr: 7,
+          interval_seconds: 30,
+        })
+        const recorded = () =>
+          made.kv.scan({ prefix: "github.wait/" }).pipe(Effect.map((page) => page.entries.map((entry) => entry.key)))
+        expect(yield* recorded()).toHaveLength(1)
+
+        // The plugin reloads: its scope closes and the poll stops, but the record stays.
+        yield* Scope.close(first, Exit.void)
+        expect(yield* recorded()).toHaveLength(1)
+
+        reviewsList = [
+          ...reviewsList,
+          copilotReview({ id: 901, commit: HEAD, at: "2026-01-01T11:00:40Z", body: approvalBody }),
+        ]
+        yield* GitHubReview.resume(made.deps)
+        for (let attempt = 0; attempt < 50 && made.notified.length === 0; attempt++) yield* Effect.yieldNow
+        expect(made.notified).toHaveLength(1)
+        expect(made.notified[0]?.text).toContain('state="completed"')
+        expect(yield* recorded()).toEqual([])
       }),
     ),
   )

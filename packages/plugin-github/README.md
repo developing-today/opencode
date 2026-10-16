@@ -96,7 +96,8 @@ Administrative writes follow the same permission defaults as every other tool. T
   session and machine agrees on what is still open.
 - Checks that re-ran for the same commit count once; checks queued for over ten minutes are reported with the runner
   labels their job waits for, since a missing runner is the usual reason.
-- A background `wait` survives transient network, server and rate-limit errors, joins an existing wait for the same pull
+- A background `wait` is recorded in plugin storage until it settles, so a plugin reload or a server restart resumes it
+  instead of dropping the session's notification. It survives transient network, server and rate-limit errors, joins an existing wait for the same pull
   request instead of polling twice, and leaves a just-pushed commit to a repository's review-on-push rule for a minute
   before requesting a review itself.
 

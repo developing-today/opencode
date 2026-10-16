@@ -69,6 +69,8 @@ export default Plugin.define({
         registered.forEach((tool) => draft.add(tool))
       })
       .pipe(Effect.orDie)
+    // Waits that a reload or restart interrupted continue where they left off.
+    yield* GitHubReview.resume(deps).pipe(Effect.ignore)
     // Hidden from the skill list; tool failures name it, so it only enters context when something breaks.
     yield* ctx.skill
       .transform((editor) => {
