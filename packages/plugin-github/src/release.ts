@@ -82,9 +82,17 @@ const io = <A>(label: string, run: () => Promise<A>) =>
       }),
   })
 
-/** Finds a release by tag, including drafts, which the tags endpoint does not return. */
-const byTag = Effect.fn("GitHubReleases.byTag")(function* (api: Api, slug: string, tag: string) {
-  if (tag === "latest") return yield* api.json<ReleaseData>("GET", `/repos/${slug}/releases/latest`)
+/**
+ * Finds a release by exact tag, including drafts, which the tags endpoint does not return. Only reads may ask for
+ * "latest": for a change, a tag named latest must not silently become whichever release GitHub marks latest.
+ */
+const byTag = Effect.fn("GitHubReleases.byTag")(function* (
+  api: Api,
+  slug: string,
+  tag: string,
+  options: { readonly latest?: boolean } = {},
+) {
+  if (tag === "latest" && options.latest) return yield* api.json<ReleaseData>("GET", `/repos/${slug}/releases/latest`)
   const direct = yield* api.request<ReleaseData>("GET", `/repos/${slug}/releases/tags/${GitHubShared.refPath(tag)}`, {
     allow: [404],
   })
@@ -209,7 +217,7 @@ export function tools(deps: Deps): Tool.Info[] {
             })),
           }
         }
-        const release = yield* byTag(resolved.api, slug, input.tag)
+        const release = yield* byTag(resolved.api, slug, input.tag, { latest: true })
         return {
           release: {
             id: release.id,
@@ -468,7 +476,7 @@ export function tools(deps: Deps): Tool.Info[] {
         const resolved = yield* GitHubShared.target(deps, input.repo)
         const slug = GitHubRepo.slug(resolved.repo)
         const api = resolved.api
-        const release = yield* byTag(api, slug, input.tag)
+        const release = yield* byTag(api, slug, input.tag, { latest: input.action === "download" })
         if (input.action === "upload") {
           if (!input.paths?.length)
             return yield* new GitHubClient.Error({ kind: "validation", message: "upload needs paths." })
@@ -511,8 +519,9 @@ export function tools(deps: Deps): Tool.Info[] {
               os.tmpdir(),
               "opencode-github",
               "releases",
-              ...[resolved.repo.host, resolved.repo.owner, resolved.repo.name, release.tag_name].map((part) =>
-                part.replace(/[^\w.-]/g, "_"),
+              // Encoded, not replaced, so distinct tags such as release/v1 and release_v1 stay distinct.
+              ...[resolved.repo.host, resolved.repo.owner, resolved.repo.name, release.tag_name].map(
+                encodeURIComponent,
               ),
             )
         yield* io("Unable to create directory", () => mkdir(directory, { recursive: true }))

@@ -25,6 +25,15 @@ export const slug = (repo: Ref) => `${repo.owner}/${repo.name}`
 
 /** Parses `owner/repo`, `host/owner/repo`, an https or ssh remote, or any GitHub web URL inside a repository. */
 export function parse(input: string, host = "github.com"): Ref | undefined {
+  const ref = parseLoose(input, host)
+  // Owner and name become API paths and permission resources; a `#`, `?` or `%` would make the two disagree.
+  if (!ref || !NAME.test(ref.owner) || !NAME.test(ref.name) || ref.name === "." || ref.name === "..") return undefined
+  return ref
+}
+
+const NAME = /^[A-Za-z0-9_.-]+$/
+
+function parseLoose(input: string, host: string): Ref | undefined {
   const text = input.trim().replace(/\.git$/, "")
   const scp = /^(?:[\w.-]+@)?([\w.-]+):([\w.-]+)\/([\w.-]+?)\/?$/.exec(text)
   if (scp && !text.includes("://")) return { host: scp[1], owner: scp[2], name: scp[3] }
@@ -80,12 +89,15 @@ export const local = Effect.fn("GitHubRepo.local")(function* (run: GitHubProcess
     ],
     { concurrency: "unbounded" },
   )
-  const urls = new Map(
-    remotes
-      .split("\n")
-      .map((line) => line.split(/\s+/))
-      .filter((parts) => parts.length >= 2)
-      .map((parts) => [parts[0], parts[1]] as const),
+  // `git remote -v` lists a fetch and a push URL per remote. The repository is where a remote fetches from; a separate
+  // pushurl (such as a fork) only says where the branch, and so the pull request head, lives.
+  const listed = remotes
+    .split("\n")
+    .map((line) => line.split(/\s+/))
+    .filter((parts) => parts.length >= 3)
+  const urls = new Map(listed.filter((parts) => parts[2] === "(fetch)").map((parts) => [parts[0], parts[1]] as const))
+  const pushUrls = new Map(
+    listed.filter((parts) => parts[2] === "(push)").map((parts) => [parts[0], parts[1]] as const),
   )
   if (urls.size === 0)
     return yield* new GitHubClient.Error({
@@ -122,7 +134,7 @@ export const local = Effect.fn("GitHubRepo.local")(function* (run: GitHubProcess
       hint: "Pass `repo` as owner/name.",
     })
   const pushName = pushRemote ?? (configuredRemote && urls.has(configuredRemote) ? configuredRemote : found.remote)
-  const pushRepo = parse(urls.get(pushName) ?? "")
+  const pushRepo = parse(pushUrls.get(pushName) ?? urls.get(pushName) ?? "")
   const pushBranch = pushRemote ? pushRef.slice(pushRemote.length + 1) : branch
   return {
     ...found,

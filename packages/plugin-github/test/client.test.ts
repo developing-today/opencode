@@ -169,6 +169,43 @@ describe("GitHubRepo.local", () => {
   )
 })
 
+describe("GitHubRepo.parse", () => {
+  it.live("refuses owner or name characters that would make the API path and the permission resource disagree", () =>
+    Effect.sync(() => {
+      expect(GitHubRepo.parse("acme/secret#suffix")).toBeUndefined()
+      expect(GitHubRepo.parse("acme/secret?ignored=")).toBeUndefined()
+      expect(GitHubRepo.parse("https://github.com/acme/se%23cret")).toBeUndefined()
+      expect(GitHubRepo.parse("acme/..")).toBeUndefined()
+      expect(GitHubRepo.parse("acme/my-repo.js")).toEqual({ host: "github.com", owner: "acme", name: "my-repo.js" })
+    }),
+  )
+})
+
+describe("GitHubRepo.local with a push URL", () => {
+  it.live("one remote that fetches from the repository and pushes to a fork keeps them apart", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      yield* Effect.promise(async () => {
+        await initRepo(dir.path)
+        const git = (...args: string[]) => $`git -C ${dir.path} ${args}`.quiet()
+        await git("remote", "add", "origin", "https://github.com/acme/widgets.git")
+        await git("remote", "set-url", "--push", "origin", "git@github.com:alice/widgets.git")
+        await git("config", "remote.origin.gh-resolved", "base")
+        await git("checkout", "-q", "-b", "feature")
+      })
+      const local = yield* GitHubRepo.local(GitHubProcess.run, dir.path)
+      expect(local).toMatchObject({ owner: "acme", name: "widgets", remote: "origin", branch: "feature" })
+      expect(local.push).toEqual({
+        host: "github.com",
+        owner: "alice",
+        name: "widgets",
+        remote: "origin",
+        branch: "feature",
+      })
+    }),
+  )
+})
+
 describe("GitHubShared.numbered", () => {
   it.live("a shorthand owner/repo#n reference keeps the effective Enterprise host", () =>
     withEnv({ ...env, GH_HOST: "ghe.example.com", GH_ENTERPRISE_TOKEN: "ghe-token" }, () =>

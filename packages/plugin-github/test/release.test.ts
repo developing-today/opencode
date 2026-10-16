@@ -237,6 +237,35 @@ describe("github release tools", () => {
     ),
   )
 
+  it.live("a change to a release tagged latest targets that exact tag, never GitHub's latest release", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const tagged = { ...release, id: 50, tag_name: "latest", prerelease: true }
+        const github = fakeGitHub({
+          "GET /repos/acme/widgets/releases/tags/latest": { body: tagged },
+          "GET /repos/acme/widgets/releases/latest": { body: release },
+          "DELETE /repos/acme/widgets/releases/50": { status: 204 },
+        })
+        const { deps } = yield* makeDeps({ http: github.http })
+        yield* run(find(GitHubReleases.tools(deps), "release_update"), {
+          repo: "acme/widgets",
+          tag: "latest",
+          delete: true,
+        })
+        expect(github.requests.map((request) => `${request.method} ${request.path}`)).toEqual([
+          "GET /repos/acme/widgets/releases/tags/latest",
+          "DELETE /repos/acme/widgets/releases/50",
+        ])
+        // Reading still follows GitHub's latest release.
+        const read = yield* run<object, { release: { tag: string } }>(find(GitHubReleases.tools(deps), "releases"), {
+          repo: "acme/widgets",
+          tag: "latest",
+        })
+        expect(read.release.tag).toBe("v1.0.0")
+      }),
+    ),
+  )
+
   it.live("release_update patches fields and deletes named assets", () =>
     withEnv(env, () =>
       Effect.gen(function* () {
@@ -316,6 +345,28 @@ describe("github release tools", () => {
           path.join(os.tmpdir(), "opencode-github", "releases", "github.com", "acme", "widgets", "v1.0.0", "app.zip"),
         )
         expect(asserted).toEqual([])
+        // Distinct tags keep distinct directories: a slash is encoded, not folded into an underscore.
+        const slashed = fakeGitHub({
+          "GET /repos/acme/widgets/releases/tags/release/v1": { body: { ...release, tag_name: "release/v1" } },
+        })
+        const other = wrap(slashed, { "GET /repos/acme/widgets/releases/assets/7": "zip-bytes-here" })
+        const second = yield* makeDeps({ http: other.http })
+        const nested = yield* run<object, { files: Array<{ path: string }> }>(
+          find(GitHubReleases.tools(second.deps), "release_asset"),
+          { repo: "acme/widgets", action: "download", tag: "release/v1", name: "app.zip" },
+        )
+        expect(nested.files[0]?.path).toBe(
+          path.join(
+            os.tmpdir(),
+            "opencode-github",
+            "releases",
+            "github.com",
+            "acme",
+            "widgets",
+            "release%2Fv1",
+            "app.zip",
+          ),
+        )
       }),
     ),
   )
