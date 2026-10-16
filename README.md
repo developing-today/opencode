@@ -1,3 +1,21 @@
+<!--
+  developing-today/opencode fork notice:
+  This fork tracks the upstream v2 line (anomalyco/opencode branch v2) exclusively.
+  It is strictly v2-only; the legacy v1 (dev) branch is not tracked or merged here.
+-->
+
+> [!NOTE]
+> **Fork Information (`developing-today/opencode`):**
+> This repository is a fork of [OpenCode](https://github.com/anomalyco/opencode) tracking the upstream **`v2`** line exclusively.
+>
+> **High-Level Additions & Differences in this Fork:**
+> - **Model Route Pooling & Scheduled Weights**: Named provider/model route pools (`experimental.model_routes`), recurring time-based weight schedules (`schedules` and `experimental.model_route_schedules` with weekday/month/hour/timezone windows), selection modes (ordered, round-robin, weighted), soft budgets, burst rate-limit continuity, and silent-target hedging.
+> - **Indefinite Route Telemetry & Cost Accounting**: Permanent request attempts, failure breakdowns, rate-limit snapshots, and per-request USD cost tracking (`cost_usd`) derived from catalog token pricing.
+> - **Autonomous Route Review & Tuning**: Built-in `route_stats` and `route_usage` inspection tools, deterministic tuning suggestions, `route_adjust` runtime steering, and tuner notes support.
+> - **Plan & Quota Tracking**: Dedicated plan store (`plans.json`, `plan-notes.jsonl`) with `plan_info` tool for tracking subscriptions, quota reset windows, cost tiers (`cheap`, `standard`, `frontier`), and user experience notes.
+> - **Built-in Skills & Commands**: Integrated `/routing-review`, `/plan-update`, `/routing-note`, and `/routing-config` commands, backed by dedicated `routing-review`, `routing-usage`, `plan-tracking`, and `routing-config` skills.
+> - **MCPX Integration & Daemon Handover**: Native MCPX tool projection into Code Mode, detached background daemon with JIT secret prompts, and graceful socket handover on `serve` restarts.
+
 <p align="center">
   <a href="https://opencode.ai">
     <picture>
