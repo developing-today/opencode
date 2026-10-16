@@ -2,7 +2,7 @@ export * as GitHubToolset from "./toolset.js"
 
 import type { Context } from "@opencode/plugin/effect/plugin"
 import type { Tool } from "@opencode/schema/tool"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option, Schema, Scope } from "effect"
 import { GitHubPreferences } from "./preferences.js"
 import { GitHubShared } from "./shared.js"
 
@@ -180,35 +180,68 @@ const Patterns = Schema.Struct({
   }),
 })
 
+type Reload = Context["tool"]["reload"]
+
+// The plugin runs once per working directory. Instances of one project (its checkouts, worktrees and
+// subdirectories) share this state, so a change in one reaches sessions in the others without a restart.
+const live = new Map<string, { overrides: Record<string, boolean>; reloads: Set<Reload> }>()
+const shared = (project: string) => {
+  const found = live.get(project)
+  if (found) return found
+  const created = { overrides: {} as Record<string, boolean>, reloads: new Set<Reload>() }
+  live.set(project, created)
+  return created
+}
+
+/** The project's ID, so worktrees and clones share one state; the directory where there is none to share. */
+export const scopeOf = (location: { readonly directory: string; readonly project: { readonly id: string } }) =>
+  location.project.id === "global" ? location.directory : location.project.id
+
 /**
  * Which github tools are listed to the model. Every tool exists either way; hiding only keeps rarely used
- * administration tools out of the tool list until a session needs them. The state belongs to the working directory,
- * so every session there sees the same list, and survives restarts in plugin storage.
+ * administration tools out of the tool list until a session needs them. The state belongs to the project, so every
+ * session in any of its checkouts sees the same list, and survives restarts in plugin storage.
  */
 export function make(input: {
   readonly deps: GitHubShared.Deps
   readonly tools: ReadonlyArray<Tool.Info>
-  readonly reload: Context["tool"]["reload"]
+  readonly reload: Reload
+  /** See scopeOf. */
+  readonly project: string
 }) {
   const names = input.tools.map((tool) => tool.name)
   const sectionOf = new Map(SECTIONS.flatMap((section) => section.tools.map((name) => [name, section] as const)))
   const visibleByDefault = (name: string) => sectionOf.get(name)?.visible ?? true
-  const key = `github.toolset/${input.deps.directory}`
-  let overrides: Record<string, boolean> = {}
+  const key = `github.toolset/${input.project}`
+  let state = shared(input.project)
   let defaults: Record<string, boolean> = {}
 
   const enabled = (name: string) =>
-    (META as ReadonlyArray<string>).includes(name) || (overrides[name] ?? defaults[name] ?? visibleByDefault(name))
+    (META as ReadonlyArray<string>).includes(name) ||
+    (state.overrides[name] ?? defaults[name] ?? visibleByDefault(name))
   const counts = () => {
     const shown = names.filter(enabled).length
     return { enabled: shown, hidden: names.length - shown }
   }
   const note = () =>
-    `${counts().hidden} github tools are hidden to keep the tool list short; list_tools shows them, enable adds them. Changes apply to every session in this working directory.`
+    `${counts().hidden} github tools are hidden to keep the tool list short; list_tools shows them, enable adds them. Changes apply to every session in this project, worktrees included.`
+  const reloadAll = Effect.suspend(() =>
+    Effect.forEach(new Set([input.reload, ...state.reloads]), (reload) => reload(), { discard: true }),
+  )
 
   // Preferences can name tools to show or hide by default, globally or per repository.
   const load = Effect.gen(function* () {
-    overrides = Option.getOrElse(decodeOverrides(yield* input.deps.kv.get(key)), () => ({}))
+    // Fetched again: the last instance of this project may have closed since make, dropping the shared state.
+    state = shared(input.project)
+    state.reloads.add(input.reload)
+    yield* Scope.addFinalizer(
+      input.deps.scope,
+      Effect.sync(() => {
+        state.reloads.delete(input.reload)
+        if (state.reloads.size === 0 && live.get(input.project) === state) live.delete(input.project)
+      }),
+    )
+    state.overrides = Option.getOrElse(decodeOverrides(yield* input.deps.kv.get(key)), () => ({}))
     const target = yield* GitHubShared.target(input.deps).pipe(Effect.option)
     const prefs = yield* GitHubPreferences.effective(input.deps.kv, Option.getOrUndefined(target)?.repo)
     defaults = Object.fromEntries([
@@ -221,9 +254,9 @@ export function make(input: {
     Effect.gen(function* () {
       const chosen = select(patterns, names)
       const changed = [...chosen].filter((name) => enabled(name) !== value)
-      overrides = { ...overrides, ...Object.fromEntries([...chosen].map((name) => [name, value])) }
-      yield* input.deps.kv.set(key, overrides)
-      if (changed.length > 0) yield* input.reload()
+      state.overrides = { ...state.overrides, ...Object.fromEntries([...chosen].map((name) => [name, value])) }
+      yield* input.deps.kv.set(key, state.overrides)
+      if (changed.length > 0) yield* reloadAll
       return {
         changed,
         ...counts(),
@@ -252,9 +285,9 @@ export function make(input: {
         Effect.gen(function* () {
           if (args.reset) {
             const before = names.filter(enabled)
-            overrides = {}
+            state.overrides = {}
             yield* input.deps.kv.remove(key)
-            if (names.filter(enabled).join() !== before.join()) yield* input.reload()
+            if (names.filter(enabled).join() !== before.join()) yield* reloadAll
           }
           const shown = args.filter === undefined ? names : [...select([args.filter], names)]
           const byTool = new Map(input.tools.map((tool) => [tool.name, tool]))

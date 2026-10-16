@@ -66,7 +66,12 @@ export default Plugin.define({
       codemode: ctx.options.codemode !== false,
     }
     const registered = tools(deps)
-    const toolset = GitHubToolset.make({ deps, tools: registered, reload: ctx.tool.reload })
+    const toolset = GitHubToolset.make({
+      deps,
+      tools: registered,
+      reload: ctx.tool.reload,
+      project: GitHubToolset.scopeOf(ctx.location),
+    })
     yield* toolset.load.pipe(Effect.ignore)
     // The transform runs again on every reload, so enable and disable change what it adds.
     yield* ctx.tool

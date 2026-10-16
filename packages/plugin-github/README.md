@@ -97,8 +97,9 @@ await tools.github.list_tools({ reset: true }) // back to the defaults
 ```
 
 Patterns match tool names and section names with wildcards, and section aliases exactly (`admin`, `settings`,
-`dependabot`, `protection`, `copilot`, …; `list_tools` shows them). Changes apply to every session in the working
-directory from its next step and survive restarts. To start with other defaults, set the `tools_enabled` and
+`dependabot`, `protection`, `copilot`, …; `list_tools` shows them). Changes apply from the next step to every session
+in the project: any directory, worktree or clone of the same repository (OpenCode's project ID), or the one directory
+outside a repository. They survive restarts. To start with other defaults, set the `tools_enabled` and
 `tools_disabled` preferences globally or per repository, for example
 `preferences({ scope: "global", set: { tools_enabled: ["admin"] } })`.
 

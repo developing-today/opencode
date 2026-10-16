@@ -48,6 +48,7 @@ describe("github toolset tools", () => {
           deps,
           tools: registered,
           reload: () => Effect.sync(() => void reloads++),
+          project: "project-a",
         })
         yield* toolset.load
         expect(toolset.enabled("feedback")).toBe(true)
@@ -71,7 +72,7 @@ describe("github toolset tools", () => {
         expect(toolset.enabled("secret_set")).toBe(false)
 
         // A second load for the same directory, as after a restart, sees the same state.
-        const again = GitHubToolset.make({ deps, tools: registered, reload: () => Effect.void })
+        const again = GitHubToolset.make({ deps, tools: registered, reload: () => Effect.void, project: "project-a" })
         yield* again.load
         expect(again.enabled("secrets")).toBe(true)
         expect(again.enabled("secret_set")).toBe(false)
@@ -106,17 +107,54 @@ describe("github toolset tools", () => {
 
         yield* run(find(toolset.meta, "list_tools"), { reset: true })
         expect(toolset.enabled("secrets")).toBe(false)
-        expect(yield* kv.get(`github.toolset/${deps.directory}`)).toBeUndefined()
+        expect(yield* kv.get("github.toolset/project-a")).toBeUndefined()
       }),
     ),
   )
+
+  it.live("checkouts of one project share changes live and reload each other; other projects are untouched", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        const { deps, kv } = yield* makeDeps({ http: fakeGitHub({}).http })
+        const registered = GitHubTools.tools(deps)
+        const reloads: string[] = []
+        const instance = (project: string, label: string) =>
+          GitHubToolset.make({
+            deps,
+            tools: registered,
+            reload: () => Effect.sync(() => void reloads.push(label)),
+            project,
+          })
+        const main = instance("project-shared", "main")
+        const worktree = instance("project-shared", "worktree")
+        const other = instance("project-other", "other")
+        yield* Effect.all([main.load, worktree.load, other.load])
+
+        yield* run(find(worktree.meta, "enable"), { patterns: ["webhooks"] })
+        expect(main.enabled("webhook_update")).toBe(true)
+        expect(other.enabled("webhook_update")).toBe(false)
+        expect(reloads.toSorted()).toEqual(["main", "worktree"])
+        expect(yield* kv.get("github.toolset/project-shared")).toEqual({ webhooks: true, webhook_update: true })
+      }),
+    ),
+  )
+
+  test("scopeOf uses the project ID, and the directory for the shared global project", () => {
+    expect(GitHubToolset.scopeOf({ directory: "/repo/.worktrees/a", project: { id: "abc123" } })).toBe("abc123")
+    expect(GitHubToolset.scopeOf({ directory: "/scratch", project: { id: "global" } })).toBe("/scratch")
+  })
 
   it.live("preferences choose which tools a working directory starts with", () =>
     withEnv(env, () =>
       Effect.gen(function* () {
         const { deps, kv } = yield* makeDeps({ http: fakeGitHub({}).http })
         yield* kv.set("github.preferences/global", { tools_enabled: ["admin"], tools_disabled: ["*_update", "*_set"] })
-        const toolset = GitHubToolset.make({ deps, tools: GitHubTools.tools(deps), reload: () => Effect.void })
+        const toolset = GitHubToolset.make({
+          deps,
+          tools: GitHubTools.tools(deps),
+          reload: () => Effect.void,
+          project: "project-b",
+        })
         yield* toolset.load
         expect(toolset.enabled("environments")).toBe(true)
         expect(toolset.enabled("environment_update")).toBe(false)
