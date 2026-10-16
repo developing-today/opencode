@@ -76,7 +76,7 @@ const start = Effect.fnUntraced(function* (ctx = host()) {
 
 const configured = (instructions: string[]) => new Document({ type: "document", info: new Info({ instructions }) })
 
-const configUpdated = () => ({ id: Event.ID.create(), created: Date.now(), type: "config.updated" as const, data: {} })
+const configUpdated = () => ({ id: Event.ID.create(), created: Date.now(), type: "config.updated" as const, data: { sections: ["*"] } })
 
 const respond = (handler: (url: string) => Response) =>
   HttpClient.make((request) => Effect.succeed(HttpClientResponse.fromWeb(request, handler(request.url))))
