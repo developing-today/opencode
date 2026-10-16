@@ -182,6 +182,12 @@ export const pullRequest = Effect.fn("GitHubShared.pullRequest")(function* (
   })
 })
 
+/**
+ * The permission resource for a repository: `host/owner/name`, lower-cased because GitHub treats names
+ * case-insensitively while permission patterns match case-sensitively. Write rules in lower case.
+ */
+export const resource = (repo: GitHubRepo.Ref) => `${repo.host}/${GitHubRepo.slug(repo)}`.toLowerCase()
+
 /** Asks permission for a GitHub write. Defaults allow; configure `github_<tool>` permissions to require approval. */
 export const authorize = (
   deps: Deps,
@@ -192,8 +198,8 @@ export const authorize = (
 ) =>
   deps.permission.assert({
     action: `${NAMESPACE}_${tool}`,
-    resources: [`${repo.host}/${GitHubRepo.slug(repo)}`],
-    save: [`${repo.host}/${GitHubRepo.slug(repo)}`],
+    resources: [resource(repo)],
+    save: [resource(repo)],
     ...(metadata ? { metadata } : {}),
     sessionID: context.sessionID,
     agent: context.agent,

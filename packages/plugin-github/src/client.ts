@@ -230,7 +230,7 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly run
         }),
       graphql: <A>(query: string, variables: Record<string, unknown> = {}) =>
         // GraphQL reads travel as POST but are as safe to retry as a GET; mutations are not.
-        exchange("POST", urls.graphql, { body: { query, variables }, idempotent: !/^\s*mutation\b/.test(query) }).pipe(
+        exchange("POST", urls.graphql, { body: { query, variables }, idempotent: !isMutation(query) }).pipe(
           Effect.flatMap((response) => {
             const body = response.data as { data?: A; errors?: ReadonlyArray<GraphQLError> } | undefined
             if (body?.errors?.length) return Effect.fail(graphqlError(host, body.errors))
@@ -336,6 +336,12 @@ function envToken(host: string) {
   if (!name) return undefined
   return { value: process.env[name] as string, source: `$${name}` }
 }
+
+/**
+ * Whether a GraphQL document may write. Deliberately loose: comments and fragments can come before the operation, so
+ * any `mutation` keyword counts, and a read that merely mentions the word is just not retried.
+ */
+export const isMutation = (query: string) => /(^|[^\w])mutation\b/.test(query)
 
 export function nextLink(header: string | undefined) {
   return link(header, "next")

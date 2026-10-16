@@ -21,7 +21,8 @@ other tools:
 ```
 
 Writes (replies, merges, issues, releases, dispatches, uploads) also ask the `github_<name>` permission with the
-repository as the resource, so `"github_respond": { "*": "allow", "github.com/acme/secret": "ask" }` works.
+repository as the resource, so `"github_respond": { "*": "allow", "github.com/acme/secret": "ask" }` works. Resources
+are lower case, since GitHub names are case-insensitive, so write repository patterns in lower case.
 Downloads into a directory you name, and local files read for uploads, use the same `edit`, `read` and
 `external_directory` permissions as the file tools.
 

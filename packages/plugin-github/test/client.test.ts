@@ -103,6 +103,37 @@ describe("GitHubClient requests", () => {
   )
 })
 
+describe("GitHub writes", () => {
+  it.live("any document with a mutation, even after a comment or fragment, is never sent twice", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        expect(GitHubClient.isMutation("# create it\nmutation { addStar(input: {}) { clientMutationId } }")).toBe(true)
+        expect(
+          GitHubClient.isMutation(
+            "fragment F on Issue { id }\nmutation M { closeIssue(input: {}) { issue { ...F } } }",
+          ),
+        ).toBe(true)
+        expect(GitHubClient.isMutation("query { viewer { login } }")).toBe(false)
+        expect(GitHubClient.isMutation("{ node(id: $id) { ... on X { clientMutationId } } }")).toBe(false)
+        const github = fakeGitHub({ "GRAPHQL addStar": { status: 502, body: { message: "Bad Gateway" } } })
+        const api = GitHubClient.make({ http: github.http, run: GitHubProcess.run }).forHost("github.com")
+        yield* api.graphql("# create it\nmutation { addStar(input: {}) { clientMutationId } }").pipe(Effect.flip)
+        expect(github.requests).toHaveLength(1)
+      }),
+    ),
+  )
+
+  it.live("permission resources are lower-cased, since GitHub names are case-insensitive", () =>
+    withEnv(env, () =>
+      Effect.sync(() => {
+        expect(GitHubShared.resource({ host: "github.com", owner: "ACME", name: "Secret" })).toBe(
+          "github.com/acme/secret",
+        )
+      }),
+    ),
+  )
+})
+
 describe("GitHubRepo.local", () => {
   it.live("a fork branch that tracks the upstream default branch is still found where it is pushed", () =>
     Effect.gen(function* () {

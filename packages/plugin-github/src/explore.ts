@@ -608,8 +608,6 @@ const readBytes = (file: string) =>
 // api
 // ---------------------------------------------------------------------------------------------------------------
 
-const MUTATION = /(^|[^\w])mutation\b/
-
 /** Collects items from a REST list, unwrapping the first array property of wrapped responses such as `workflow_runs`. */
 const collect = Effect.fn("GitHubExplore.collect")(function* (
   api: Api,
@@ -1454,7 +1452,7 @@ export function tools(deps: Deps): Tool.Info[] {
         }
 
         if (input.graphql !== undefined) {
-          if (MUTATION.test(input.graphql))
+          if (GitHubClient.isMutation(input.graphql))
             yield* GitHubShared.authorize(deps, context, "api", writeTarget(), {
               graphql: GitHubShared.clip(input.graphql, 500),
             })
