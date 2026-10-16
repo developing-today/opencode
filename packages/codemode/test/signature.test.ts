@@ -866,22 +866,11 @@ describe("JSDoc signatures in catalogs and search results", () => {
       },
     })
     const type = [
-      "{",
-      "  /** @integer @minimum 0 @maximum 10 */",
-      "  count: number,",
-      "  /** @minLength 1 @maxLength 20 @pattern ^[a-z]+$ */",
-      "  name: string,",
-      "  /**",
-      "   * @minItems 1 @maxItems 5",
-      "   * Each item: @minLength 1",
-      "   */",
-      "  labels: Array<string>,",
-      "  /** Each value: @integer @minimum 0 */",
-      "  scores: {",
-      "    [key: string]: number,",
-      "  },",
-      "}",
-    ].join("\n")
+      "{ /** @integer @minimum 0 @maximum 10 */ count: number",
+      "/** @minLength 1 @maxLength 20 @pattern ^[a-z]+$ */ name: string",
+      "/** @minItems 1 @maxItems 5; Each item: @minLength 1 */ labels: Array<string>",
+      "/** Each value: @integer @minimum 0 */ scores: { [key: string]: number } }",
+    ].join("; ")
     const output = "{ count: number; name: string; labels: Array<string>; scores: { [key: string]: number } }"
     const signature = `tools.constrained(${type}): Promise<${output}>`
     expect(runtime.catalog[0]?.signature).toBe(signature)
@@ -905,18 +894,12 @@ describe("JSDoc signatures in catalogs and search results", () => {
     const item = items.find(({ path }) => path === "tools.github.list_issues")!
     expect(item.signature).toBe(
       [
-        "tools.github.list_issues({",
-        "  /** Repository owner */",
-        "  owner: string,",
-        "  /** Cursor from the previous response's pageInfo */",
-        "  after?: string,",
-        "  /** Results per page. @default 30 */",
-        "  perPage?: number,",
-        "  /** Filter by labels. @minItems 1 @maxItems 10 */",
-        "  labels?: Array<string>,",
-        '  state?: "open" | "closed",',
-        "}): Promise<unknown>",
-      ].join("\n"),
+        "tools.github.list_issues({ /** Repository owner */ owner: string",
+        "/** Cursor from the previous response's pageInfo */ after?: string",
+        "/** Results per page. @default 30 */ perPage?: number",
+        "/** Filter by labels. @minItems 1 @maxItems 10 */ labels?: Array<string>",
+        'state?: "open" | "closed" }): Promise<unknown>',
+      ].join("; "),
     )
   })
 
@@ -925,13 +908,8 @@ describe("JSDoc signatures in catalogs and search results", () => {
       const { items } = await search(query)
       const item = items.find(({ path }) => path === "tools.orders.lookup")!
       expect(item.signature).toBe(
-        [
-          "tools.orders.lookup({",
-          "  /** Order identifier */",
-          "  id: string,",
-          "  verbose?: boolean,",
-          "}): Promise<{ /** Current order status */ status: string }>",
-        ].join("\n"),
+        "tools.orders.lookup({ /** Order identifier */ id: string; verbose?: boolean }): " +
+          "Promise<{ /** Current order status */ status: string }>",
       )
     }
   })
@@ -1019,7 +997,7 @@ describe("empty input signatures agree with decoding", () => {
       execute: () => Effect.succeed("consumed"),
     })
     const runtime = CodeMode.make({ tools: { consume } })
-    const signature = "tools.consume({\n  token: string,\n}): Promise<string>"
+    const signature = "tools.consume({ token: string }): Promise<string>"
     expect(() => decodeInput(consume, {})).toThrow()
     expect(runtime.catalog[0]?.signature).toBe(signature)
     const result = await Effect.runPromise(runtime.execute('return search({ query: "tools.consume" })'))
@@ -1086,7 +1064,7 @@ describe("non-identifier tool paths", () => {
 
   test("catalog signatures use bracket notation for dashed tool names", () => {
     expect(runtime.catalog[0]?.signature).toBe(
-      'tools.context7["resolve-library-id"]({\n  query: string,\n  libraryName: string,\n}): Promise<unknown>',
+      'tools.context7["resolve-library-id"]({ query: string; libraryName: string }): Promise<unknown>',
     )
   })
 

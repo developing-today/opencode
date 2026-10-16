@@ -35,7 +35,7 @@ describe("CodeMode", () => {
             type: "tool",
             name: "echo",
             description: "Echo text",
-            signature: "tools.echo({\n  text: string,\n}): Promise<string>",
+            signature: "tools.echo({ text: string }): Promise<string>",
             pinned: true,
           },
           {
@@ -73,13 +73,10 @@ describe("CodeMode", () => {
           name: "measure",
           description: "Measure",
           signature: [
-            "tools.measure({",
-            "  /** Element ref */",
-            "  ref: string,",
-            "  amount: number,",
-            '  sentinel: "NaN" | "Infinity" | "-Infinity",',
-            '}): Promise<{ exit?: number; sentinel: "NaN" | "Infinity" | "-Infinity" }>',
-          ].join("\n"),
+            "tools.measure({ ",
+            '/** Element ref */ ref: string; amount: number; sentinel: "NaN" | "Infinity" | "-Infinity" }): ',
+            'Promise<{ exit?: number; sentinel: "NaN" | "Infinity" | "-Infinity" }>',
+          ].join(""),
           pinned: false,
         },
       ])

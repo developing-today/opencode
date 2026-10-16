@@ -42,9 +42,10 @@ const MAX_RENDER_DEPTH = 8
 
 /**
  * false: one line, no documentation. true: one field per line with JSDoc. "dense": one line with each field's
- * description inline and no validation tags, for results, which are read rather than written.
+ * documentation inline, the form tool signatures use. "result": dense without validation tags, for results, which
+ * are read rather than written.
  */
-type Layout = boolean | "dense"
+export type Layout = boolean | "dense" | "result"
 
 type RenderContext = {
   readonly definitions: Readonly<Record<string, JsonSchema>>
@@ -139,23 +140,26 @@ const jsdoc = (schema: JsonSchema, pad: string): string => {
   return `${pad}/**\n${body}\n${pad} */\n`
 }
 
-const summary = (schema: JsonSchema) =>
-  [
-    ...(schema.description ?? "")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line !== ""),
-    ...(schema.deprecated === true ? ["@deprecated"] : []),
-  ].join(" ")
+const summary = (schema: JsonSchema, tags: boolean) => {
+  const text = (schema.description ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .join(" ")
+  const tagged = (tags ? docTags(schema) : schema.deprecated === true ? ["@deprecated"] : []).join(" ")
+  if (tagged === "") return text
+  if (text === "") return tagged
+  return `${text}${text.endsWith(".") ? "" : "."} ${tagged}`
+}
 
-const inlineDoc = (schema: JsonSchema): string => {
+const inlineDoc = (schema: JsonSchema, tags: boolean): string => {
   const types = typeof schema.type === "string" ? [schema.type] : (schema.type ?? [])
   const labelled = (label: string, child: JsonSchema) => {
-    const text = summary(child)
+    const text = summary(child, tags)
     return text === "" ? "" : `${label}: ${text}`
   }
   const parts = [
-    summary(schema),
+    summary(schema, tags),
     types.includes("array") && schema.items ? labelled("Each item", schema.items) : "",
     (types.includes("object") || schema.properties) && typeof schema.additionalProperties === "object"
       ? labelled(
@@ -164,7 +168,10 @@ const inlineDoc = (schema: JsonSchema): string => {
         )
       : "",
   ].filter((part) => part !== "")
-  return parts.length === 0 ? "" : `/** ${parts.join(" ").replaceAll("*/", "* /")} */ `
+  if (parts.length === 0) return ""
+  // A tag runs to the next tag, so a part after one needs a visible break.
+  const text = parts.reduce((joined, part) => `${joined}${joined.endsWith(".") ? " " : "; "}${part}`)
+  return `/** ${text.replaceAll("*/", "* /")} */ `
 }
 
 const renderSchema = (
@@ -234,8 +241,8 @@ const renderSchema = (
     const field = ([name, value]: readonly [string, JsonSchema]) =>
       `${renderKey(name)}${required.has(name) ? "" : "?"}: ${renderSchema(value, nested, depth + 1, seen)}`
 
-    if (ctx.pretty === "dense") {
-      const fields = properties.map((entry) => `${inlineDoc(entry[1])}${field(entry)}`)
+    if (ctx.pretty === "dense" || ctx.pretty === "result") {
+      const fields = properties.map((entry) => `${inlineDoc(entry[1], ctx.pretty === "dense")}${field(entry)}`)
       if (indexType !== undefined) fields.push(`[key: string]: ${indexType}`)
       return fields.length === 0 ? "{}" : `{ ${fields.join("; ")} }`
     }
@@ -313,7 +320,7 @@ export const inputProperties = <R>(tool: Tool<R>): Array<InputProperty> => {
   }
 }
 
-export const inputTypeScript = <R>(tool: Tool<R>, pretty = false): string =>
+export const inputTypeScript = <R>(tool: Tool<R>, pretty: Layout = false): string =>
   isEffectSchema(tool.input) ? toTypeScript(tool.input, false, pretty) : jsonSchemaToTypeScript(tool.input, pretty)
 
 // Effect inputs are empty only when their encoded root is Effect's empty-struct marker, which records and checked
@@ -330,8 +337,8 @@ export const outputTypeScript = <R>(tool: Tool<R>, pretty = false): string =>
   tool.output === undefined
     ? "void"
     : isEffectSchema(tool.output)
-      ? toTypeScript(tool.output, true, pretty && "dense")
-      : jsonSchemaToTypeScript(tool.output, pretty && "dense")
+      ? toTypeScript(tool.output, true, pretty && "result")
+      : jsonSchemaToTypeScript(tool.output, pretty && "result")
 
 export const decodeInput = <R>(tool: Tool<R>, value: unknown): unknown =>
   isEffectSchema(tool.input) ? Schema.decodeUnknownSync(tool.input)(value) : value
