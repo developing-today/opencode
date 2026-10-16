@@ -625,7 +625,12 @@ describe("github review tools", () => {
           const tools = GitHubReview.tools(deps)
           const result = yield* run<
             object,
-            { results: Array<Record<string, unknown>>; submitted_reviews: number; warnings: string[] }
+            {
+              results: Array<Record<string, unknown>>
+              submitted_reviews: number
+              remaining_threads: number
+              warnings: string[]
+            }
           >(find(tools, "respond"), {
             repo: "acme/widgets",
             pr: 7,
@@ -641,6 +646,8 @@ describe("github review tools", () => {
             ["copilot:900:0", "done", true],
           ])
           expect(result.submitted_reviews).toBe(1)
+          // Read back from GitHub, whose fake still reports both threads open.
+          expect(result.remaining_threads).toBe(2)
           expect(asserted.map((item) => item.action)).toEqual(["github_respond"])
 
           const reply = github.requests.find((request) =>

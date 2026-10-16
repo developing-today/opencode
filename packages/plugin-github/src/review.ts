@@ -992,6 +992,7 @@ export function tools(deps: Deps): Tool.Info[] {
         }),
       ),
       submitted_reviews: Schema.Int,
+      remaining_threads: Schema.Int.annotate({ description: "Review threads still unresolved after this call." }),
       warnings: Schema.Array(Schema.String),
     }),
     execute: (input, context) =>
@@ -2041,7 +2042,9 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
     submitted++
   }
 
-  return { results, submitted_reviews: submitted, warnings }
+  // Re-read rather than count: a thread resolved elsewhere, or one this call could not resolve, still shows here.
+  const remaining = (yield* threads(api, repo, number)).filter((thread) => !thread.isResolved).length
+  return { results, submitted_reviews: submitted, remaining_threads: remaining, warnings }
 })
 
 const removeFromList = (deps: Deps, key: string, value: string) =>
