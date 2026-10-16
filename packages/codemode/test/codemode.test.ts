@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Effect, Schema } from "effect"
-import { CodeMode, Extension, Tool, toolError } from "../src/index.js"
+import { CodeMode, Extension, Namespace, Tool, toolError } from "../src/index.js"
 
 const run = (tool: Tool.Tool<never>) =>
   Effect.runPromise(CodeMode.make({ tools: { host: { call: tool } } }).execute("return await tools.host.call({})"))
@@ -581,7 +581,7 @@ describe("CodeMode schema flexibility", () => {
       {
         path: "adapter.call",
         description: "Call an adapter-described tool",
-        signature: "tools.adapter.call({\n  id: string,\n  count?: number,\n}): Promise<void>",
+        signature: "tools.adapter.call({ id: string; count?: number }): Promise<void>",
       },
     ])
 
@@ -664,7 +664,7 @@ describe("CodeMode schema flexibility", () => {
       {
         path: "users.lookup",
         description: "Look up a user",
-        signature: "tools.users.lookup({\n  login: string,\n}): Promise<{\n  login: string,\n  id: number,\n}>",
+        signature: "tools.users.lookup({ login: string }): Promise<{ login: string; id: number }>",
       },
     ])
 
@@ -680,7 +680,7 @@ describe("CodeMode schema flexibility", () => {
       execute: () => Effect.succeed("pong"),
     })
     const runtime = CodeMode.make({ tools: { net: { ping } } })
-    expect(runtime.catalog[0]?.signature).toBe("tools.net.ping({\n  host: string,\n}): Promise<void>")
+    expect(runtime.catalog[0]?.signature).toBe("tools.net.ping({ host: string }): Promise<void>")
 
     const result = await Effect.runPromise(runtime.execute(`return await tools.net.ping({ host: "example.test" })`))
     expect(result.ok).toBe(true)
@@ -737,7 +737,7 @@ describe("CodeMode public contract", () => {
       {
         path: "orders.lookup",
         description: "Look up an order by ID",
-        signature: "tools.orders.lookup({\n  id: string,\n}): Promise<{\n  id: string,\n  status: string,\n}>",
+        signature: "tools.orders.lookup({ id: string }): Promise<{ id: string; status: string }>",
       },
     ])
 
@@ -749,7 +749,7 @@ describe("CodeMode public contract", () => {
           {
             path: "tools.orders.lookup",
             description: "Look up an order by ID",
-            signature: "tools.orders.lookup({\n  id: string,\n}): Promise<{\n  id: string,\n  status: string,\n}>",
+            signature: "tools.orders.lookup({ id: string }): Promise<{ id: string; status: string }>",
           },
         ],
         remaining: 0,
@@ -791,7 +791,7 @@ describe("CodeMode public contract", () => {
       {
         path: "context7.resolve-library-id",
         description: "Resolve a library ID",
-        signature: 'tools.context7["resolve-library-id"]({\n  libraryName: string,\n}): Promise<string>',
+        signature: 'tools.context7["resolve-library-id"]({ libraryName: string }): Promise<string>',
       },
     ])
 
@@ -803,7 +803,7 @@ describe("CodeMode public contract", () => {
           {
             path: 'tools.context7["resolve-library-id"]',
             description: "Resolve a library ID",
-            signature: 'tools.context7["resolve-library-id"]({\n  libraryName: string,\n}): Promise<string>',
+            signature: 'tools.context7["resolve-library-id"]({ libraryName: string }): Promise<string>',
           },
         ],
         remaining: 0,
@@ -856,12 +856,12 @@ describe("CodeMode public contract", () => {
         {
           path: "tools.thread.uploadFile",
           description: "Upload one readable local file to the current Discord thread",
-          signature: "tools.thread.uploadFile({\n  path: string,\n}): Promise<{\n  sent: boolean,\n}>",
+          signature: "tools.thread.uploadFile({ path: string }): Promise<{ sent: boolean }>",
         },
         {
           path: "tools.thread.generateImage",
           description: "Generate an image and upload it to the current Discord thread",
-          signature: "tools.thread.generateImage({\n  prompt: string,\n}): Promise<{\n  sent: boolean,\n}>",
+          signature: "tools.thread.generateImage({ prompt: string }): Promise<{ sent: boolean }>",
         },
       ],
       remaining: 0,
@@ -913,7 +913,7 @@ describe("CodeMode public contract", () => {
     expect(escaped).toMatchObject({ ok: true, value: {} })
   })
 
-  test("search defaults to 10 results and resolves exact tool paths", async () => {
+  test("search defaults to 5 results and resolves exact tool paths", async () => {
     const tool = (index: number) =>
       Tool.make({
         description: `Numbered tool ${index}`,
@@ -935,9 +935,9 @@ describe("CodeMode public contract", () => {
         remaining: number
         next: { offset: number } | null
       }
-      expect(value.items).toHaveLength(10)
-      expect(value.remaining).toBe(4)
-      expect(value.next).toStrictEqual({ offset: 10 })
+      expect(value.items).toHaveLength(5)
+      expect(value.remaining).toBe(9)
+      expect(value.next).toStrictEqual({ offset: 5 })
     }
 
     for (const query of ["many.tool13", "tools.many.tool13"]) {
@@ -949,7 +949,7 @@ describe("CodeMode public contract", () => {
             {
               path: "tools.many.tool13",
               description: "Numbered tool 13",
-              signature: "tools.many.tool13({\n  id: string,\n}): Promise<string>",
+              signature: "tools.many.tool13({ id: string }): Promise<string>",
             },
           ],
           remaining: 0,
@@ -957,6 +957,38 @@ describe("CodeMode public contract", () => {
         })
       }
     }
+  })
+
+  test("a namespace description finds its tools only when no tool matches the query itself", async () => {
+    const simple = (description: string) =>
+      Tool.make({
+        description,
+        input: Schema.Struct({ id: Schema.String }),
+        output: Schema.String,
+        execute: () => Effect.succeed("ok"),
+      })
+    const runtime = CodeMode.make({
+      tools: {
+        hub: Namespace.make({
+          description: "Code hosting: review feedback, pull requests and releases",
+          tools: {
+            feedback: simple("Open review comments on a pull request"),
+            releases: simple("List releases"),
+            tags: simple("List tags"),
+          },
+        }),
+        notes: { write: simple("Write a note") },
+      },
+    })
+    const paths = async (query: string) => {
+      const result = await Effect.runPromise(runtime.execute(`return search({ query: ${JSON.stringify(query)} })`))
+      if (!result.ok) throw new Error("search failed")
+      return (result.value as { items: Array<{ path: string }> }).items.map((item) => item.path)
+    }
+    // Every hub tool shares "feedback" through the namespace description; only the matching tool is returned.
+    expect(await paths("feedback")).toStrictEqual(["tools.hub.feedback"])
+    // Nothing matches "hosting" on its own, so the namespace description still finds the namespace's tools.
+    expect(await paths("hosting")).toStrictEqual(["tools.hub.feedback", "tools.hub.releases", "tools.hub.tags"])
   })
 
   test("scopes search to one namespace and browses it alphabetically", async () => {

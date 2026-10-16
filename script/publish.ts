@@ -87,6 +87,9 @@ await $`bun ./packages/plugin/script/publish.ts`
 console.log("\n=== plugin-browser ===\n")
 await $`bun ./packages/plugin-browser/script/publish.ts`
 
+console.log("\n=== plugin-github ===\n")
+await $`bun ./packages/plugin-github/script/publish.ts`
+
 console.log("\n=== core ===\n")
 await $`bun ./packages/core/script/publish.ts`
 

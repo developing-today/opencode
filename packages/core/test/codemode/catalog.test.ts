@@ -133,9 +133,9 @@ describe("CodeModeInstructions.render", () => {
     expect(partial).toContain(
       "The catalog is partial. Inside `execute`, use `search(...)` to find a tool, then call it by the `path` in the result. `search` is synchronous. Call it without `await`; it does not return a Promise.",
     )
-    expect(partial).toContain("- search({")
-    expect(partial).toContain("  /** @integer @exclusiveMinimum 0 */\n  limit?: number,")
-    expect(partial).toContain("  /** @integer @minimum 0 */\n  offset?: number,")
+    expect(partial).toContain("- search({ ")
+    expect(partial).toContain("/** @integer @exclusiveMinimum 0 */ limit?: number")
+    expect(partial).toContain("/** @integer @minimum 0 */ offset?: number")
     expect(partial).not.toContain("tools.orders.lookup(input:")
   })
 

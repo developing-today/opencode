@@ -99,8 +99,28 @@ describe("pretty signature rendering", () => {
     expect(inputTypeScript(lookupOrder, true)).toBe(
       ["{", "  /** Order identifier */", "  id: string,", "  verbose?: boolean,", "}"].join("\n"),
     )
-    expect(outputTypeScript(lookupOrder, true)).toBe(
-      ["{", "  /** Current order status */", "  status: string,", "}"].join("\n"),
+    // Results render on one line with descriptions inline.
+    expect(outputTypeScript(lookupOrder, true)).toBe("{ /** Current order status */ status: string }")
+  })
+
+  test("result types keep descriptions and deprecation inline and drop validation tags", () => {
+    const tool = Tool.make({
+      description: "Result documentation",
+      input: Schema.Struct({}),
+      output: {
+        type: "object",
+        properties: {
+          old: { type: "string", deprecated: true, description: "Use name." },
+          ids: { type: "array", minItems: 1, items: { type: "integer", minimum: 1, description: "Issue number." } },
+          note: { type: "string", maxLength: 9, description: "First line.\nSecond */ line." },
+        },
+        required: ["ids"],
+      } as const,
+      execute: () => Effect.succeed({ ids: [1] }),
+    })
+    expect(outputTypeScript(tool, true)).toBe(
+      "{ /** Use name. @deprecated */ old?: string; /** Each item: Issue number. */ ids: Array<number>; " +
+        "/** First line. Second * / line. */ note?: string }",
     )
   })
 
@@ -637,7 +657,7 @@ describe("non-identifier property names render as quoted keys", () => {
     })
     expect(inputTypeScript(tool)).toContain('"foo-bar"?: string')
     expect(outputTypeScript(tool)).toBe('{ "content-type": string }')
-    expect(outputTypeScript(tool, true)).toBe(["{", '  "content-type": string,', "}"].join("\n"))
+    expect(outputTypeScript(tool, true)).toBe('{ "content-type": string }')
   })
 
   test("Effect Schema structs with non-identifier field names quote too", () => {
@@ -696,11 +716,12 @@ describe("union schemas render every alternative", () => {
     ].join("; ")
     expect(inputTypeScript(tool)).toBe(compact)
     expect(outputTypeScript(tool)).toBe(compact)
-    for (const rendered of [inputTypeScript(tool, true), outputTypeScript(tool, true)]) {
-      expect(rendered).toContain("  /** @integer */\n  count: number,")
-      expect(rendered).toContain("  /** @integer @minimum 1 @maximum 10 */\n  bounded: number,")
-      expect(rendered).not.toContain("Infinity")
-    }
+    const input = inputTypeScript(tool, true)
+    expect(input).toContain("  /** @integer */\n  count: number,")
+    expect(input).toContain("  /** @integer @minimum 1 @maximum 10 */\n  bounded: number,")
+    expect(input).not.toContain("Infinity")
+    // A result is read, not written, so it carries no validation tags.
+    expect(outputTypeScript(tool, true)).toBe(compact)
     const named = Tool.make({ description: "n", input: Amount, output: Amount, execute: Effect.succeed })
     expect(inputTypeScript(named)).toBe("number")
     expect(outputTypeScript(named)).toBe("number")
@@ -833,7 +854,7 @@ describe("JSDoc signatures in catalogs and search results", () => {
         scores: Schema.Record(Schema.String, Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
       }),
     },
-  ])("$source constraints survive input/output catalog and search signatures", async ({ schema }) => {
+  ])("$source constraints survive input catalog and search signatures, and leave result types", async ({ schema }) => {
     const runtime = CodeMode.make({
       tools: {
         constrained: Tool.make({
@@ -845,23 +866,13 @@ describe("JSDoc signatures in catalogs and search results", () => {
       },
     })
     const type = [
-      "{",
-      "  /** @integer @minimum 0 @maximum 10 */",
-      "  count: number,",
-      "  /** @minLength 1 @maxLength 20 @pattern ^[a-z]+$ */",
-      "  name: string,",
-      "  /**",
-      "   * @minItems 1 @maxItems 5",
-      "   * Each item: @minLength 1",
-      "   */",
-      "  labels: Array<string>,",
-      "  /** Each value: @integer @minimum 0 */",
-      "  scores: {",
-      "    [key: string]: number,",
-      "  },",
-      "}",
-    ].join("\n")
-    const signature = `tools.constrained(${type}): Promise<${type}>`
+      "{ /** @integer @minimum 0 @maximum 10 */ count: number",
+      "/** @minLength 1 @maxLength 20 @pattern ^[a-z]+$ */ name: string",
+      "/** @minItems 1 @maxItems 5; Each item: @minLength 1 */ labels: Array<string>",
+      "/** Each value: @integer @minimum 0 */ scores: { [key: string]: number } }",
+    ].join("; ")
+    const output = "{ count: number; name: string; labels: Array<string>; scores: { [key: string]: number } }"
+    const signature = `tools.constrained(${type}): Promise<${output}>`
     expect(runtime.catalog[0]?.signature).toBe(signature)
     const result = await Effect.runPromise(runtime.execute('return search({ query: "tools.constrained" })'))
     expect(result.ok).toBe(true)
@@ -883,18 +894,12 @@ describe("JSDoc signatures in catalogs and search results", () => {
     const item = items.find(({ path }) => path === "tools.github.list_issues")!
     expect(item.signature).toBe(
       [
-        "tools.github.list_issues({",
-        "  /** Repository owner */",
-        "  owner: string,",
-        "  /** Cursor from the previous response's pageInfo */",
-        "  after?: string,",
-        "  /** Results per page. @default 30 */",
-        "  perPage?: number,",
-        "  /** Filter by labels. @minItems 1 @maxItems 10 */",
-        "  labels?: Array<string>,",
-        '  state?: "open" | "closed",',
-        "}): Promise<unknown>",
-      ].join("\n"),
+        "tools.github.list_issues({ /** Repository owner */ owner: string",
+        "/** Cursor from the previous response's pageInfo */ after?: string",
+        "/** Results per page. @default 30 */ perPage?: number",
+        "/** Filter by labels. @minItems 1 @maxItems 10 */ labels?: Array<string>",
+        'state?: "open" | "closed" }): Promise<unknown>',
+      ].join("; "),
     )
   })
 
@@ -903,16 +908,8 @@ describe("JSDoc signatures in catalogs and search results", () => {
       const { items } = await search(query)
       const item = items.find(({ path }) => path === "tools.orders.lookup")!
       expect(item.signature).toBe(
-        [
-          "tools.orders.lookup({",
-          "  /** Order identifier */",
-          "  id: string,",
-          "  verbose?: boolean,",
-          "}): Promise<{",
-          "  /** Current order status */",
-          "  status: string,",
-          "}>",
-        ].join("\n"),
+        "tools.orders.lookup({ /** Order identifier */ id: string; verbose?: boolean }): " +
+          "Promise<{ /** Current order status */ status: string }>",
       )
     }
   })
@@ -1000,7 +997,7 @@ describe("empty input signatures agree with decoding", () => {
       execute: () => Effect.succeed("consumed"),
     })
     const runtime = CodeMode.make({ tools: { consume } })
-    const signature = "tools.consume({\n  token: string,\n}): Promise<string>"
+    const signature = "tools.consume({ token: string }): Promise<string>"
     expect(() => decodeInput(consume, {})).toThrow()
     expect(runtime.catalog[0]?.signature).toBe(signature)
     const result = await Effect.runPromise(runtime.execute('return search({ query: "tools.consume" })'))
@@ -1037,9 +1034,7 @@ describe("empty object signatures", () => {
       }),
     )
     expect(outputTypeScript(tool)).toBe("{ meta: {}; extra?: {} }")
-    expect(outputTypeScript(tool, true)).toBe(
-      ["{", "  meta: {},", "  /** Extra data */", "  extra?: {},", "}"].join("\n"),
-    )
+    expect(outputTypeScript(tool, true)).toBe("{ meta: {}; /** Extra data */ extra?: {} }")
   })
 
   test("raw schemas render only the exact empty-struct shapes as {}", () => {
@@ -1069,7 +1064,7 @@ describe("non-identifier tool paths", () => {
 
   test("catalog signatures use bracket notation for dashed tool names", () => {
     expect(runtime.catalog[0]?.signature).toBe(
-      'tools.context7["resolve-library-id"]({\n  query: string,\n  libraryName: string,\n}): Promise<unknown>',
+      'tools.context7["resolve-library-id"]({ query: string; libraryName: string }): Promise<unknown>',
     )
   })
 
