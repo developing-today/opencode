@@ -40,6 +40,8 @@ export interface RequestOptions {
   readonly accept?: string
   /** Statuses that are returned instead of failing, such as 404 for optional resources. */
   readonly allow?: ReadonlyArray<number>
+  /** Safe to send again after a network or server failure. Defaults to true for GET. */
+  readonly idempotent?: boolean
 }
 
 export interface PaginateOptions {
@@ -198,7 +200,7 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
       }).pipe(
         Effect.retry({
           schedule: Schedule.exponential("500 millis", 2),
-          times: method === "GET" ? 2 : 0,
+          times: (options.idempotent ?? method === "GET") ? 2 : 0,
           while: (error) => error.kind === "server" || error.kind === "network",
         }),
       )
@@ -235,7 +237,8 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
           return items.slice(0, limit)
         }),
       graphql: <A>(query: string, variables: Record<string, unknown> = {}) =>
-        exchange("POST", urls.graphql, { body: { query, variables } }).pipe(
+        // GraphQL reads travel as POST but are as safe to retry as a GET; mutations are not.
+        exchange("POST", urls.graphql, { body: { query, variables }, idempotent: !/^\s*mutation\b/.test(query) }).pipe(
           Effect.flatMap((response) => {
             const body = response.data as { data?: A; errors?: ReadonlyArray<GraphQLError> } | undefined
             if (body?.errors?.length) return Effect.fail(graphqlError(host, body.errors))

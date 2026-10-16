@@ -1,7 +1,7 @@
 export * as GitHubReview from "./review.js"
 
 import type { Tool } from "@opencode/schema/tool"
-import { Clock, Deferred, Duration, Effect, Option, Schema } from "effect"
+import { Clock, Deferred, Duration, Effect, Option, Result, Schema } from "effect"
 import { SessionMessage } from "../../../session/message.js"
 import { GitHubClient } from "./client.js"
 import { GitHubCopilot } from "./copilot.js"
@@ -2152,6 +2152,8 @@ function backgroundResult(
   }
 }
 
+const MAX_POLL_FAILURES = 5
+
 const poll = Effect.fn("GitHubReview.poll")(function* (input: {
   readonly api: Api
   readonly repo: GitHubRepo.Ref
@@ -2166,16 +2168,34 @@ const poll = Effect.fn("GitHubReview.poll")(function* (input: {
   const label = `${GitHubRepo.slug(input.repo)}#${input.number}`
   let rekicks = input.requested === "none" ? 0 : 1
   let lastRequest = input.requested === "none" ? 0 : input.started
+  let failures = 0
   while (true) {
-    const [data, reviewList] = yield* Effect.all(
+    // A long wait outlives brief network or rate-limit trouble; only give up after several polls in a row fail.
+    const snapshot = yield* Effect.all(
       [pull(input.api, input.repo, input.number), reviews(input.api, input.repo, input.number)],
       { concurrency: 2 },
+    ).pipe(
+      Effect.flatMap(
+        ([data, reviewList]): Effect.Effect<{ data: PullData; copilot?: CopilotStatus }, GitHubClient.Error> =>
+          input.goal === "checks"
+            ? Effect.succeed({ data })
+            : copilotStatus(input.api, input.repo, input.number, data.headRefOid, reviewList).pipe(
+                Effect.map((copilot) => ({ data, copilot })),
+              ),
+      ),
+      Effect.result,
     )
+    if (Result.isFailure(snapshot)) {
+      const transient = ["network", "server", "rate_limited"].includes(snapshot.failure.kind)
+      failures++
+      if (!transient || failures >= MAX_POLL_FAILURES) return yield* snapshot.failure
+      yield* Effect.sleep(input.interval)
+      continue
+    }
+    failures = 0
+    const data = snapshot.success.data
+    const copilot = snapshot.success.copilot
     const now = yield* Clock.currentTimeMillis
-    const copilot =
-      input.goal === "checks"
-        ? undefined
-        : yield* copilotStatus(input.api, input.repo, input.number, data.headRefOid, reviewList)
     const checkSummary = input.goal === "copilot" ? undefined : checks(data)
     const reviewedSinceStart =
       copilot?.reviewed_at !== undefined && Date.parse(copilot.reviewed_at) >= input.started - 5_000

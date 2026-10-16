@@ -717,6 +717,58 @@ describe("github review tools", () => {
     ),
   )
 
+  it.effect("a background wait rides out transient GitHub failures instead of dying", () =>
+    withEnv(env, () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-01-01T11:00:00Z"))
+        const events: Array<Record<string, unknown>> = [
+          { event: "review_requested", created_at: "2026-01-01T10:59:00Z", requested_reviewer: { login: "Copilot" } },
+          { event: "copilot_work_started", created_at: "2026-01-01T10:59:30Z" },
+        ]
+        let outage = 0
+        let reviewsList = [copilotReview({ id: 900, commit: OLD, at: "2026-01-01T10:00:00Z", body: changesBody })]
+        const github = fakeGitHub(
+          baseRoutes({
+            "GRAPHQL latestOpinionatedReviews": () =>
+              outage-- > 0 ? { status: 502, body: { message: "Bad Gateway" } } : { body: pullData() },
+            "GET /repos/acme/widgets/pulls/7/reviews": () => ({ body: reviewsList }),
+            "GET /repos/acme/widgets/issues/7/timeline": () => ({ body: events }),
+          }),
+        )
+        const { deps, notified } = yield* makeDeps({ http: github.http })
+        const result = yield* run<object, { status: string; requested: string }>(
+          find(GitHubReview.tools(deps), "wait"),
+          {
+            repo: "acme/widgets",
+            pr: 7,
+            interval_seconds: 30,
+          },
+        )
+        expect(result).toMatchObject({ status: "running", requested: "none" })
+
+        // Long enough that the client's own retries give up and the poll sees the failure.
+        outage = 20
+        const step = function* () {
+          for (let tick = 0; tick < 40; tick++) {
+            yield* TestClock.adjust("1 second")
+            yield* Effect.yieldNow
+          }
+        }
+        yield* Effect.gen(step)
+        expect(notified).toEqual([])
+        outage = 0
+        reviewsList = [
+          ...reviewsList,
+          copilotReview({ id: 901, commit: HEAD, at: "2026-01-01T11:00:50Z", body: approvalBody }),
+        ]
+        yield* Effect.gen(step)
+        for (let attempt = 0; attempt < 50 && notified.length === 0; attempt++) yield* Effect.yieldNow
+        expect(notified).toHaveLength(1)
+        expect(notified[0]?.text).toContain('state="completed"')
+      }),
+    ),
+  )
+
   it.effect("a background wait requests a review, polls, and notifies the session when Copilot finishes", () =>
     withEnv(env, () =>
       Effect.gen(function* () {
