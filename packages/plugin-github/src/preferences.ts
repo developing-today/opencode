@@ -39,6 +39,22 @@ export const Info = Schema.Struct({
 })
 export type Info = typeof Info.Type
 
+/**
+ * The same preferences without their documentation, for outputs. The preferences tool's input documents each one,
+ * so outputs that carry them (context, preferences) do not repeat the descriptions in every Code Mode signature.
+ */
+export const Values = Schema.Struct({
+  review_rounds: Schema.optionalKey(Schema.Number),
+  followup_issues: Schema.optionalKey(Schema.Literals(["auto", "ask", "never"])),
+  human_reply_prefix: Schema.optionalKey(Schema.String),
+  copilot_auto_request: Schema.optionalKey(Schema.Boolean),
+  merge_method: Schema.optionalKey(Schema.Literals(["merge", "squash", "rebase"])),
+  wait_timeout_minutes: Schema.optionalKey(Schema.Number),
+  tools_enabled: Schema.optionalKey(Schema.Array(Schema.String)),
+  tools_disabled: Schema.optionalKey(Schema.Array(Schema.String)),
+  notes: Schema.optionalKey(Schema.Array(Schema.String)),
+})
+
 export const DEFAULTS = {
   review_rounds: 3,
   human_reply_prefix: "> *Automated response from an AI coding agent*",

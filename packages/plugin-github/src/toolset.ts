@@ -111,7 +111,7 @@ export const SECTIONS: ReadonlyArray<Section> = [
   },
 ]
 
-export const META = ["list_tools", "enable", "disable"] as const
+export const META = "toolset"
 
 /** A case-insensitive glob: `*` matches any run of characters and `?` one. */
 export function matcher(pattern: string) {
@@ -145,39 +145,45 @@ export function select(patterns: ReadonlyArray<string>, names: ReadonlyArray<str
 const Overrides = Schema.Record(Schema.String, Schema.Boolean)
 const decodeOverrides = Schema.decodeUnknownOption(Overrides)
 
-const ToolState = Schema.Struct({
-  name: Schema.String,
-  enabled: Schema.Boolean,
-  summary: Schema.optionalKey(Schema.String),
-})
+const Patterns = Schema.Array(Schema.String)
 
-const ListOutput = Schema.Struct({
-  enabled: Schema.Int,
-  hidden: Schema.Int,
-  sections: Schema.Array(
-    Schema.Struct({
-      name: Schema.String,
-      aliases: Schema.Array(Schema.String),
-      enabled: Schema.Int,
-      tools: Schema.Array(ToolState),
-    }),
-  ),
-  note: Schema.String,
-})
-
-const ChangeOutput = Schema.Struct({
-  changed: Schema.Array(Schema.String).annotate({ description: "Tools whose state this call changed." }),
-  enabled: Schema.Int,
-  hidden: Schema.Int,
-  unmatched: Schema.Array(Schema.String).annotate({ description: "Patterns that matched no tool, section or alias." }),
-  note: Schema.String,
-})
-
-const Patterns = Schema.Struct({
-  patterns: Schema.Array(Schema.String).check(Schema.isMinLength(1)).annotate({
+const Input = Schema.Struct({
+  enable: Schema.optionalKey(Patterns).annotate({
     description:
-      'Tool names, section names or aliases, with * and ? wildcards: ["secrets", "variable*", "*_update", "dependabot", "admin", "*"].',
+      'Show these: tool names, section names or section aliases, with * and ? wildcards: ["dependabot", "secret*"].',
   }),
+  disable: Schema.optionalKey(Patterns).annotate({
+    description: 'Hide these, before enable applies: ["*_set", "*_update"], or ["*"] to start from nothing.',
+  }),
+  reset: Schema.optionalKey(Schema.Boolean).annotate({ description: "Return to the defaults first." }),
+  list: Schema.optionalKey(Schema.String).annotate({
+    description:
+      'List sections and tools matching this wildcard ("*" for all). The default when nothing else is asked.',
+  }),
+})
+
+const Output = Schema.Struct({
+  enabled: Schema.Int,
+  hidden: Schema.Int,
+  changed: Schema.optionalKey(Schema.Array(Schema.String)).annotate({ description: "Tools this call showed or hid." }),
+  unmatched: Schema.optionalKey(Schema.Array(Schema.String)).annotate({
+    description: "Patterns that matched nothing.",
+  }),
+  sections: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        aliases: Schema.Array(Schema.String),
+        tools: Schema.Array(
+          Schema.Struct({
+            name: Schema.String,
+            enabled: Schema.Boolean,
+            summary: Schema.optionalKey(Schema.String).annotate({ description: "Only for hidden tools." }),
+          }),
+        ),
+      }),
+    ),
+  ),
 })
 
 type Reload = Context["tool"]["reload"]
@@ -216,15 +222,23 @@ export function make(input: {
   let state = shared(input.project)
   let defaults: Record<string, boolean> = {}
 
-  const enabled = (name: string) =>
-    (META as ReadonlyArray<string>).includes(name) ||
-    (state.overrides[name] ?? defaults[name] ?? visibleByDefault(name))
+  const enabled = (name: string) => name === META || (state.overrides[name] ?? defaults[name] ?? visibleByDefault(name))
   const counts = () => {
     const shown = names.filter(enabled).length
     return { enabled: shown, hidden: names.length - shown }
   }
-  const note = () =>
-    `${counts().hidden} github tools are hidden to keep the tool list short; list_tools shows them, enable adds them. Changes apply to every session in this project, worktrees included.`
+  // The namespace line is in every request, so it carries the review loop's entry points and nothing else.
+  const description = () =>
+    [
+      "GitHub through the signed-in gh account. Review loop: context once, then pr (status), feedback (open items),",
+      "respond (reply, resolve, dismiss) and wait (Copilot review or checks, in the background). Also pull requests,",
+      "issues, discussions, Actions, releases, repo, search, uploads and api.",
+      counts().hidden > 0
+        ? `${counts().hidden} administration tools are hidden: toolset() lists them, toolset({ enable }) adds them.`
+        : "",
+    ]
+      .filter((part) => part !== "")
+      .join(" ")
   const reloadAll = Effect.suspend(() =>
     Effect.forEach(new Set([input.reload, ...state.reloads]), (reload) => reload(), { discard: true }),
   )
@@ -250,82 +264,61 @@ export function make(input: {
     ])
   })
 
-  const change = (patterns: ReadonlyArray<string>, value: boolean) =>
-    Effect.gen(function* () {
-      const chosen = select(patterns, names)
-      const changed = [...chosen].filter((name) => enabled(name) !== value)
-      state.overrides = { ...state.overrides, ...Object.fromEntries([...chosen].map((name) => [name, value])) }
-      yield* input.deps.kv.set(key, state.overrides)
-      if (changed.length > 0) yield* reloadAll
-      return {
-        changed,
-        ...counts(),
-        unmatched: patterns.filter((pattern) => select([pattern], names).size === 0),
-        note: value
-          ? `${changed.length} tool(s) added; they are available from the next step.`
-          : `${changed.length} tool(s) hidden from the next step. ${note()}`,
-      }
-    })
+  const listing = (filter: string) => {
+    const shown = select([filter], names)
+    const byTool = new Map(input.tools.map((tool) => [tool.name, tool]))
+    return SECTIONS.map((section) => ({
+      name: section.name,
+      aliases: [...new Set(section.aliases ?? [])],
+      tools: section.tools
+        .filter((name) => shown.has(name))
+        .map((name) => ({
+          name,
+          enabled: enabled(name),
+          // Shown tools are already described in the tool list; repeat only what the model cannot see.
+          ...(enabled(name) ? {} : { summary: byTool.get(name)?.description.split("\n")[0] ?? "" }),
+        })),
+    })).filter((section) => section.tools.length > 0)
+  }
 
-  const deps = input.deps
-  const meta: Tool.Info[] = [
-    GitHubShared.define(deps, {
-      name: "list_tools",
-      pinned: true,
-      description:
-        "List every github tool by section with whether it is shown, including hidden administration tools (secrets, variables, environments, rulesets, webhooks, security, collaborators, …).",
-      input: Schema.Struct({
-        filter: Schema.optionalKey(Schema.String).annotate({
-          description: "Only sections or tools matching this wildcard.",
-        }),
-        reset: Schema.optionalKey(Schema.Boolean).annotate({ description: "Forget enable/disable changes first." }),
-      }),
-      output: ListOutput,
-      execute: (args) =>
-        Effect.gen(function* () {
-          if (args.reset) {
-            const before = names.filter(enabled)
-            state.overrides = {}
-            yield* input.deps.kv.remove(key)
-            if (names.filter(enabled).join() !== before.join()) yield* reloadAll
+  const toolset = GitHubShared.define(input.deps, {
+    name: META,
+    description: [
+      "List, show or hide github tools to keep the tool list short; hiding restricts nothing. With no arguments, lists",
+      "every section with hidden tools summarized. Changes reach every session in this project from its next step.",
+      'Example: toolset({ disable: ["*"], enable: ["pr", "feedback", "respond"] }).',
+    ].join(" "),
+    input: Input,
+    output: Output,
+    execute: (args) =>
+      Effect.gen(function* () {
+        const before = names.filter(enabled)
+        const asked = args.reset === true || args.enable !== undefined || args.disable !== undefined
+        if (args.reset) state.overrides = {}
+        const apply = (patterns: ReadonlyArray<string>, value: boolean) => {
+          state.overrides = {
+            ...state.overrides,
+            ...Object.fromEntries([...select(patterns, names)].map((name) => [name, value])),
           }
-          const shown = args.filter === undefined ? names : [...select([args.filter], names)]
-          const byTool = new Map(input.tools.map((tool) => [tool.name, tool]))
-          const sections = SECTIONS.map((section) => ({
-            name: section.name,
-            aliases: [...new Set(section.aliases ?? [])],
-            enabled: section.tools.filter((name) => names.includes(name) && enabled(name)).length,
-            tools: section.tools
-              .filter((name) => shown.includes(name))
-              .map((name) => ({
-                name,
-                enabled: enabled(name),
-                // Shown tools are already described in the tool list; repeat only what the model cannot see.
-                ...(enabled(name) ? {} : { summary: byTool.get(name)?.description.split("\n")[0] ?? "" }),
-              })),
-          })).filter((section) => section.tools.length > 0)
-          return { ...counts(), sections, note: note() }
-        }),
-    }),
-    GitHubShared.define(deps, {
-      name: "enable",
-      pinned: true,
-      description:
-        'Show hidden github tools, by tool name, section or alias with wildcards, e.g. enable({ patterns: ["secrets", "variable*", "dependabot"] }).',
-      input: Patterns,
-      output: ChangeOutput,
-      execute: (args) => change(args.patterns, true),
-    }),
-    GitHubShared.define(deps, {
-      name: "disable",
-      pinned: true,
-      description:
-        'Hide github tools you do not need to shorten the tool list, e.g. disable({ patterns: ["*_set", "*_update"] }). list_tools and enable stay available.',
-      input: Patterns,
-      output: ChangeOutput,
-      execute: (args) => change(args.patterns, false),
-    }),
-  ]
+        }
+        apply(args.disable ?? [], false)
+        apply(args.enable ?? [], true)
+        const after = names.filter(enabled)
+        const changed = names.filter((name) => before.includes(name) !== after.includes(name))
+        if (asked && Object.keys(state.overrides).length === 0) yield* input.deps.kv.remove(key)
+        if (asked && Object.keys(state.overrides).length > 0) yield* input.deps.kv.set(key, state.overrides)
+        if (changed.length > 0) yield* reloadAll
+        const unmatched = [...(args.disable ?? []), ...(args.enable ?? [])].filter(
+          (pattern) => select([pattern], names).size === 0,
+        )
+        return {
+          ...counts(),
+          ...(asked ? { changed } : {}),
+          ...(unmatched.length > 0 ? { unmatched } : {}),
+          ...(args.list !== undefined || !asked ? { sections: listing(args.list ?? "*") } : {}),
+        }
+      }),
+  })
 
-  return { load, enabled, meta, note, counts }
+  return { load, enabled, toolset, description, counts }
 }

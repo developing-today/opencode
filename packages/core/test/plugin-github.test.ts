@@ -4,6 +4,7 @@ import GitHubPlugin, { GitHubTools } from "@opencode/plugin-github"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Global } from "@opencode/util/global"
+import { CodeModeCatalog } from "../src/codemode/catalog"
 import { ConfigPluginSource } from "@opencode/core/config/plugin/source"
 import { Instance } from "@opencode/core/instance"
 import { LocationServiceMap } from "@opencode/core/location-services"
@@ -35,19 +36,16 @@ const TOOLS = [
   "compare",
   "context",
   "copilot",
-  "disable",
   "discussion",
   "discussion_create",
   "discussion_update",
   "discussions",
   "dispatch",
-  "enable",
   "feedback",
   "issue",
   "issue_create",
   "issue_update",
   "issues",
-  "list_tools",
   "logs",
   "pr",
   "pr_create",
@@ -69,6 +67,7 @@ const TOOLS = [
   "run_action",
   "runs",
   "search",
+  "toolset",
   "updates",
   "upload",
   "wait",
@@ -236,7 +235,7 @@ describe("github plugin through the plugin host", () => {
     }),
   )
 
-  hosted.live("enable and disable change the Code Mode catalog from the next step", () =>
+  hosted.live("toolset changes the Code Mode catalog from the next step; nothing is pinned", () =>
     Effect.gen(function* () {
       const plugins = yield* Plugin.Service
       const sessions = yield* Session.Service
@@ -262,7 +261,13 @@ describe("github plugin through the plugin host", () => {
       })
       expect(yield* listed).toEqual(TOOLS.toSorted())
 
-      const enabled = yield* execute(`return await tools.github.enable({ patterns: ["secret*", "dependabot"] })`)
+      // Nothing is pinned: with no inline budget the namespace line is all a session pays for until it searches.
+      const bare = CodeModeCatalog.summarize((yield* registry.snapshot()).codeModeCatalog ?? { tools: [] }, {
+        budget: 0,
+      })
+      expect(bare.namespaces.find((namespace) => namespace.name === "github")?.entries).toEqual([])
+
+      const enabled = yield* execute(`return await tools.github.toolset({ enable: ["secret*", "dependabot"] })`)
       expect(enabled.changed.toSorted()).toEqual([
         "alert_update",
         "alerts",
@@ -275,13 +280,13 @@ describe("github plugin through the plugin host", () => {
         [...TOOLS, "alert_update", "alerts", "secret_set", "secrets", "security", "security_update"].toSorted(),
       )
 
-      yield* execute(`return await tools.github.enable({ patterns: ["*"] })`)
+      yield* execute(`return await tools.github.toolset({ enable: ["*"] })`)
       expect(yield* listed).toEqual([...TOOLS, ...HIDDEN].toSorted())
 
-      yield* execute(`return await tools.github.disable({ patterns: ["*"] })`)
-      expect(yield* listed).toEqual(["disable", "enable", "list_tools"])
+      yield* execute(`return await tools.github.toolset({ disable: ["*"], enable: ["pr", "feedback"] })`)
+      expect(yield* listed).toEqual(["feedback", "pr", "toolset"])
 
-      yield* execute(`return await tools.github.list_tools({ reset: true })`)
+      yield* execute(`return await tools.github.toolset({ reset: true })`)
       expect(yield* listed).toEqual(TOOLS.toSorted())
     }),
   )

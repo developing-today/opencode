@@ -86,22 +86,30 @@ with `org`. Code review on push is a ruleset rule, so it is configured with `rul
 
 ### Showing and hiding tools
 
-Three tools are always listed: `list_tools`, `enable` and `disable`. They keep rarely used tools out of the tool list
-until a session needs them; they do not restrict anything (use permissions or plugin config for that).
+`toolset` keeps rarely used tools out of the tool list until a session needs them. It restricts nothing; use
+permissions or plugin config for that.
 
 ```js
-await tools.github.list_tools({}) // every section and tool, hidden ones summarized
-await tools.github.enable({ patterns: ["dependabot", "secret*"] }) // sections, aliases and tools; * and ? wildcards
-await tools.github.disable({ patterns: ["*_set", "*_update"] }) // hide writes
-await tools.github.list_tools({ reset: true }) // back to the defaults
+await tools.github.toolset({}) // every section and tool, hidden ones summarized
+await tools.github.toolset({ enable: ["dependabot", "secret*"] }) // sections, aliases and tools; * and ? wildcards
+await tools.github.toolset({ disable: ["*"], enable: ["pr", "feedback", "respond"] }) // disable applies first
+await tools.github.toolset({ reset: true }) // back to the defaults
 ```
 
 Patterns match tool names and section names with wildcards, and section aliases exactly (`admin`, `settings`,
-`dependabot`, `protection`, `copilot`, …; `list_tools` shows them). Changes apply from the next step to every session
+`dependabot`, `protection`, `copilot`, …; the listing shows them). Changes apply from the next step to every session
 in the project: any directory, worktree or clone of the same repository (OpenCode's project ID), or the one directory
 outside a repository. They survive restarts. To start with other defaults, set the `tools_enabled` and
 `tools_disabled` preferences globally or per repository, for example
 `preferences({ scope: "global", set: { tools_enabled: ["admin"] } })`.
+
+### Context cost
+
+No github tool is pinned in the Code Mode catalog, so a session pays only for the namespace line (about 120 tokens)
+until it needs GitHub; the namespace line names the review loop's tools, and `search` returns their signatures. In
+native mode (`codemode: false`) every shown tool's description and input schema is sent with each request, so hiding
+tools there saves more. Inside one `execute` call a script can chain `pr`, `feedback` and `respond` and return only
+what it needs; the intermediate results never enter the conversation.
 
 Administrative writes follow the same permission defaults as every other tool. To be asked first:
 

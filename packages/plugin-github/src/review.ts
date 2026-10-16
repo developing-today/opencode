@@ -612,7 +612,6 @@ export function tools(deps: Deps): Tool.Info[] {
 
   const context = GitHubShared.define(deps, {
     name: "context",
-    pinned: true,
     description:
       "Where am I on GitHub: the repository, viewer, permissions, current branch and its pull request, review-loop preferences and guidance. Call once per session before other github tools.",
     input: Schema.Struct({ repo: GitHubShared.RepoField }),
@@ -655,8 +654,9 @@ export function tools(deps: Deps): Tool.Info[] {
         }),
       ),
       auth: Schema.String.annotate({ description: "Where the token came from." }),
-      preferences: GitHubPreferences.Info,
-      stored_preferences: Schema.Struct({ global: GitHubPreferences.Info, repo: GitHubPreferences.Info }),
+      preferences: GitHubPreferences.Values.annotate({
+        description: "Effective preferences; the preferences tool shows what is stored where and changes them.",
+      }),
       discovered: Schema.Array(Schema.String).annotate({ description: "Why default preferences were chosen." }),
       guidance: Schema.String,
     }),
@@ -699,7 +699,6 @@ export function tools(deps: Deps): Tool.Info[] {
             : {}),
           auth: token.source,
           preferences: prefs.effective,
-          stored_preferences: prefs.stored,
           discovered: found.reasons,
           guidance: guidance(prefs.effective),
         }
@@ -719,9 +718,9 @@ export function tools(deps: Deps): Tool.Info[] {
       clear: Schema.optionalKey(Schema.Array(Schema.String)).annotate({ description: "Preference names to remove." }),
     }),
     output: Schema.Struct({
-      effective: GitHubPreferences.Info,
-      global: GitHubPreferences.Info,
-      repo: Schema.optionalKey(GitHubPreferences.Info),
+      effective: GitHubPreferences.Values,
+      global: GitHubPreferences.Values,
+      repo: Schema.optionalKey(GitHubPreferences.Values),
       repo_slug: Schema.optionalKey(Schema.String),
     }),
     execute: (input) =>
@@ -750,7 +749,6 @@ export function tools(deps: Deps): Tool.Info[] {
 
   const pr = GitHubShared.define(deps, {
     name: "pr",
-    pinned: true,
     description:
       "Status of a pull request in one call: state, mergeability, checks, human reviews, Copilot's review state and verdict, unresolved feedback counts, whether the local branch matches the pushed head, and suggested next steps.",
     input: Schema.Struct({ repo: GitHubShared.RepoField, pr: GitHubShared.PRField }),
@@ -905,7 +903,6 @@ export function tools(deps: Deps): Tool.Info[] {
 
   const feedback = GitHubShared.define(deps, {
     name: "feedback",
-    pinned: true,
     description: [
       "Everything reviewers asked for on a pull request, as one list with stable IDs for respond: review threads (Copilot, human and bot, with replies, severity and outdated flags), findings that exist only in Copilot's review body (low confidence, previously missed), code scanning alerts, and conversation comments and review summaries from people.",
       "Items not returned to this session before, or with new replies, are marked new. The first call per pull request includes review-loop guidance.",
@@ -1006,7 +1003,6 @@ export function tools(deps: Deps): Tool.Info[] {
 
   const respond = GitHubShared.define(deps, {
     name: "respond",
-    pinned: true,
     description: [
       "Reply to, resolve, or dismiss feedback items by the IDs feedback returned, in one batch.",
       "Threads get a reply and are resolved. Code scanning alerts cannot be resolved, so resolve dismisses them with a reason (fixed alerts close when analysis of the fix runs). Copilot body findings have no thread: replies are combined into one pull request comment and resolve marks them handled. Conversation comments get a quoting reply and resolve hides them as resolved.",
@@ -1299,7 +1295,6 @@ export function tools(deps: Deps): Tool.Info[] {
 
   const wait = GitHubShared.define(deps, {
     name: "wait",
-    pinned: true,
     description: [
       "Wait for the next Copilot review and/or for checks to finish on a pull request.",
       "When waiting for Copilot and no review is pending or in progress for the head commit, one is requested first (see the copilot_auto_request preference); a request that never starts is re-sent.",

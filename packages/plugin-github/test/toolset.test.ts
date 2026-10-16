@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { GitHubTools } from "../src/index.js"
 import { GitHubToolset } from "../src/toolset.js"
-import { fakeGitHub, find, makeDeps, run } from "./fixture"
+import { fakeGitHub, makeDeps, run } from "./fixture"
 import { it, withEnv } from "./lib"
 
 const env = { GH_TOKEN: "test-token", GITHUB_TOKEN: undefined }
@@ -35,7 +35,7 @@ describe("GitHubToolset.select", () => {
 })
 
 describe("github toolset tools", () => {
-  it.live("administration tools start hidden; enable and disable change what is shown, persist, and reload", () =>
+  it.live("administration tools start hidden; toolset shows, hides, lists, persists, reloads and resets", () =>
     withEnv(env, () =>
       Effect.gen(function* () {
         const { deps, kv } = yield* makeDeps({ http: fakeGitHub({}).http })
@@ -53,60 +53,83 @@ describe("github toolset tools", () => {
         yield* toolset.load
         expect(toolset.enabled("feedback")).toBe(true)
         expect(toolset.enabled("secret_set")).toBe(false)
-        expect(toolset.enabled("list_tools")).toBe(true)
+        expect(toolset.enabled("toolset")).toBe(true)
+        expect(toolset.description()).toContain("33 administration tools are hidden")
 
-        const enabled = yield* run<object, { changed: string[]; unmatched: string[] }>(find(toolset.meta, "enable"), {
-          patterns: ["secret*", "variables", "nope"],
+        type Result = {
+          enabled: number
+          hidden: number
+          changed?: string[]
+          unmatched?: string[]
+          sections?: Array<{
+            name: string
+            aliases: string[]
+            tools: Array<{ name: string; enabled: boolean; summary?: string }>
+          }>
+        }
+        const call = (input: object) => run<object, Result>(toolset.toolset, input)
+
+        const shown = yield* call({ enable: ["secret*", "variables", "nope"] })
+        expect(shown).toEqual({
+          enabled: 48,
+          hidden: 29,
+          changed: ["variables", "variable_set", "secrets", "secret_set"],
+          unmatched: ["nope"],
         })
-        expect(enabled.changed.toSorted()).toEqual(["secret_set", "secrets", "variable_set", "variables"])
-        expect(enabled.unmatched).toEqual(["nope"])
         expect(reloads).toBe(1)
-        expect(toolset.enabled("secret_set")).toBe(true)
 
-        const disabled = yield* run<object, { changed: string[] }>(find(toolset.meta, "disable"), {
-          patterns: ["*_set"],
-        })
-        // property_set was already hidden, so only the two shown _set tools change.
-        expect(disabled.changed.toSorted()).toEqual(["secret_set", "variable_set"])
-        expect(toolset.enabled("secrets")).toBe(true)
-        expect(toolset.enabled("secret_set")).toBe(false)
+        // disable applies before enable, so a narrow list can be built in one call.
+        const narrowed = yield* call({ disable: ["*"], enable: ["pr", "feedback", "respond"] })
+        expect(narrowed.enabled).toBe(3)
+        expect(narrowed.changed).toHaveLength(45)
+        expect(narrowed.changed).not.toContain("pr")
+        expect(["pr", "feedback", "respond", "toolset", "wait"].map(toolset.enabled)).toEqual([
+          true,
+          true,
+          true,
+          true,
+          false,
+        ])
+        expect(reloads).toBe(2)
 
-        // A second load for the same directory, as after a restart, sees the same state.
+        // A second load for the same project, as after a restart, sees the same state.
         const again = GitHubToolset.make({ deps, tools: registered, reload: () => Effect.void, project: "project-a" })
         yield* again.load
-        expect(again.enabled("secrets")).toBe(true)
-        expect(again.enabled("secret_set")).toBe(false)
+        expect(again.enabled("feedback")).toBe(true)
+        expect(again.enabled("wait")).toBe(false)
 
-        const listed = yield* run<
-          object,
-          {
-            sections: Array<{
-              name: string
-              aliases: string[]
-              enabled: number
-              tools: Array<{ name: string; enabled: boolean; summary?: string }>
-            }>
-          }
-        >(find(toolset.meta, "list_tools"), { filter: "secret*" })
-        expect(listed.sections).toEqual([
-          {
-            name: "secrets",
-            aliases: ["admin", "settings", "dependabot", "codespaces"],
-            enabled: 1,
-            tools: [
-              { name: "secrets", enabled: true },
-              {
-                name: "secret_set",
-                enabled: false,
-                summary:
-                  "Set or delete one GitHub secret (Actions, Dependabot, Codespaces) in a repository, environment or organization.",
-              },
-            ],
-          },
-        ])
+        // Listing changes nothing and summarizes only hidden tools.
+        const listed = yield* call({ list: "secret*" })
+        expect(listed).toEqual({
+          enabled: 3,
+          hidden: 74,
+          sections: [
+            {
+              name: "secrets",
+              aliases: ["admin", "settings", "dependabot", "codespaces"],
+              tools: [
+                {
+                  name: "secrets",
+                  enabled: false,
+                  summary:
+                    "List GitHub secret names (never values) for Actions, Dependabot or Codespaces across scopes.",
+                },
+                {
+                  name: "secret_set",
+                  enabled: false,
+                  summary:
+                    "Set or delete one GitHub secret (Actions, Dependabot, Codespaces) in a repository, environment or organization.",
+                },
+              ],
+            },
+          ],
+        })
+        expect(reloads).toBe(2)
 
-        yield* run(find(toolset.meta, "list_tools"), { reset: true })
-        expect(toolset.enabled("secrets")).toBe(false)
+        const reset = yield* call({ reset: true })
+        expect(reset.enabled).toBe(44)
+        expect(reset.sections).toBeUndefined()
+        expect(toolset.enabled("wait")).toBe(true)
         expect(yield* kv.get("github.toolset/project-a")).toBeUndefined()
       }),
     ),
@@ -130,7 +153,7 @@ describe("github toolset tools", () => {
         const other = instance("project-other", "other")
         yield* Effect.all([main.load, worktree.load, other.load])
 
-        yield* run(find(worktree.meta, "enable"), { patterns: ["webhooks"] })
+        yield* run(worktree.toolset, { enable: ["webhooks"] })
         expect(main.enabled("webhook_update")).toBe(true)
         expect(other.enabled("webhook_update")).toBe(false)
         expect(reloads.toSorted()).toEqual(["main", "worktree"])

@@ -28,14 +28,13 @@ export interface Deps {
 }
 
 export const RepoField = Schema.optionalKey(Schema.String).annotate({
-  description: "Repository as owner/name or URL. Defaults to the repository of the session's working directory.",
+  description: "owner/name or URL. Default: the working directory's repository.",
 })
 
 export const NumberRef = Schema.Union([Schema.Int, Schema.String])
 
 export const PRField = Schema.optionalKey(NumberRef).annotate({
-  description:
-    "Pull request number, #number, owner/repo#number or URL. Defaults to the pull request for the current branch.",
+  description: "Number, #n, owner/repo#n or URL. Default: the current branch's pull request.",
 })
 
 export const limit = (maximum: number, fallback: number) =>
@@ -275,8 +274,6 @@ export interface Spec<I extends Schema.Codec<unknown, unknown>, O extends Schema
   readonly description: string
   readonly input: I
   readonly output: O
-  /** Shown in the Code Mode catalog without a search. Reserve for the review loop's entry points. */
-  readonly pinned?: boolean
   readonly execute: (
     input: Schema.Schema.Type<I>,
     context: Tool.Context,
@@ -292,9 +289,7 @@ export function define<I extends Schema.Codec<unknown, unknown>, O extends Schem
     description: spec.description,
     input: spec.input,
     output: spec.output,
-    options: deps.codemode
-      ? { namespace: NAMESPACE, codemode: true, ...(spec.pinned ? { pinned: true } : {}) }
-      : { namespace: NAMESPACE, codemode: false },
+    options: deps.codemode ? { namespace: NAMESPACE, codemode: true } : { namespace: NAMESPACE, codemode: false },
     execute: (input, context) =>
       spec.execute(input as Schema.Schema.Type<I>, context).pipe(
         Effect.map((output) => ({ output })),

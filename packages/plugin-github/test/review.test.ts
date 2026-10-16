@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Exit, Scope } from "effect"
 import * as TestClock from "effect/testing/TestClock"
 import { GitHubCopilot } from "../src/copilot.js"
+import { GitHubPreferences } from "../src/preferences.js"
 import { GitHubRepo } from "../src/repo.js"
 import { GitHubReview } from "../src/review.js"
 import { it, withEnv } from "./lib"
@@ -479,6 +480,33 @@ interface FeedbackOutput {
 }
 
 describe("github review tools", () => {
+  test("preference outputs carry the same keys the documented input does", () => {
+    expect(Object.keys(GitHubPreferences.Values.fields)).toEqual(Object.keys(GitHubPreferences.Info.fields))
+  })
+
+  it.live("preferences stores globally and reports stored and effective values", () =>
+    withEnv({ GH_TOKEN: "test-token", GITHUB_TOKEN: undefined }, () =>
+      Effect.gen(function* () {
+        const { deps, kv } = yield* makeDeps({ http: fakeGitHub({}).http })
+        const output = yield* run(find(GitHubReview.tools(deps), "preferences"), {
+          scope: "global",
+          set: { review_rounds: 5, tools_enabled: ["admin"] },
+        })
+        expect(output).toEqual({
+          global: { review_rounds: 5, tools_enabled: ["admin"] },
+          effective: {
+            review_rounds: 5,
+            tools_enabled: ["admin"],
+            human_reply_prefix: "> *Automated response from an AI coding agent*",
+            copilot_auto_request: true,
+            wait_timeout_minutes: 20,
+          },
+        })
+        expect(yield* kv.get("github.preferences/global")).toEqual({ review_rounds: 5, tools_enabled: ["admin"] })
+      }),
+    ),
+  )
+
   it.live("feedback merges threads, Copilot body findings, alerts and people's comments with stable IDs", () =>
     withEnv(env, () =>
       Effect.gen(function* () {

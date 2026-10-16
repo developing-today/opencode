@@ -73,19 +73,11 @@ export default Plugin.define({
       project: GitHubToolset.scopeOf(ctx.location),
     })
     yield* toolset.load.pipe(Effect.ignore)
-    // The transform runs again on every reload, so enable and disable change what it adds.
+    // The transform runs again on every reload, so toolset changes what it adds.
     yield* ctx.tool
       .transform((draft) => {
-        draft.namespace({
-          name: GitHubShared.NAMESPACE,
-          description: [
-            "GitHub through the authenticated gh account: pull request review loops (Copilot and human feedback, replies, resolving, waiting for reviews and CI), pull requests, issues, discussions, Actions, releases, search, repository settings and uploads. Start with context or pr.",
-            toolset.counts().hidden > 0 ? toolset.note() : "",
-          ]
-            .filter(Boolean)
-            .join(" "),
-        })
-        toolset.meta.forEach((tool) => draft.add(tool))
+        draft.namespace({ name: GitHubShared.NAMESPACE, description: toolset.description() })
+        draft.add(toolset.toolset)
         registered.filter((tool) => toolset.enabled(tool.name)).forEach((tool) => draft.add(tool))
       })
       .pipe(Effect.orDie)
