@@ -284,7 +284,9 @@ export function tools(deps: Deps): Tool.Info[] {
       }),
       milestone: Schema.optionalKey(Schema.String).annotate({ description: "Milestone title." }),
       query: Schema.optionalKey(Schema.String),
-      sort: Schema.optionalKey(Schema.Literals(["created", "updated", "comments"])).annotate({ description: "Default updated." }),
+      sort: Schema.optionalKey(Schema.Literals(["created", "updated", "comments"])).annotate({
+        description: "Default updated.",
+      }),
       limit: GitHubShared.limit(100, 30),
     }),
     output: Schema.Struct({ total: Schema.Int, query: Schema.String, items: Schema.Array(IssueSummary) }),
@@ -297,10 +299,13 @@ export function tools(deps: Deps): Tool.Info[] {
             : yield* GitHubShared.target(deps, input.repo)
         const api = resolved?.api ?? deps.client.forHost(defaultHost())
         const query = searchQuery(input, resolved ? GitHubRepo.slug(resolved.repo) : undefined)
-        const data = yield* api.graphql<{ search: { issueCount: number; nodes: ReadonlyArray<SearchIssue | null> } }>(SEARCH_QUERY, {
-          query,
-          first: input.limit ?? 30,
-        })
+        const data = yield* api.graphql<{ search: { issueCount: number; nodes: ReadonlyArray<SearchIssue | null> } }>(
+          SEARCH_QUERY,
+          {
+            query,
+            first: input.limit ?? 30,
+          },
+        )
         return {
           total: data.search.issueCount,
           query,
@@ -330,7 +335,8 @@ export function tools(deps: Deps): Tool.Info[] {
 
   const issue = GitHubShared.define(deps, {
     name: "issue",
-    description: "Read one issue with its body, labels, linked pull requests and most recent comments (comment ids feed comment_update).",
+    description:
+      "Read one issue with its body, labels, linked pull requests and most recent comments (comment ids feed comment_update).",
     input: Schema.Struct({
       repo: GitHubShared.RepoField,
       issue: IssueRef,
@@ -460,7 +466,9 @@ export function tools(deps: Deps): Tool.Info[] {
       remove_labels: Schema.optionalKey(StringList),
       add_assignees: Schema.optionalKey(StringList),
       remove_assignees: Schema.optionalKey(StringList),
-      milestone: Schema.optionalKey(Schema.NullOr(Schema.Int)).annotate({ description: "Milestone number, or null to clear." }),
+      milestone: Schema.optionalKey(Schema.NullOr(Schema.Int)).annotate({
+        description: "Milestone number, or null to clear.",
+      }),
       lock: Schema.optionalKey(Schema.Boolean),
     }),
     output: Schema.Struct({ number: Schema.Int, url: Schema.String, state: Schema.String, changed: StringList }),
@@ -481,17 +489,27 @@ export function tools(deps: Deps): Tool.Info[] {
         const addAssignees = input.add_assignees ?? []
         const removeAssignees = input.remove_assignees ?? []
         const patching = Object.keys(patch).length > 0
-        if (!patching && !addLabels.length && !removeLabels.length && !addAssignees.length && !removeAssignees.length && input.lock === undefined)
+        if (
+          !patching &&
+          !addLabels.length &&
+          !removeLabels.length &&
+          !addAssignees.length &&
+          !removeAssignees.length &&
+          input.lock === undefined
+        )
           return yield* new GitHubClient.Error({ kind: "validation", message: "Nothing to change." })
         yield* GitHubShared.authorize(deps, context, "issue_update", resolved.repo)
 
         const changed: string[] = []
-        const patched = patching ? yield* api.json<{ html_url: string; state: string }>("PATCH", path, { body: patch }) : undefined
+        const patched = patching
+          ? yield* api.json<{ html_url: string; state: string }>("PATCH", path, { body: patch })
+          : undefined
         if (input.title !== undefined) changed.push("title")
         if (input.body !== undefined) changed.push("body")
         if (input.state !== undefined || input.state_reason !== undefined)
           changed.push(`state: ${patched?.state ?? input.state}${input.state_reason ? ` (${input.state_reason})` : ""}`)
-        if (input.milestone !== undefined) changed.push(input.milestone === null ? "milestone cleared" : `milestone: ${input.milestone}`)
+        if (input.milestone !== undefined)
+          changed.push(input.milestone === null ? "milestone cleared" : `milestone: ${input.milestone}`)
         if (addLabels.length) {
           yield* api.json("POST", `${path}/labels`, { body: { labels: addLabels } })
           changed.push(`added labels: ${addLabels.join(", ")}`)
@@ -524,7 +542,9 @@ export function tools(deps: Deps): Tool.Info[] {
     ].join("\n"),
     input: Schema.Struct({
       repo: GitHubShared.RepoField,
-      on: Schema.optionalKey(GitHubShared.NumberRef).annotate({ description: "Issue or pull request number, #number, owner/repo#number or URL." }),
+      on: Schema.optionalKey(GitHubShared.NumberRef).annotate({
+        description: "Issue or pull request number, #number, owner/repo#number or URL.",
+      }),
       discussion: Schema.optionalKey(GitHubShared.NumberRef).annotate({ description: "Discussion number or URL." }),
       reply_to: Schema.optionalKey(Schema.String).annotate({
         description: "Discussion comment node id (DC_...) to reply under. Discussion replies are one level deep.",
@@ -537,7 +557,10 @@ export function tools(deps: Deps): Tool.Info[] {
         if ((input.on === undefined) === (input.discussion === undefined))
           return yield* new GitHubClient.Error({ kind: "validation", message: "Pass exactly one of on or discussion." })
         if (input.discussion === undefined && input.reply_to !== undefined)
-          return yield* new GitHubClient.Error({ kind: "validation", message: "reply_to only applies to discussion comments." })
+          return yield* new GitHubClient.Error({
+            kind: "validation",
+            message: "reply_to only applies to discussion comments.",
+          })
         if (input.on !== undefined) {
           const resolved = yield* GitHubShared.numbered(deps, { repo: input.repo, ref: input.on })
           yield* GitHubShared.authorize(deps, context, "comment", resolved.repo)
@@ -549,11 +572,14 @@ export function tools(deps: Deps): Tool.Info[] {
           return { id: posted.node_id, url: posted.html_url }
         }
         const resolved = yield* GitHubShared.numbered(deps, { repo: input.repo, ref: input.discussion ?? 0 })
-        const found = yield* resolved.api.graphql<{ repository: { discussion: { id: string } | null } | null }>(DISCUSSION_ID_QUERY, {
-          owner: resolved.repo.owner,
-          name: resolved.repo.name,
-          number: resolved.number,
-        })
+        const found = yield* resolved.api.graphql<{ repository: { discussion: { id: string } | null } | null }>(
+          DISCUSSION_ID_QUERY,
+          {
+            owner: resolved.repo.owner,
+            name: resolved.repo.name,
+            number: resolved.number,
+          },
+        )
         const discussionId = found.repository?.discussion?.id
         if (!discussionId)
           return yield* new GitHubClient.Error({
@@ -590,9 +616,17 @@ export function tools(deps: Deps): Tool.Info[] {
     }),
     execute: (input, context) =>
       Effect.gen(function* () {
-        const actions = [input.body !== undefined, input.delete === true, input.hide !== undefined, input.unhide === true].filter(Boolean)
+        const actions = [
+          input.body !== undefined,
+          input.delete === true,
+          input.hide !== undefined,
+          input.unhide === true,
+        ].filter(Boolean)
         if (actions.length !== 1)
-          return yield* new GitHubClient.Error({ kind: "validation", message: "Pass exactly one of body, delete, hide or unhide." })
+          return yield* new GitHubClient.Error({
+            kind: "validation",
+            message: "Pass exactly one of body, delete, hide or unhide.",
+          })
         const resolved = yield* GitHubShared.target(deps, input.repo)
         const api = resolved.api
         const numeric = /^\d+$/.test(input.id)
@@ -601,7 +635,8 @@ export function tools(deps: Deps): Tool.Info[] {
         if (input.hide !== undefined || input.unhide === true) {
           const nodeId = numeric ? (yield* api.json<{ node_id: string }>("GET", restPath)).node_id : input.id
           yield* GitHubShared.authorize(deps, context, "comment_update", resolved.repo)
-          if (input.hide !== undefined) yield* api.graphql(MINIMIZE, { id: nodeId, classifier: input.hide.toUpperCase() })
+          if (input.hide !== undefined)
+            yield* api.graphql(MINIMIZE, { id: nodeId, classifier: input.hide.toUpperCase() })
           if (input.hide === undefined) yield* api.graphql(UNMINIMIZE, { id: nodeId })
           return { id: nodeId, action: input.hide !== undefined ? ("hidden" as const) : ("unhidden" as const) }
         }
@@ -612,22 +647,32 @@ export function tools(deps: Deps): Tool.Info[] {
             yield* api.request("DELETE", restPath)
             return { id: input.id, action: "deleted" as const }
           }
-          const edited = yield* api.json<{ node_id: string; html_url: string }>("PATCH", restPath, { body: { body: input.body } })
+          const edited = yield* api.json<{ node_id: string; html_url: string }>("PATCH", restPath, {
+            body: { body: input.body },
+          })
           return { id: edited.node_id, action: "edited" as const, url: edited.html_url }
         }
 
-        const node = (yield* api.graphql<{ node: { __typename: string; url?: string } | null }>(NODE_TYPE_QUERY, { id: input.id })).node
+        const node = (yield* api.graphql<{ node: { __typename: string; url?: string } | null }>(NODE_TYPE_QUERY, {
+          id: input.id,
+        })).node
         if (!node) return yield* new GitHubClient.Error({ kind: "not_found", message: `No comment ${input.id}` })
         const edit = EDIT_MUTATIONS[node.__typename]
         const remove = DELETE_MUTATIONS[node.__typename]
         if (!edit || !remove)
-          return yield* new GitHubClient.Error({ kind: "validation", message: `${input.id} is a ${node.__typename}, not a comment this tool can change.` })
+          return yield* new GitHubClient.Error({
+            kind: "validation",
+            message: `${input.id} is a ${node.__typename}, not a comment this tool can change.`,
+          })
         yield* GitHubShared.authorize(deps, context, "comment_update", resolved.repo)
         if (input.delete) {
           yield* api.graphql(remove, { id: input.id })
           return { id: input.id, action: "deleted" as const }
         }
-        const data = yield* api.graphql<{ result: { comment: { url: string } | null } | null }>(edit, { id: input.id, body: input.body })
+        const data = yield* api.graphql<{ result: { comment: { url: string } | null } | null }>(edit, {
+          id: input.id,
+          body: input.body,
+        })
         const url = data.result?.comment?.url ?? node.url
         return { id: input.id, action: "edited" as const, ...(url ? { url } : {}) }
       }),

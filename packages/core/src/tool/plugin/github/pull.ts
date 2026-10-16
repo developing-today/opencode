@@ -67,7 +67,9 @@ interface SearchNode {
   readonly labels: { readonly nodes: ReadonlyArray<{ readonly name: string }> } | null
   readonly reviewDecision: string | null
   readonly commits: {
-    readonly nodes: ReadonlyArray<{ readonly commit: { readonly statusCheckRollup: { readonly state: string } | null } }>
+    readonly nodes: ReadonlyArray<{
+      readonly commit: { readonly statusCheckRollup: { readonly state: string } | null }
+    }>
   }
 }
 
@@ -128,8 +130,13 @@ const COPILOT_ALIAS = /^@?copilot$/i
 
 /** Splits reviewer names into users and team slugs, mapping the `copilot` alias to Copilot's reviewer login. */
 function reviewerBody(logins: ReadonlyArray<string>, teams: ReadonlyArray<string> = []) {
-  const users = logins.filter((login) => !login.includes("/")).map((login) => (COPILOT_ALIAS.test(login) ? GitHubCopilot.REVIEWER : login))
-  const team = [...teams, ...logins.filter((login) => login.includes("/")).map((login) => login.slice(login.indexOf("/") + 1))]
+  const users = logins
+    .filter((login) => !login.includes("/"))
+    .map((login) => (COPILOT_ALIAS.test(login) ? GitHubCopilot.REVIEWER : login))
+  const team = [
+    ...teams,
+    ...logins.filter((login) => login.includes("/")).map((login) => login.slice(login.indexOf("/") + 1)),
+  ]
   return { ...(users.length ? { reviewers: users } : {}), ...(team.length ? { team_reviewers: team } : {}) }
 }
 
@@ -197,7 +204,8 @@ const softly = <A>(warnings: string[], label: string, effect: Effect.Effect<A, G
     ),
   )
 
-const getPull = (api: Api, repo: GitHubRepo.Ref, number: number) => api.json<RestPull>("GET", `${base(repo)}/pulls/${number}`)
+const getPull = (api: Api, repo: GitHubRepo.Ref, number: number) =>
+  api.json<RestPull>("GET", `${base(repo)}/pulls/${number}`)
 
 const stateOf = (pull: RestPull) => (pull.merged ? "merged" : pull.state)
 
@@ -241,10 +249,13 @@ export function tools(deps: Deps): Tool.Info[] {
           : yield* GitHubShared.target(deps, input.repo)
         const api = resolved?.api ?? deps.client.forHost(process.env.GH_HOST || "github.com")
         const q = searchQuery({ ...input, repo: resolved?.repo })
-        const data = yield* api.graphql<{ search: { issueCount: number; nodes: ReadonlyArray<SearchNode> } }>(SEARCH_QUERY, {
-          q,
-          first: input.limit ?? 20,
-        })
+        const data = yield* api.graphql<{ search: { issueCount: number; nodes: ReadonlyArray<SearchNode> } }>(
+          SEARCH_QUERY,
+          {
+            q,
+            first: input.limit ?? 20,
+          },
+        )
         return {
           total: data.search.issueCount,
           query: q,
@@ -335,7 +346,9 @@ export function tools(deps: Deps): Tool.Info[] {
             base: baseRef,
             ...(input.body !== undefined ? { body: input.body } : {}),
             ...(input.draft !== undefined ? { draft: input.draft } : {}),
-            ...(input.maintainer_can_modify !== undefined ? { maintainer_can_modify: input.maintainer_can_modify } : {}),
+            ...(input.maintainer_can_modify !== undefined
+              ? { maintainer_can_modify: input.maintainer_can_modify }
+              : {}),
           },
         })
         const warnings: string[] = []
@@ -344,12 +357,24 @@ export function tools(deps: Deps): Tool.Info[] {
           ? yield* softly(
               warnings,
               "labels",
-              api.json<ReadonlyArray<{ name: string }>>("POST", `${base(repo)}/issues/${number}/labels`, { body: { labels: input.labels } }),
+              api.json<ReadonlyArray<{ name: string }>>("POST", `${base(repo)}/issues/${number}/labels`, {
+                body: { labels: input.labels },
+              }),
             )
           : undefined
         if (input.assignees?.length)
-          yield* softly(warnings, "assignees", api.json("POST", `${base(repo)}/issues/${number}/assignees`, { body: { assignees: input.assignees } }))
-        const requested = yield* requestReviewers(api, repo, number, reviewerBody(input.reviewers ?? [], input.team_reviewers ?? []), warnings)
+          yield* softly(
+            warnings,
+            "assignees",
+            api.json("POST", `${base(repo)}/issues/${number}/assignees`, { body: { assignees: input.assignees } }),
+          )
+        const requested = yield* requestReviewers(
+          api,
+          repo,
+          number,
+          reviewerBody(input.reviewers ?? [], input.team_reviewers ?? []),
+          warnings,
+        )
         return {
           number,
           url: created.html_url,
@@ -375,14 +400,18 @@ export function tools(deps: Deps): Tool.Info[] {
       body: Schema.optionalKey(Schema.String),
       base: Schema.optionalKey(Schema.String),
       state: Schema.optionalKey(Schema.Literals(["open", "closed"])),
-      draft: Schema.optionalKey(Schema.Boolean).annotate({ description: "true converts to draft, false marks ready for review." }),
+      draft: Schema.optionalKey(Schema.Boolean).annotate({
+        description: "true converts to draft, false marks ready for review.",
+      }),
       add_labels: Logins("Labels to add."),
       remove_labels: Logins("Labels to remove."),
       add_reviewers: ReviewerLogins("Reviewers to request."),
       remove_reviewers: ReviewerLogins("Review requests to withdraw."),
       add_assignees: Logins("Logins to assign."),
       remove_assignees: Logins("Logins to unassign."),
-      milestone: Schema.optionalKey(Schema.NullOr(Schema.Int)).annotate({ description: "Milestone number, or null to clear." }),
+      milestone: Schema.optionalKey(Schema.NullOr(Schema.Int)).annotate({
+        description: "Milestone number, or null to clear.",
+      }),
     }),
     output: Schema.Struct({
       number: Schema.Int,
@@ -395,18 +424,30 @@ export function tools(deps: Deps): Tool.Info[] {
       Effect.gen(function* () {
         const { api, repo, number } = yield* GitHubShared.pullRequest(deps, input)
         const fields = Object.fromEntries(
-          (["title", "body", "base", "state"] as const).flatMap((key) => (input[key] === undefined ? [] : [[key, input[key]]])),
+          (["title", "body", "base", "state"] as const).flatMap((key) =>
+            input[key] === undefined ? [] : [[key, input[key]]],
+          ),
         )
         const changed: string[] = []
-        const nonEmpty = (list: ReadonlyArray<string> | undefined): list is ReadonlyArray<string> => !!list && list.length > 0
+        const nonEmpty = (list: ReadonlyArray<string> | undefined): list is ReadonlyArray<string> =>
+          !!list && list.length > 0
         const pending =
           Object.keys(fields).length > 0 ||
           input.draft !== undefined ||
           input.milestone !== undefined ||
-          [input.add_labels, input.remove_labels, input.add_reviewers, input.remove_reviewers, input.add_assignees, input.remove_assignees].some(
-            nonEmpty,
-          )
-        if (!pending) return yield* new GitHubClient.Error({ kind: "validation", message: "Nothing to update; pass at least one field." })
+          [
+            input.add_labels,
+            input.remove_labels,
+            input.add_reviewers,
+            input.remove_reviewers,
+            input.add_assignees,
+            input.remove_assignees,
+          ].some(nonEmpty)
+        if (!pending)
+          return yield* new GitHubClient.Error({
+            kind: "validation",
+            message: "Nothing to update; pass at least one field.",
+          })
         yield* GitHubShared.authorize(deps, context, "pr_update", repo)
         const issue = `${base(repo)}/issues/${number}`
         const pulls = `${base(repo)}/pulls/${number}`
@@ -475,7 +516,8 @@ export function tools(deps: Deps): Tool.Info[] {
       message: Schema.optionalKey(Schema.String).annotate({ description: "Merge commit body." }),
       expected_head: Schema.optionalKey(Schema.String).annotate({ description: "Head SHA the merge must match." }),
       delete_branch: Schema.optionalKey(Schema.Boolean).annotate({
-        description: "Delete the head branch after a direct merge, when it lives in the same repository and is not the default branch.",
+        description:
+          "Delete the head branch after a direct merge, when it lives in the same repository and is not the default branch.",
       }),
     }),
     output: Schema.Struct({
@@ -526,11 +568,17 @@ export function tools(deps: Deps): Tool.Info[] {
                   : new GitHubClient.Error({
                       ...error,
                       message: error.message,
-                      hint: error.hint ?? "Auto-merge must be allowed in the repository settings and the base branch needs required checks or reviews.",
+                      hint:
+                        error.hint ??
+                        "Auto-merge must be allowed in the repository settings and the base branch needs required checks or reviews.",
                     }),
               ),
             )
-          return { merged: false, auto_merge: method, message: `Auto-merge (${method}) enabled for #${number}; it merges once requirements pass.` }
+          return {
+            merged: false,
+            auto_merge: method,
+            message: `Auto-merge (${method}) enabled for #${number}; it merges once requirements pass.`,
+          }
         }
         const result = yield* api
           .json<{ sha?: string; merged: boolean; message?: string }>("PUT", `${base(repo)}/pulls/${number}/merge`, {
@@ -555,7 +603,9 @@ export function tools(deps: Deps): Tool.Info[] {
                 : error,
             ),
           )
-        const deleted = input.delete_branch ? yield* deleteBranch(api, repo, current, (yield* repoInfo).default_branch) : undefined
+        const deleted = input.delete_branch
+          ? yield* deleteBranch(api, repo, current, (yield* repoInfo).default_branch)
+          : undefined
         return {
           merged: result.merged,
           ...(result.sha ? { sha: result.sha } : {}),
@@ -567,11 +617,14 @@ export function tools(deps: Deps): Tool.Info[] {
 
   const files = GitHubShared.define(deps, {
     name: "pr_files",
-    description: "Files changed in a pull request with per-file additions/deletions; optional path filter and clipped patches.",
+    description:
+      "Files changed in a pull request with per-file additions/deletions; optional path filter and clipped patches.",
     input: Schema.Struct({
       repo: GitHubShared.RepoField,
       pr: GitHubShared.PRField,
-      patch: Schema.optionalKey(Schema.Boolean).annotate({ description: "Include each file's diff, clipped. Default false." }),
+      patch: Schema.optionalKey(Schema.Boolean).annotate({
+        description: "Include each file's diff, clipped. Default false.",
+      }),
       path: Schema.optionalKey(Schema.String).annotate({
         description: "Substring, or glob where * matches any characters (including /) and ? one, e.g. `*.test.ts`.",
       }),
@@ -618,14 +671,20 @@ export function tools(deps: Deps): Tool.Info[] {
       repo: GitHubShared.RepoField,
       pr: GitHubShared.PRField,
       event: Schema.Literals(["approve", "request_changes", "comment"]),
-      body: Schema.optionalKey(Schema.String).annotate({ description: "Required for request_changes, and for comment without inline comments." }),
+      body: Schema.optionalKey(Schema.String).annotate({
+        description: "Required for request_changes, and for comment without inline comments.",
+      }),
       comments: Schema.optionalKey(
         Schema.Array(
           Schema.Struct({
             path: Schema.String,
-            line: Schema.Int.annotate({ description: "Line in the file on the given side of the diff; the last line for a range." }),
+            line: Schema.Int.annotate({
+              description: "Line in the file on the given side of the diff; the last line for a range.",
+            }),
             body: Schema.String,
-            side: Schema.optionalKey(Schema.Literals(["LEFT", "RIGHT"])).annotate({ description: "Default RIGHT (the new code)." }),
+            side: Schema.optionalKey(Schema.Literals(["LEFT", "RIGHT"])).annotate({
+              description: "Default RIGHT (the new code).",
+            }),
             start_line: Schema.optionalKey(Schema.Int).annotate({ description: "First line of a multi-line comment." }),
           }),
         ),
@@ -640,7 +699,8 @@ export function tools(deps: Deps): Tool.Info[] {
           return yield* new GitHubClient.Error({ kind: "validation", message: `A ${input.event} review needs a body.` })
         const { api, repo, number } = yield* GitHubShared.pullRequest(deps, input)
         yield* GitHubShared.authorize(deps, context, "review", repo)
-        const event = input.event === "approve" ? "APPROVE" : input.event === "request_changes" ? "REQUEST_CHANGES" : "COMMENT"
+        const event =
+          input.event === "approve" ? "APPROVE" : input.event === "request_changes" ? "REQUEST_CHANGES" : "COMMENT"
         const result = yield* api
           .json<{ id: number; state: string; html_url: string }>("POST", `${base(repo)}/pulls/${number}/reviews`, {
             body: {
@@ -762,7 +822,12 @@ const deleteBranch = Effect.fn("GitHubPulls.deleteBranch")(function* (
   if (pull.head.repo?.full_name.toLowerCase() !== GitHubRepo.slug(repo).toLowerCase())
     return { deleted: false, note: "Head branch kept: it lives in another repository." }
   if (pull.head.ref === defaultBranch) return { deleted: false, note: "Head branch kept: it is the default branch." }
-  const response = yield* api.request("DELETE", `${base(repo)}/git/refs/heads/${refPath(pull.head.ref)}`, { allow: [422] })
+  const response = yield* api.request("DELETE", `${base(repo)}/git/refs/heads/${refPath(pull.head.ref)}`, {
+    allow: [422],
+  })
   // 422 means the reference is already gone, typically deleted by the repository's auto-delete setting.
-  return { deleted: true, note: response.status === 422 ? `Branch ${pull.head.ref} was already deleted.` : `Deleted branch ${pull.head.ref}.` }
+  return {
+    deleted: true,
+    note: response.status === 422 ? `Branch ${pull.head.ref} was already deleted.` : `Deleted branch ${pull.head.ref}.`,
+  }
 })

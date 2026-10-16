@@ -60,11 +60,18 @@ export interface Download {
 export interface Api {
   readonly host: string
   readonly web: string
-  readonly request: <A = unknown>(method: Method, path: string, options?: RequestOptions) => Effect.Effect<Response<A>, Error>
+  readonly request: <A = unknown>(
+    method: Method,
+    path: string,
+    options?: RequestOptions,
+  ) => Effect.Effect<Response<A>, Error>
   readonly json: <A = unknown>(method: Method, path: string, options?: RequestOptions) => Effect.Effect<A, Error>
   readonly paginate: <A = unknown>(path: string, options?: PaginateOptions) => Effect.Effect<A[], Error>
   readonly graphql: <A = unknown>(query: string, variables?: Record<string, unknown>) => Effect.Effect<A, Error>
-  readonly download: (path: string, options?: { readonly accept?: string; readonly maxBytes?: number }) => Effect.Effect<Download, Error>
+  readonly download: (
+    path: string,
+    options?: { readonly accept?: string; readonly maxBytes?: number },
+  ) => Effect.Effect<Download, Error>
   readonly upload: (input: {
     readonly url: string
     readonly bytes: Uint8Array
@@ -111,7 +118,8 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
         ),
       )
     const value = result.stdout.toString("utf8").trim()
-    if (!value) return yield* new Error({ kind: "auth", message: `gh returned no token for ${host}`, hint: authHint(host) })
+    if (!value)
+      return yield* new Error({ kind: "auth", message: `gh returned no token for ${host}`, hint: authHint(host) })
     const token = { value, source: "gh auth token" }
     tokens.set(host, token)
     return token
@@ -138,15 +146,24 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
         Effect.mapError((error) =>
           error instanceof Error
             ? error
-            : new Error({ kind: "network", message: `Unable to reach ${host}: ${error.message}`, hint: networkHint(host) }),
+            : new Error({
+                kind: "network",
+                message: `Unable to reach ${host}: ${error.message}`,
+                hint: networkHint(host),
+              }),
         ),
       )
 
     const build = (method: Method, path: string, options: RequestOptions = {}) => {
-      const url = path.startsWith("https://") || path.startsWith("http://") ? path : `${urls.api}${path.startsWith("/") ? "" : "/"}${path}`
+      const url =
+        path.startsWith("https://") || path.startsWith("http://")
+          ? path
+          : `${urls.api}${path.startsWith("/") ? "" : "/"}${path}`
       const base = HttpClientRequest.make(method)(url, {
         urlParams: Object.fromEntries(
-          Object.entries(options.query ?? {}).flatMap(([key, value]) => (value === undefined ? [] : [[key, String(value)]])),
+          Object.entries(options.query ?? {}).flatMap(([key, value]) =>
+            value === undefined ? [] : [[key, String(value)]],
+          ),
         ),
         headers: { Accept: options.accept ?? "application/vnd.github+json" },
       })
@@ -155,7 +172,12 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
     }
 
     // 401 drops the cached token and retries once so a fresh `gh auth login` takes effect without a restart.
-    const exchange = (method: Method, path: string, options: RequestOptions = {}, retried = false): Effect.Effect<Response<unknown>, Error> =>
+    const exchange = (
+      method: Method,
+      path: string,
+      options: RequestOptions = {},
+      retried = false,
+    ): Effect.Effect<Response<unknown>, Error> =>
       Effect.gen(function* () {
         const response = yield* send(build(method, path, options))
         const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""))
@@ -165,7 +187,8 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
           tokens.delete(host)
           return yield* exchange(method, path, options, true)
         }
-        if (response.status < 400 || options.allow?.includes(response.status)) return { status: response.status, headers, data }
+        if (response.status < 400 || options.allow?.includes(response.status))
+          return { status: response.status, headers, data }
         return yield* statusError({ host, status: response.status, headers, data, method, path })
       }).pipe(
         Effect.retry({
@@ -189,10 +212,15 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
           const limit = options.limit ?? Number.POSITIVE_INFINITY
           const items: A[] = []
           let next: string | undefined = path
-          let query: Query | undefined = { per_page: Math.min(100, Math.max(1, Number.isFinite(limit) ? limit : 100)), ...options.query }
+          let query: Query | undefined = {
+            per_page: Math.min(100, Math.max(1, Number.isFinite(limit) ? limit : 100)),
+            ...options.query,
+          }
           while (next && items.length < limit) {
             const response: Response<unknown> = yield* exchange("GET", next, { query })
-            const page = options.key ? (response.data as Record<string, unknown> | undefined)?.[options.key] : response.data
+            const page = options.key
+              ? (response.data as Record<string, unknown> | undefined)?.[options.key]
+              : response.data
             if (!Array.isArray(page)) break
             items.push(...(page as A[]))
             next = nextLink(response.headers.link)
@@ -213,9 +241,9 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
         ),
       download: (path, options = {}) =>
         Effect.gen(function* () {
-          const first = yield* send(build("GET", path, { accept: options.accept ?? "application/vnd.github+json" })).pipe(
-            Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
-          )
+          const first = yield* send(
+            build("GET", path, { accept: options.accept ?? "application/vnd.github+json" }),
+          ).pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }))
           const location = first.headers.location
           // Signed redirect targets reject GitHub credentials, so the follow-up request carries none.
           const response =
@@ -224,13 +252,21 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
                   .execute(HttpClientRequest.get(location))
                   .pipe(
                     Effect.mapError(
-                      (error) => new Error({ kind: "network", message: `Unable to download ${path}: ${error.message}` }),
+                      (error) =>
+                        new Error({ kind: "network", message: `Unable to download ${path}: ${error.message}` }),
                     ),
                   )
               : first
           if (response.status >= 400) {
             const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""))
-            return yield* statusError({ host, status: response.status, headers: response.headers, data: parseJson(text), method: "GET", path })
+            return yield* statusError({
+              host,
+              status: response.status,
+              headers: response.headers,
+              data: parseJson(text),
+              method: "GET",
+              path,
+            })
           }
           return yield* collect(response, options.maxBytes ?? DEFAULT_DOWNLOAD_BYTES)
         }),
@@ -243,7 +279,14 @@ export function make(input: { readonly http: HttpClient.HttpClient; readonly pro
           const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""))
           const data = parseJson(text)
           if (response.status >= 400)
-            return yield* statusError({ host, status: response.status, headers: response.headers, data, method: "POST", path: upload.url })
+            return yield* statusError({
+              host,
+              status: response.status,
+              headers: response.headers,
+              data,
+              method: "POST",
+              path: upload.url,
+            })
           return data
         }),
     }
@@ -317,7 +360,8 @@ function graphqlError(host: string, errors: ReadonlyArray<GraphQLError>) {
   if (type === "NOT_FOUND") return new Error({ kind: "not_found", message, hint: notFoundHint })
   if (type === "FORBIDDEN" || /not accessible|permission|must have/i.test(message))
     return new Error({ kind: "forbidden", message, hint: forbiddenHint(host, {}) })
-  if (type === "RATE_LIMITED") return new Error({ kind: "rate_limited", message, hint: "Wait for the GraphQL rate limit to reset, then retry." })
+  if (type === "RATE_LIMITED")
+    return new Error({ kind: "rate_limited", message, hint: "Wait for the GraphQL rate limit to reset, then retry." })
   return new Error({ kind: "validation", message })
 }
 
@@ -332,28 +376,48 @@ function statusError(input: {
   const body = typeof input.data === "object" && input.data !== null ? (input.data as Record<string, unknown>) : {}
   const details = Array.isArray(body.errors)
     ? body.errors
-        .map((item) => (typeof item === "string" ? item : typeof item === "object" && item && "message" in item ? String(item.message) : JSON.stringify(item)))
+        .map((item) =>
+          typeof item === "string"
+            ? item
+            : typeof item === "object" && item && "message" in item
+              ? String(item.message)
+              : JSON.stringify(item),
+        )
         .join("; ")
     : ""
-  const base = typeof body.message === "string" ? body.message : typeof input.data === "string" ? input.data.slice(0, 300) : ""
+  const base =
+    typeof body.message === "string" ? body.message : typeof input.data === "string" ? input.data.slice(0, 300) : ""
   const message = `${input.method} ${input.path.replace(/^https:\/\/[^/]+/, "")} failed (${input.status})${base ? `: ${base}` : ""}${details ? ` — ${details}` : ""}`
   const remaining = input.headers["x-ratelimit-remaining"]
   if (input.status === 429 || (input.status === 403 && (remaining === "0" || /rate limit/i.test(base)))) {
     const reset = Number(input.headers["x-ratelimit-reset"])
     const retry = Number(input.headers["retry-after"])
-    const when = Number.isFinite(retry) && retry > 0
-      ? `in ${retry}s`
-      : Number.isFinite(reset) && reset > 0
-        ? `at ${new Date(reset * 1000).toISOString()}`
-        : "shortly"
-    return new Error({ kind: "rate_limited", status: input.status, message, hint: `GitHub rate limit reached; it resets ${when}. Batch work or wait before retrying.` })
+    const when =
+      Number.isFinite(retry) && retry > 0
+        ? `in ${retry}s`
+        : Number.isFinite(reset) && reset > 0
+          ? `at ${new Date(reset * 1000).toISOString()}`
+          : "shortly"
+    return new Error({
+      kind: "rate_limited",
+      status: input.status,
+      message,
+      hint: `GitHub rate limit reached; it resets ${when}. Batch work or wait before retrying.`,
+    })
   }
   if (input.status === 401) return new Error({ kind: "auth", status: 401, message, hint: authHint(input.host) })
-  if (input.status === 403) return new Error({ kind: "forbidden", status: 403, message, hint: forbiddenHint(input.host, input.headers) })
+  if (input.status === 403)
+    return new Error({ kind: "forbidden", status: 403, message, hint: forbiddenHint(input.host, input.headers) })
   if (input.status === 404) return new Error({ kind: "not_found", status: 404, message, hint: notFoundHint })
   if (input.status === 409) return new Error({ kind: "conflict", status: 409, message })
   if (input.status === 422) return new Error({ kind: "validation", status: 422, message })
-  if (input.status >= 500) return new Error({ kind: "server", status: input.status, message, hint: "GitHub returned a server error; retry shortly." })
+  if (input.status >= 500)
+    return new Error({
+      kind: "server",
+      status: input.status,
+      message,
+      hint: "GitHub returned a server error; retry shortly.",
+    })
   return new Error({ kind: "validation", status: input.status, message })
 }
 

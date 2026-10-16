@@ -14,16 +14,16 @@ the work can continue while the cause is fixed. Report the original failure to t
 
 ## Diagnose
 
-| Symptom (error kind) | Check | Fix |
-| --- | --- | --- |
-| `auth` / 401 | `gh auth status` | `gh auth login --hostname <host>`; an expired `GH_TOKEN` in the environment overrides gh's login, so unset it |
-| `forbidden` / 403 | The error lists accepted and granted scopes. `gh auth status` shows scopes | `gh auth refresh --hostname <host> --scopes repo,read:org,workflow,security_events`; fine-grained tokens need the matching repository permission; some settings need admin |
-| `not_found` / 404 | Owner/name and number; private repositories answer 404 to accounts without access | Pass `repo` explicitly; confirm access with `gh repo view <owner>/<name>` |
-| `rate_limited` | `gh api rate_limit` | Wait for the reset in the error; batch work (one `feedback` call instead of many) |
-| `network` | `gh api /meta` | Proxy, VPN or offline; retry |
-| `unsupported` | Host type | Uploads and some Copilot features are unavailable on GitHub Enterprise Server |
-| Code scanning alerts "unavailable" | Code scanning enabled? Token has `security_events`? | Enable it, or refresh scopes |
-| Copilot review never starts | `copilot` shows `requested` + `stuck` | Copilot code review must be enabled for the repository or account; re-request with `copilot` `force`, or ask the user to request it in the web UI |
+| Symptom (error kind)               | Check                                                                             | Fix                                                                                                                                                                        |
+| ---------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth` / 401                       | `gh auth status`                                                                  | `gh auth login --hostname <host>`; an expired `GH_TOKEN` in the environment overrides gh's login, so unset it                                                              |
+| `forbidden` / 403                  | The error lists accepted and granted scopes. `gh auth status` shows scopes        | `gh auth refresh --hostname <host> --scopes repo,read:org,workflow,security_events`; fine-grained tokens need the matching repository permission; some settings need admin |
+| `not_found` / 404                  | Owner/name and number; private repositories answer 404 to accounts without access | Pass `repo` explicitly; confirm access with `gh repo view <owner>/<name>`                                                                                                  |
+| `rate_limited`                     | `gh api rate_limit`                                                               | Wait for the reset in the error; batch work (one `feedback` call instead of many)                                                                                          |
+| `network`                          | `gh api /meta`                                                                    | Proxy, VPN or offline; retry                                                                                                                                               |
+| `unsupported`                      | Host type                                                                         | Uploads and some Copilot features are unavailable on GitHub Enterprise Server                                                                                              |
+| Code scanning alerts "unavailable" | Code scanning enabled? Token has `security_events`?                               | Enable it, or refresh scopes                                                                                                                                               |
+| Copilot review never starts        | `copilot` shows `requested` + `stuck`                                             | Copilot code review must be enabled for the repository or account; re-request with `copilot` `force`, or ask the user to request it in the web UI                          |
 
 Disable or relocate the tools with `OPENCODE_GITHUB_TOOLS=off` or `native` (native lists them as provider tools for
 sessions without Code Mode).

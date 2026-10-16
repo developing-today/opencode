@@ -35,7 +35,8 @@ export const RepoField = Schema.optionalKey(Schema.String).annotate({
 export const NumberRef = Schema.Union([Schema.Int, Schema.String])
 
 export const PRField = Schema.optionalKey(NumberRef).annotate({
-  description: "Pull request number, #number, owner/repo#number or URL. Defaults to the pull request for the current branch.",
+  description:
+    "Pull request number, #number, owner/repo#number or URL. Defaults to the pull request for the current branch.",
 })
 
 export const limit = (maximum: number, fallback: number) =>
@@ -63,7 +64,10 @@ const defaultHost = () => process.env.GH_HOST || "github.com"
 // Code Mode scripts call several tools in a row; reading the remotes once per burst saves a handful of git spawns
 // per call without hiding a branch switch for long.
 const LOCAL_TTL_MS = 5_000
-const locals = new Map<string, { readonly at: number; readonly value: Exit.Exit<GitHubRepo.Local, GitHubClient.Error> }>()
+const locals = new Map<
+  string,
+  { readonly at: number; readonly value: Exit.Exit<GitHubRepo.Local, GitHubClient.Error> }
+>()
 
 const localRepo = Effect.fn("GitHubShared.localRepo")(function* (deps: Deps) {
   const now = yield* Clock.currentTimeMillis
@@ -83,7 +87,10 @@ export const target = Effect.fn("GitHubShared.target")(function* (deps: Deps, re
   const local = Option.getOrUndefined(yield* localRepo(deps).pipe(Effect.option))
   const parsed = GitHubRepo.parse(repo, local?.host ?? defaultHost())
   if (!parsed)
-    return yield* new GitHubClient.Error({ kind: "validation", message: `Unrecognized repository: ${repo}. Use owner/name.` })
+    return yield* new GitHubClient.Error({
+      kind: "validation",
+      message: `Unrecognized repository: ${repo}. Use owner/name.`,
+    })
   const same = local && sameRepo(local, parsed)
   return { repo: parsed, api: deps.client.forHost(parsed.host), ...(same ? { local } : {}) } satisfies Target as Target
 })
@@ -99,8 +106,12 @@ export const numbered = Effect.fn("GitHubShared.numbered")(function* (
   input: { readonly repo?: string; readonly ref: string | number },
 ) {
   const parsed = GitHubRepo.parseNumber(input.ref)
-  if (!parsed) return yield* new GitHubClient.Error({ kind: "validation", message: `Unrecognized reference: ${input.ref}` })
-  const resolved = yield* target(deps, parsed.repo ? `${parsed.repo.host}/${parsed.repo.owner}/${parsed.repo.name}` : input.repo)
+  if (!parsed)
+    return yield* new GitHubClient.Error({ kind: "validation", message: `Unrecognized reference: ${input.ref}` })
+  const resolved = yield* target(
+    deps,
+    parsed.repo ? `${parsed.repo.host}/${parsed.repo.owner}/${parsed.repo.name}` : input.repo,
+  )
   return { ...resolved, number: parsed.number } satisfies PRTarget as PRTarget
 })
 
@@ -132,14 +143,23 @@ export const pullRequest = Effect.fn("GitHubShared.pullRequest")(function* (
       })
       if (open[0]) return open[0].number
       const any = yield* api.json<PullSummary[]>("GET", `/repos/${GitHubRepo.slug(repo)}/pulls`, {
-        query: { head: `${resolved.repo.owner}:${branch}`, state: "all", sort: "updated", direction: "desc", per_page: 5 },
+        query: {
+          head: `${resolved.repo.owner}:${branch}`,
+          state: "all",
+          sort: "updated",
+          direction: "desc",
+          per_page: 5,
+        },
       })
       return any[0]?.number
     })
   const own = yield* find(resolved.repo)
   if (own !== undefined) return { ...resolved, number: own } satisfies PRTarget as PRTarget
   // A branch pushed to a fork usually has its pull request on the parent repository.
-  const info = yield* resolved.api.json<{ parent?: { full_name: string } }>("GET", `/repos/${GitHubRepo.slug(resolved.repo)}`)
+  const info = yield* resolved.api.json<{ parent?: { full_name: string } }>(
+    "GET",
+    `/repos/${GitHubRepo.slug(resolved.repo)}`,
+  )
   const parent = info.parent ? GitHubRepo.parse(info.parent.full_name, resolved.repo.host) : undefined
   const upstream = parent ? yield* find(parent) : undefined
   if (parent && upstream !== undefined)
@@ -157,7 +177,13 @@ export const pullRequest = Effect.fn("GitHubShared.pullRequest")(function* (
 })
 
 /** Asks permission for a GitHub write. Defaults allow; configure `github_<tool>` permissions to require approval. */
-export const authorize = (deps: Deps, context: Tool.Context, tool: string, repo: GitHubRepo.Ref, metadata?: Record<string, unknown>) =>
+export const authorize = (
+  deps: Deps,
+  context: Tool.Context,
+  tool: string,
+  repo: GitHubRepo.Ref,
+  metadata?: Record<string, unknown>,
+) =>
   deps.permission.assert({
     action: `${NAMESPACE}_${tool}`,
     resources: [`${repo.host}/${GitHubRepo.slug(repo)}`],
@@ -192,7 +218,10 @@ export interface Spec<I extends Schema.Codec<unknown, unknown>, O extends Schema
   readonly output: O
   /** Shown in the Code Mode catalog without a search. Reserve for the review loop's entry points. */
   readonly pinned?: boolean
-  readonly execute: (input: Schema.Schema.Type<I>, context: Tool.Context) => Effect.Effect<Schema.Schema.Type<O>, unknown>
+  readonly execute: (
+    input: Schema.Schema.Type<I>,
+    context: Tool.Context,
+  ) => Effect.Effect<Schema.Schema.Type<O>, unknown>
 }
 
 export function define<I extends Schema.Codec<unknown, unknown>, O extends Schema.Codec<unknown, unknown>>(

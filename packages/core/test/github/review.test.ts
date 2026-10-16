@@ -258,8 +258,21 @@ const pullData = (head = HEAD) => ({
                 contexts: {
                   totalCount: 2,
                   nodes: [
-                    { __typename: "CheckRun", name: "unit", status: "COMPLETED", conclusion: "FAILURE", detailsUrl: "https://ci/unit", isRequired: true },
-                    { __typename: "StatusContext", context: "lint", state: "SUCCESS", targetUrl: null, isRequired: false },
+                    {
+                      __typename: "CheckRun",
+                      name: "unit",
+                      status: "COMPLETED",
+                      conclusion: "FAILURE",
+                      detailsUrl: "https://ci/unit",
+                      isRequired: true,
+                    },
+                    {
+                      __typename: "StatusContext",
+                      context: "lint",
+                      state: "SUCCESS",
+                      targetUrl: null,
+                      isRequired: false,
+                    },
                   ],
                 },
               },
@@ -375,7 +388,10 @@ const alert = {
   created_at: "2026-01-01T09:30:00Z",
   rule: { id: "js/sql-injection", description: "SQL injection", severity: "error", security_severity_level: "high" },
   tool: { name: "CodeQL" },
-  most_recent_instance: { message: { text: "Query built from user input." }, location: { path: "test/db.test.ts", start_line: 4, end_line: 4 } },
+  most_recent_instance: {
+    message: { text: "Query built from user input." },
+    location: { path: "test/db.test.ts", start_line: 4, end_line: 4 },
+  },
 }
 
 const baseRoutes = (overrides: Record<string, Route | object> = {}) => ({
@@ -443,7 +459,12 @@ describe("github review tools", () => {
           ["alert:5", "alert", "bot"],
           ["IC_human", "comment", "human"],
         ])
-        expect(items[0]).toMatchObject({ severity: "high", title: "Pagination stops after one page", line: 20, new: true })
+        expect(items[0]).toMatchObject({
+          severity: "high",
+          title: "Pagination stops after one page",
+          line: 20,
+          new: true,
+        })
         expect(items[1]).toMatchObject({ outdated: true, line: 8 })
         expect(items[2]).toMatchObject({ path: "src/retry.ts", line: 40, end_line: 44, source: "previously_missed" })
         expect(items[3]).toMatchObject({ severity: "high", path: "test/db.test.ts" })
@@ -498,10 +519,10 @@ describe("github review tools", () => {
       Effect.gen(function* () {
         const github = fakeGitHub(baseRoutes())
         const { deps } = yield* makeDeps({ http: github.http })
-        const result = yield* run<object, { ready: { merge: boolean; blockers: string[]; warnings: string[] }; feedback: object }>(
-          find(GitHubReview.tools(deps), "pr"),
-          { repo: "acme/widgets", pr: 7 },
-        )
+        const result = yield* run<
+          object,
+          { ready: { merge: boolean; blockers: string[]; warnings: string[] }; feedback: object }
+        >(find(GitHubReview.tools(deps), "pr"), { repo: "acme/widgets", pr: 7 })
         expect(result.feedback).toEqual({
           unresolved_threads: 2,
           copilot_threads: 1,
@@ -523,39 +544,54 @@ describe("github review tools", () => {
     ),
   )
 
-  it.live("respond replies with the human prefix, resolves, dismisses alerts with a reason, and combines body replies", () =>
-    withEnv(env, () =>
-      Effect.gen(function* () {
-        const github = fakeGitHub(
-          baseRoutes({
-            "GRAPHQL nodes(ids:": {
-              body: {
-                nodes: [
-                  {
-                    __typename: "PullRequestReviewThread",
-                    id: "PRRT_human",
-                    isResolved: false,
-                    path: "src/cache.ts",
-                    comments: { nodes: [{ author: { login: "maintainer", __typename: "User" }, body: "Why a Map here?", url: "u" }] },
-                  },
-                ],
+  it.live(
+    "respond replies with the human prefix, resolves, dismisses alerts with a reason, and combines body replies",
+    () =>
+      withEnv(env, () =>
+        Effect.gen(function* () {
+          const github = fakeGitHub(
+            baseRoutes({
+              "GRAPHQL nodes(ids:": {
+                body: {
+                  nodes: [
+                    {
+                      __typename: "PullRequestReviewThread",
+                      id: "PRRT_human",
+                      isResolved: false,
+                      path: "src/cache.ts",
+                      comments: {
+                        nodes: [
+                          { author: { login: "maintainer", __typename: "User" }, body: "Why a Map here?", url: "u" },
+                        ],
+                      },
+                    },
+                  ],
+                },
               },
-            },
-            "GRAPHQL addPullRequestReviewThreadReply": {
-              body: { addPullRequestReviewThreadReply: { comment: { url: "https://reply", pullRequestReview: { id: "PRR_pending", state: "PENDING" } } } },
-            },
-            "GRAPHQL comments { totalCount }": { body: { node: { comments: { totalCount: 1 } } } },
-            "GRAPHQL submitPullRequestReview": { body: { submitPullRequestReview: { pullRequestReview: { state: "COMMENTED" } } } },
-            "GRAPHQL resolveReviewThread": { body: { resolveReviewThread: { thread: { isResolved: true } } } },
-            "PATCH /repos/acme/widgets/code-scanning/alerts/5": (request) => ({ body: { ...alert, state: "dismissed", request: request.body } }),
-            "POST /repos/acme/widgets/issues/7/comments": { body: { html_url: "https://comment" } },
-          }),
-        )
-        const { deps, asserted } = yield* makeDeps({ http: github.http })
-        const tools = GitHubReview.tools(deps)
-        const result = yield* run<object, { results: Array<Record<string, unknown>>; submitted_reviews: number; warnings: string[] }>(
-          find(tools, "respond"),
-          {
+              "GRAPHQL addPullRequestReviewThreadReply": {
+                body: {
+                  addPullRequestReviewThreadReply: {
+                    comment: { url: "https://reply", pullRequestReview: { id: "PRR_pending", state: "PENDING" } },
+                  },
+                },
+              },
+              "GRAPHQL comments { totalCount }": { body: { node: { comments: { totalCount: 1 } } } },
+              "GRAPHQL submitPullRequestReview": {
+                body: { submitPullRequestReview: { pullRequestReview: { state: "COMMENTED" } } },
+              },
+              "GRAPHQL resolveReviewThread": { body: { resolveReviewThread: { thread: { isResolved: true } } } },
+              "PATCH /repos/acme/widgets/code-scanning/alerts/5": (request) => ({
+                body: { ...alert, state: "dismissed", request: request.body },
+              }),
+              "POST /repos/acme/widgets/issues/7/comments": { body: { html_url: "https://comment" } },
+            }),
+          )
+          const { deps, asserted } = yield* makeDeps({ http: github.http })
+          const tools = GitHubReview.tools(deps)
+          const result = yield* run<
+            object,
+            { results: Array<Record<string, unknown>>; submitted_reviews: number; warnings: string[] }
+          >(find(tools, "respond"), {
             repo: "acme/widgets",
             pr: 7,
             responses: [
@@ -563,33 +599,36 @@ describe("github review tools", () => {
               { id: "alert:5", resolve: true },
               { id: "copilot:900:0", body: "Capped at five attempts.", resolve: true },
             ],
-          },
-        )
-        expect(result.results.map((item) => [item.id, item.status, item.resolved])).toEqual([
-          ["PRRT_human", "done", true],
-          ["alert:5", "done", true],
-          ["copilot:900:0", "done", true],
-        ])
-        expect(result.submitted_reviews).toBe(1)
-        expect(asserted.map((item) => item.action)).toEqual(["github_respond"])
+          })
+          expect(result.results.map((item) => [item.id, item.status, item.resolved])).toEqual([
+            ["PRRT_human", "done", true],
+            ["alert:5", "done", true],
+            ["copilot:900:0", "done", true],
+          ])
+          expect(result.submitted_reviews).toBe(1)
+          expect(asserted.map((item) => item.action)).toEqual(["github_respond"])
 
-        const reply = github.requests.find((request) => JSON.stringify(request.body).includes("addPullRequestReviewThreadReply"))
-        const replyBody = (reply?.body as { variables: { body: string } }).variables.body
-        expect(replyBody.startsWith("> *Automated response from an AI coding agent*\n\n")).toBe(true)
-        // The alert is in a test file, so dismissing without a reason picks "used in tests".
-        const dismissal = github.requests.find((request) => request.method === "PATCH")
-        expect(dismissal?.body).toMatchObject({ state: "dismissed", dismissed_reason: "used in tests" })
-        const combined = github.requests.find((request) => request.method === "POST" && request.path.endsWith("/issues/7/comments"))
-        expect(JSON.stringify(combined?.body)).toContain("Capped at five attempts.")
+          const reply = github.requests.find((request) =>
+            JSON.stringify(request.body).includes("addPullRequestReviewThreadReply"),
+          )
+          const replyBody = (reply?.body as { variables: { body: string } }).variables.body
+          expect(replyBody.startsWith("> *Automated response from an AI coding agent*\n\n")).toBe(true)
+          // The alert is in a test file, so dismissing without a reason picks "used in tests".
+          const dismissal = github.requests.find((request) => request.method === "PATCH")
+          expect(dismissal?.body).toMatchObject({ state: "dismissed", dismissed_reason: "used in tests" })
+          const combined = github.requests.find(
+            (request) => request.method === "POST" && request.path.endsWith("/issues/7/comments"),
+          )
+          expect(JSON.stringify(combined?.body)).toContain("Capped at five attempts.")
 
-        const after = yield* run<object, { items: GitHubReview.Item[] }>(find(tools, "feedback"), {
-          repo: "acme/widgets",
-          pr: 7,
-          sources: ["copilot_body"],
-        })
-        expect(after.items).toEqual([])
-      }),
-    ),
+          const after = yield* run<object, { items: GitHubReview.Item[] }>(find(tools, "feedback"), {
+            repo: "acme/widgets",
+            pr: 7,
+            sources: ["copilot_body"],
+          })
+          expect(after.items).toEqual([])
+        }),
+      ),
   )
 
   it.live("an alert fixed in code is left for reanalysis instead of being dismissed", () =>
@@ -597,11 +636,14 @@ describe("github review tools", () => {
       Effect.gen(function* () {
         const github = fakeGitHub(baseRoutes())
         const { deps } = yield* makeDeps({ http: github.http })
-        const result = yield* run<object, { results: Array<{ status: string }> }>(find(GitHubReview.tools(deps), "respond"), {
-          repo: "acme/widgets",
-          pr: 7,
-          responses: [{ id: "alert:5", resolve: true, reason: "fixed" }],
-        })
+        const result = yield* run<object, { results: Array<{ status: string }> }>(
+          find(GitHubReview.tools(deps), "respond"),
+          {
+            repo: "acme/widgets",
+            pr: 7,
+            responses: [{ id: "alert:5", resolve: true, reason: "fixed" }],
+          },
+        )
         expect(result.results[0]?.status).toBe("awaiting_reanalysis")
         expect(github.requests.some((request) => request.method === "PATCH")).toBe(false)
       }),
@@ -614,13 +656,20 @@ describe("github review tools", () => {
         const github = fakeGitHub(
           baseRoutes({
             "GRAPHQL latestOpinionatedReviews": { body: pullData("c".repeat(40)) },
-            "POST /repos/acme/widgets/pulls/7/requested_reviewers": { body: { requested_reviewers: [{ login: "Copilot" }] } },
+            "POST /repos/acme/widgets/pulls/7/requested_reviewers": {
+              body: { requested_reviewers: [{ login: "Copilot" }] },
+            },
           }),
         )
         const { deps } = yield* makeDeps({ http: github.http })
-        const result = yield* run<object, { action: string }>(find(GitHubReview.tools(deps), "copilot"), { repo: "acme/widgets", pr: 7 })
+        const result = yield* run<object, { action: string }>(find(GitHubReview.tools(deps), "copilot"), {
+          repo: "acme/widgets",
+          pr: 7,
+        })
         expect(result.action).toBe("requested")
-        const post = github.requests.find((request) => request.method === "POST" && request.path.endsWith("/requested_reviewers"))
+        const post = github.requests.find(
+          (request) => request.method === "POST" && request.path.endsWith("/requested_reviewers"),
+        )
         expect(post?.body).toEqual({ reviewers: ["copilot-pull-request-reviewer[bot]"] })
       }),
     ),
@@ -631,13 +680,18 @@ describe("github review tools", () => {
       Effect.gen(function* () {
         const github = fakeGitHub(baseRoutes())
         const { deps } = yield* makeDeps({ http: github.http })
-        const result = yield* run<object, { action: string; note?: string }>(find(GitHubReview.tools(deps), "copilot"), {
-          repo: "acme/widgets",
-          pr: 7,
-        })
+        const result = yield* run<object, { action: string; note?: string }>(
+          find(GitHubReview.tools(deps), "copilot"),
+          {
+            repo: "acme/widgets",
+            pr: 7,
+          },
+        )
         expect(result.action).toBe("none")
         expect(result.note).toContain("already reviewed")
-        expect(github.requests.some((request) => request.method === "POST" && request.path.endsWith("/requested_reviewers"))).toBe(false)
+        expect(
+          github.requests.some((request) => request.method === "POST" && request.path.endsWith("/requested_reviewers")),
+        ).toBe(false)
       }),
     ),
   )
@@ -647,11 +701,14 @@ describe("github review tools", () => {
       Effect.gen(function* () {
         const github = fakeGitHub(baseRoutes())
         const { deps } = yield* makeDeps({ http: github.http })
-        const result = yield* run<object, { status: string; requested: string; message: string }>(find(GitHubReview.tools(deps), "wait"), {
-          repo: "acme/widgets",
-          pr: 7,
-          background: false,
-        })
+        const result = yield* run<object, { status: string; requested: string; message: string }>(
+          find(GitHubReview.tools(deps), "wait"),
+          {
+            repo: "acme/widgets",
+            pr: 7,
+            background: false,
+          },
+        )
         expect(result).toMatchObject({ status: "completed", requested: "none" })
         expect(result.message).toContain("Changes recommended")
       }),
@@ -677,11 +734,14 @@ describe("github review tools", () => {
           }),
         )
         const { deps, notified } = yield* makeDeps({ http: github.http })
-        const result = yield* run<object, { status: string; requested: string }>(find(GitHubReview.tools(deps), "wait"), {
-          repo: "acme/widgets",
-          pr: 7,
-          interval_seconds: 30,
-        })
+        const result = yield* run<object, { status: string; requested: string }>(
+          find(GitHubReview.tools(deps), "wait"),
+          {
+            repo: "acme/widgets",
+            pr: 7,
+            interval_seconds: 30,
+          },
+        )
         expect(result).toMatchObject({ status: "running", requested: "requested" })
         expect(notified).toEqual([])
 
@@ -690,7 +750,10 @@ describe("github review tools", () => {
         expect(notified).toEqual([])
 
         pending = false
-        reviewsList = [...reviewsList, copilotReview({ id: 901, commit: HEAD, at: "2026-01-01T11:00:45Z", body: approvalBody })]
+        reviewsList = [
+          ...reviewsList,
+          copilotReview({ id: 901, commit: HEAD, at: "2026-01-01T11:00:45Z", body: approvalBody }),
+        ]
         yield* TestClock.adjust("30 seconds")
         for (let attempt = 0; attempt < 50 && notified.length === 0; attempt++) yield* Effect.yieldNow
         expect(notified).toHaveLength(1)
@@ -701,4 +764,3 @@ describe("github review tools", () => {
     ),
   )
 })
-

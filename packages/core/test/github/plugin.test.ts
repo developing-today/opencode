@@ -42,14 +42,18 @@ it.live("the plugin registers Code Mode tools, a hidden fallback skill, and pers
           sessionID: session.id,
           ...toolIdentity,
           call: { type: "tool-call", id: `call-${code.length}`, name: "execute", input: { code } },
-        }).pipe(Effect.map((result) => JSON.parse(result.content?.[0]?.type === "text" ? result.content[0].text : "null")))
+        }).pipe(
+          Effect.map((result) => JSON.parse(result.content?.[0]?.type === "text" ? result.content[0].text : "null")),
+        )
 
       expect(
         yield* execute(
           `return await tools.github.preferences({ scope: "global", set: { review_rounds: 5, notes: ["skip style nits"] } })`,
         ),
       ).toMatchObject({ global: { review_rounds: 5, notes: ["skip style nits"] }, effective: { review_rounds: 5 } })
-      expect(yield* execute(`return await tools.github.preferences({ scope: "global", clear: ["notes"] })`)).toMatchObject({
+      expect(
+        yield* execute(`return await tools.github.preferences({ scope: "global", clear: ["notes"] })`),
+      ).toMatchObject({
         global: { review_rounds: 5 },
       })
       expect((yield* execute(`return await tools.github.preferences({})`)).global).toEqual({ review_rounds: 5 })

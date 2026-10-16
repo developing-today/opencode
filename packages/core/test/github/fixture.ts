@@ -53,7 +53,9 @@ export function fakeGitHub(routes: Record<string, Reply | Route>) {
       const reply = graphql
         ? Object.entries(routes)
             .filter(([key]) => key.startsWith("GRAPHQL "))
-            .map(([key, route]) => (String((body as { query: string }).query).includes(key.slice(8)) ? answer(route, recorded) : undefined))
+            .map(([key, route]) =>
+              String((body as { query: string }).query).includes(key.slice(8)) ? answer(route, recorded) : undefined,
+            )
             .find((value) => value !== undefined)
         : answer(routes[`${request.method} ${url.pathname}`], recorded)
       const resolved = reply ?? { status: 599, body: { message: `unrouted ${request.method} ${url.pathname}` } }

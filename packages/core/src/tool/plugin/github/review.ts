@@ -81,7 +81,8 @@ export const Item = Schema.Struct({
   end_line: Schema.optionalKey(Schema.Int),
   severity: Schema.optionalKey(Schema.String),
   source: Schema.optionalKey(Schema.String).annotate({
-    description: "low_confidence or previously_missed for Copilot body findings, the tool for alerts, the state for reviews.",
+    description:
+      "low_confidence or previously_missed for Copilot body findings, the tool for alerts, the state for reviews.",
   }),
   url: Schema.optionalKey(Schema.String),
   created_at: Schema.optionalKey(Schema.String),
@@ -150,7 +151,9 @@ interface PullData {
     }>
   }
   readonly reviewRequests: {
-    readonly nodes: ReadonlyArray<{ readonly requestedReviewer: { readonly login?: string; readonly name?: string } | null }>
+    readonly nodes: ReadonlyArray<{
+      readonly requestedReviewer: { readonly login?: string; readonly name?: string } | null
+    }>
   }
   readonly latestOpinionatedReviews: {
     readonly nodes: ReadonlyArray<{ readonly state: string; readonly author: GqlAuthor | null }>
@@ -244,7 +247,12 @@ interface Alert {
   readonly html_url: string
   readonly created_at: string
   readonly dismissed_reason?: string | null
-  readonly rule: { readonly id: string; readonly description?: string; readonly severity?: string; readonly security_severity_level?: string | null }
+  readonly rule: {
+    readonly id: string
+    readonly description?: string
+    readonly severity?: string
+    readonly security_severity_level?: string | null
+  }
   readonly tool: { readonly name: string }
   readonly most_recent_instance: {
     readonly message?: { readonly text?: string }
@@ -264,7 +272,10 @@ const pull = (api: Api, repo: GitHubRepo.Ref, number: number) =>
         data.repository?.pullRequest
           ? Effect.succeed(data.repository.pullRequest)
           : Effect.fail(
-              new GitHubClient.Error({ kind: "not_found", message: `Pull request ${GitHubRepo.slug(repo)}#${number} not found` }),
+              new GitHubClient.Error({
+                kind: "not_found",
+                message: `Pull request ${GitHubRepo.slug(repo)}#${number} not found`,
+              }),
             ),
       ),
     )
@@ -284,7 +295,12 @@ const threads = Effect.fn("GitHubReview.threads")(function* (api: Api, repo: Git
   const all: ThreadData[] = []
   let cursor: string | null = null
   do {
-    const page: ThreadsPage = yield* api.graphql<ThreadsPage>(THREADS_QUERY, { owner: repo.owner, name: repo.name, number, cursor })
+    const page: ThreadsPage = yield* api.graphql<ThreadsPage>(THREADS_QUERY, {
+      owner: repo.owner,
+      name: repo.name,
+      number,
+      cursor,
+    })
     all.push(...page.repository.pullRequest.reviewThreads.nodes)
     cursor = page.repository.pullRequest.reviewThreads.pageInfo.hasNextPage
       ? page.repository.pullRequest.reviewThreads.pageInfo.endCursor
@@ -321,7 +337,9 @@ const timeline = Effect.fn("GitHubReview.timeline")(function* (api: Api, repo: G
 
 const copilotPending = (api: Api, repo: GitHubRepo.Ref, number: number) =>
   api
-    .json<{ users: ReadonlyArray<{ login: string }> }>("GET", `/repos/${GitHubRepo.slug(repo)}/pulls/${number}/requested_reviewers`)
+    .json<{
+      users: ReadonlyArray<{ login: string }>
+    }>("GET", `/repos/${GitHubRepo.slug(repo)}/pulls/${number}/requested_reviewers`)
     .pipe(Effect.map((data) => data.users.some((user) => GitHubCopilot.authorKind(user.login) === "copilot")))
 
 const copilotReviews = (all: ReadonlyArray<RestReview>) =>
@@ -379,12 +397,26 @@ function checks(data: PullData) {
     const url = node.detailsUrl ?? node.targetUrl ?? undefined
     const required = node.isRequired === true
     if (node.__typename === "CheckRun") {
-      if (node.status !== "COMPLETED") return { name, result: "pending" as const, conclusion: node.status ?? "PENDING", required, url }
+      if (node.status !== "COMPLETED")
+        return { name, result: "pending" as const, conclusion: node.status ?? "PENDING", required, url }
       const ok = node.conclusion === "SUCCESS" || node.conclusion === "NEUTRAL" || node.conclusion === "SKIPPED"
-      return { name, result: ok ? ("passed" as const) : ("failed" as const), conclusion: node.conclusion ?? "UNKNOWN", required, url }
+      return {
+        name,
+        result: ok ? ("passed" as const) : ("failed" as const),
+        conclusion: node.conclusion ?? "UNKNOWN",
+        required,
+        url,
+      }
     }
-    if (node.state === "PENDING" || node.state === "EXPECTED") return { name, result: "pending" as const, conclusion: node.state, required, url }
-    return { name, result: node.state === "SUCCESS" ? ("passed" as const) : ("failed" as const), conclusion: node.state ?? "UNKNOWN", required, url }
+    if (node.state === "PENDING" || node.state === "EXPECTED")
+      return { name, result: "pending" as const, conclusion: node.state, required, url }
+    return {
+      name,
+      result: node.state === "SUCCESS" ? ("passed" as const) : ("failed" as const),
+      conclusion: node.state ?? "UNKNOWN",
+      required,
+      url,
+    }
   })
   return {
     state: rollup?.state ?? "NONE",
@@ -393,11 +425,21 @@ function checks(data: PullData) {
     pending: entries.filter((entry) => entry.result === "pending").map((entry) => entry.name),
     failing: entries
       .filter((entry) => entry.result === "failed")
-      .map((entry) => ({ name: entry.name, conclusion: entry.conclusion, required: entry.required, ...(entry.url ? { url: entry.url } : {}) })),
+      .map((entry) => ({
+        name: entry.name,
+        conclusion: entry.conclusion,
+        required: entry.required,
+        ...(entry.url ? { url: entry.url } : {}),
+      })),
   }
 }
 
-const alerts = Effect.fn("GitHubReview.alerts")(function* (api: Api, repo: GitHubRepo.Ref, number: number, open: boolean) {
+const alerts = Effect.fn("GitHubReview.alerts")(function* (
+  api: Api,
+  repo: GitHubRepo.Ref,
+  number: number,
+  open: boolean,
+) {
   return yield* api
     .paginate<Alert>(`/repos/${GitHubRepo.slug(repo)}/code-scanning/alerts`, {
       query: { pr: number, ...(open ? { state: "open" } : {}) },
@@ -422,9 +464,11 @@ const alerts = Effect.fn("GitHubReview.alerts")(function* (api: Api, repo: GitHu
 // ---------------------------------------------------------------------------------------------------------------
 
 const prKey = (repo: GitHubRepo.Ref, number: number) => `${repo.host}/${GitHubRepo.slug(repo)}/${number}`.toLowerCase()
-const seenKey = (sessionID: string, repo: GitHubRepo.Ref, number: number) => `github.seen/${sessionID}/${prKey(repo, number)}`
+const seenKey = (sessionID: string, repo: GitHubRepo.Ref, number: number) =>
+  `github.seen/${sessionID}/${prKey(repo, number)}`
 const handledKey = (repo: GitHubRepo.Ref, number: number) => `github.handled/${prKey(repo, number)}`
-const cursorKey = (sessionID: string, repo: GitHubRepo.Ref, number: number) => `github.cursor/${sessionID}/${prKey(repo, number)}`
+const cursorKey = (sessionID: string, repo: GitHubRepo.Ref, number: number) =>
+  `github.cursor/${sessionID}/${prKey(repo, number)}`
 
 const stringList = Schema.decodeUnknownOption(Schema.Array(Schema.String))
 const readList = (deps: Deps, key: string) =>
@@ -459,7 +503,9 @@ export function guidance(preferences: GitHubPreferences.Info & typeof GitHubPref
     "- Work through findings autonomously; bring changes of direction (architecture, behavior, scope) to the user.",
     `- Every push gets a fresh Copilot review with new threads, so zero findings may never arrive. After about ${preferences.review_rounds} rounds, or once findings are follow-ups to your own fixes or mostly nits, stop and hand back with a summary.`,
     `- Minor, out-of-scope or follow-up findings: ${followup}.`,
-    ...(preferences.notes?.length ? ["- Standing notes from the user:", ...preferences.notes.map((note) => `  - ${note}`)] : []),
+    ...(preferences.notes?.length
+      ? ["- Standing notes from the user:", ...preferences.notes.map((note) => `  - ${note}`)]
+      : []),
   ].join("\n")
 }
 
@@ -527,7 +573,13 @@ export function tools(deps: Deps): Tool.Info[] {
         }),
       ),
       pull_request: Schema.optionalKey(
-        Schema.Struct({ number: Schema.Int, title: Schema.String, url: Schema.String, state: Schema.String, draft: Schema.Boolean }),
+        Schema.Struct({
+          number: Schema.Int,
+          title: Schema.String,
+          url: Schema.String,
+          state: Schema.String,
+          draft: Schema.Boolean,
+        }),
       ),
       auth: Schema.String.annotate({ description: "Where the token came from." }),
       preferences: GitHubPreferences.Info,
@@ -606,8 +658,12 @@ export function tools(deps: Deps): Tool.Info[] {
         const scope = input.scope ?? (resolved ? "repo" : "global")
         if (input.set || input.clear) {
           if (scope === "repo" && !resolved)
-            return yield* new GitHubClient.Error({ kind: "validation", message: "No repository to store preferences for; use scope global." })
-          const key = scope === "repo" && resolved ? GitHubPreferences.repoKey(resolved.repo) : GitHubPreferences.globalKey
+            return yield* new GitHubClient.Error({
+              kind: "validation",
+              message: "No repository to store preferences for; use scope global.",
+            })
+          const key =
+            scope === "repo" && resolved ? GitHubPreferences.repoKey(resolved.repo) : GitHubPreferences.globalKey
           yield* GitHubPreferences.write(deps.kv, key, input.set ?? {}, input.clear ?? [])
         }
         const prefs = yield* preferencesFor(resolved)
@@ -653,11 +709,17 @@ export function tools(deps: Deps): Tool.Info[] {
         outdated_threads: Schema.Int,
         open_alerts: Schema.optionalKey(Schema.Int),
       }),
-      local: Schema.optionalKey(Schema.Struct({ branch: Schema.optionalKey(Schema.String), head: Schema.String, pushed: Schema.Boolean })),
+      local: Schema.optionalKey(
+        Schema.Struct({ branch: Schema.optionalKey(Schema.String), head: Schema.String, pushed: Schema.Boolean }),
+      ),
       ready: Schema.Struct({
-        merge: Schema.Boolean.annotate({ description: "No blockers: safe to merge if you are satisfied with the change." }),
+        merge: Schema.Boolean.annotate({
+          description: "No blockers: safe to merge if you are satisfied with the change.",
+        }),
         blockers: Schema.Array(Schema.String),
-        warnings: Schema.Array(Schema.String).annotate({ description: "Worth knowing, but not a reason to hold the merge." }),
+        warnings: Schema.Array(Schema.String).annotate({
+          description: "Worth knowing, but not a reason to hold the merge.",
+        }),
       }),
       next: Schema.Array(Schema.String),
     }),
@@ -666,16 +728,26 @@ export function tools(deps: Deps): Tool.Info[] {
         const resolved = yield* GitHubShared.pullRequest(deps, input)
         const { api, repo, number } = resolved
         const [data, threadList, reviewList, alertList] = yield* Effect.all(
-          [pull(api, repo, number), threads(api, repo, number), reviews(api, repo, number), alerts(api, repo, number, true)],
+          [
+            pull(api, repo, number),
+            threads(api, repo, number),
+            reviews(api, repo, number),
+            alerts(api, repo, number, true),
+          ],
           { concurrency: "unbounded" },
         )
         const copilot = yield* copilotStatus(api, repo, number, data.headRefOid, reviewList)
         const open = threadList.filter((thread) => !thread.isResolved)
         const kindOf = (thread: ThreadData) =>
-          GitHubCopilot.authorKind(thread.comments.nodes[0]?.author?.login, thread.comments.nodes[0]?.author?.__typename)
+          GitHubCopilot.authorKind(
+            thread.comments.nodes[0]?.author?.login,
+            thread.comments.nodes[0]?.author?.__typename,
+          )
         const checkSummary = checks(data)
         const localHead = resolved.local?.branch === data.headRefName ? resolved.local.head : undefined
-        const severities = findingIndex(copilotReviews(reviewList).map((review) => GitHubCopilot.parseReview(review.body)))
+        const severities = findingIndex(
+          copilotReviews(reviewList).map((review) => GitHubCopilot.parseReview(review.body)),
+        )
         const feedback = {
           unresolved_threads: open.length,
           copilot_threads: open.filter((thread) => kindOf(thread) === "copilot").length,
@@ -709,17 +781,23 @@ export function tools(deps: Deps): Tool.Info[] {
           },
           checks: checkSummary,
           reviews: {
-            approved_by: data.latestOpinionatedReviews.nodes.filter((review) => review.state === "APPROVED").map((review) => review.author?.login ?? "ghost"),
+            approved_by: data.latestOpinionatedReviews.nodes
+              .filter((review) => review.state === "APPROVED")
+              .map((review) => review.author?.login ?? "ghost"),
             changes_requested_by: data.latestOpinionatedReviews.nodes
               .filter((review) => review.state === "CHANGES_REQUESTED")
               .map((review) => review.author?.login ?? "ghost"),
             pending_reviewers: data.reviewRequests.nodes.flatMap((request) =>
-              request.requestedReviewer?.login ?? request.requestedReviewer?.name ? [request.requestedReviewer.login ?? request.requestedReviewer.name ?? ""] : [],
+              (request.requestedReviewer?.login ?? request.requestedReviewer?.name)
+                ? [request.requestedReviewer.login ?? request.requestedReviewer.name ?? ""]
+                : [],
             ),
           },
           copilot,
           feedback,
-          ...(localHead ? { local: { branch: resolved.local?.branch, head: localHead, pushed: localHead === data.headRefOid } } : {}),
+          ...(localHead
+            ? { local: { branch: resolved.local?.branch, head: localHead, pushed: localHead === data.headRefOid } }
+            : {}),
           ready: readiness({
             data,
             copilot,
@@ -733,7 +811,9 @@ export function tools(deps: Deps): Tool.Info[] {
                 severity: first ? severities.get(first.databaseId)?.severity : undefined,
               }
             }),
-            alerts: alertList.items.map((alert) => alert.rule.security_severity_level ?? alert.rule.severity ?? "unknown"),
+            alerts: alertList.items.map(
+              (alert) => alert.rule.security_severity_level ?? alert.rule.severity ?? "unknown",
+            ),
           }),
           next: nextSteps({
             data,
@@ -761,7 +841,8 @@ export function tools(deps: Deps): Tool.Info[] {
         description: "open (default): unresolved threads, open alerts, unhandled comments. all: include resolved.",
       }),
       author: Schema.optionalKey(Schema.Literals(["copilot", "human", "bot", "all"])).annotate({
-        description: "Filter by author kind. By default conversation comments and reviews from bots other than Copilot are left out.",
+        description:
+          "Filter by author kind. By default conversation comments and reviews from bots other than Copilot are left out.",
       }),
       sources: Schema.optionalKey(Schema.Array(ItemKind)).annotate({ description: "Limit to these kinds of item." }),
       new_only: Schema.optionalKey(Schema.Boolean).annotate({ description: "Only items marked new." }),
@@ -793,7 +874,9 @@ export function tools(deps: Deps): Tool.Info[] {
             pull(api, repo, number),
             wants("thread") ? threads(api, repo, number) : Effect.succeed([] as ThreadData[]),
             reviews(api, repo, number),
-            wants("alert") ? alerts(api, repo, number, open) : Effect.succeed({ items: [] as Alert[], note: undefined }),
+            wants("alert")
+              ? alerts(api, repo, number, open)
+              : Effect.succeed({ items: [] as Alert[], note: undefined }),
             readList(deps, handledKey(repo, number)),
             readList(deps, seenKey(context.sessionID, repo, number)),
           ],
@@ -820,7 +903,10 @@ export function tools(deps: Deps): Tool.Info[] {
         shownGuidance.add(guidanceKey)
         const prefs = firstTime ? yield* preferencesFor(resolved) : undefined
         const tally = (values: string[]) =>
-          values.reduce<Record<string, number>>((counts, value) => ({ ...counts, [value]: (counts[value] ?? 0) + 1 }), {})
+          values.reduce<Record<string, number>>(
+            (counts, value) => ({ ...counts, [value]: (counts[value] ?? 0) + 1 }),
+            {},
+          )
         return {
           pr: { repo: GitHubRepo.slug(repo), number, url: data.url, head: data.headRefOid },
           items,
@@ -857,13 +943,23 @@ export function tools(deps: Deps): Tool.Info[] {
         Schema.Struct({
           id: Schema.String.annotate({ description: "Item ID from feedback." }),
           body: Schema.optionalKey(Schema.String).annotate({
-            description: "Reply text. Explain what changed (with the commit) or why not. Omit to use a short default for the reason.",
+            description:
+              "Reply text. Explain what changed (with the commit) or why not. Omit to use a short default for the reason.",
           }),
           resolve: Schema.optionalKey(Schema.Boolean).annotate({
             description: "true resolves or dismisses the item, false reopens it, omitted leaves its state alone.",
           }),
           reason: Schema.optionalKey(
-            Schema.Literals(["fixed", "false_positive", "wont_fix", "used_in_tests", "noted", "deferred", "duplicate", "outdated"]),
+            Schema.Literals([
+              "fixed",
+              "false_positive",
+              "wont_fix",
+              "used_in_tests",
+              "noted",
+              "deferred",
+              "duplicate",
+              "outdated",
+            ]),
           ).annotate({ description: "Why. Required context for alert dismissals; also picks the default reply." }),
           issue: Schema.optionalKey(
             Schema.Union([
@@ -971,7 +1067,9 @@ export function tools(deps: Deps): Tool.Info[] {
         )
         const baseSha = branch.commit.sha
         const compare = (from: string, to: string): Effect.Effect<Option.Option<CompareData>> =>
-          api.json<CompareData>("GET", `/repos/${slug}/compare/${from}...${to}`, { query: { per_page: 50 } }).pipe(Effect.option)
+          api
+            .json<CompareData>("GET", `/repos/${slug}/compare/${from}...${to}`, { query: { per_page: 50 } })
+            .pipe(Effect.option)
         const previousHead = input.since ? undefined : stored?.head
         const previousBase = input.since ? undefined : stored?.base
         const [headDiff, baseDiff, position, copilot, now] = yield* Effect.all(
@@ -979,7 +1077,9 @@ export function tools(deps: Deps): Tool.Info[] {
             previousHead && previousHead !== data.headRefOid
               ? compare(previousHead, data.headRefOid)
               : Effect.succeed(Option.none<CompareData>()),
-            previousBase && previousBase !== baseSha ? compare(previousBase, baseSha) : Effect.succeed(Option.none<CompareData>()),
+            previousBase && previousBase !== baseSha
+              ? compare(previousBase, baseSha)
+              : Effect.succeed(Option.none<CompareData>()),
             compare(baseSha, data.headRefOid),
             copilotStatus(api, repo, number, data.headRefOid, reviewList),
             Clock.currentTimeMillis,
@@ -994,9 +1094,9 @@ export function tools(deps: Deps): Tool.Info[] {
         const headSince =
           previousHead || !since
             ? headCommits
-            : (yield* api.paginate<CompareData["commits"][number]>(`/repos/${slug}/pulls/${number}/commits`, { limit: 250 })).filter(
-                (commit) => after(commit.commit.committer?.date ?? commit.commit.author?.date),
-              )
+            : (yield* api.paginate<CompareData["commits"][number]>(`/repos/${slug}/pulls/${number}/commits`, {
+                limit: 250,
+              })).filter((commit) => after(commit.commit.committer?.date ?? commit.commit.author?.date))
         const nowIso = new Date(now).toISOString()
         if (!input.peek) yield* deps.kv.set(key, { at: nowIso, head: data.headRefOid, base: baseSha })
         return {
@@ -1007,20 +1107,31 @@ export function tools(deps: Deps): Tool.Info[] {
           head: {
             sha: data.headRefOid,
             ...(previousHead ? { previous: previousHead } : {}),
-            force_pushed: Option.match(headDiff, { onNone: () => false, onSome: (diff) => diff.status === "diverged" || diff.status === "behind" }),
+            force_pushed: Option.match(headDiff, {
+              onNone: () => false,
+              onSome: (diff) => diff.status === "diverged" || diff.status === "behind",
+            }),
             new_commits: headSince.map(commitSummary),
           },
           base: {
             ref: data.baseRefName,
             sha: baseSha,
             ...(previousBase ? { previous: previousBase } : {}),
-            new_commits: Option.match(baseDiff, { onNone: () => [], onSome: (diff) => diff.commits.map(commitSummary) }),
+            new_commits: Option.match(baseDiff, {
+              onNone: () => [],
+              onSome: (diff) => diff.commits.map(commitSummary),
+            }),
             behind_by: Option.match(position, { onNone: () => 0, onSome: (diff) => diff.behind_by }),
             ahead_by: Option.match(position, { onNone: () => 0, onSome: (diff) => diff.ahead_by }),
           },
           reviews: reviewList
             // Thread replies create empty COMMENTED reviews; their comments are listed below.
-            .filter((review) => review.submitted_at && after(review.submitted_at) && (review.body?.trim() || review.state !== "COMMENTED"))
+            .filter(
+              (review) =>
+                review.submitted_at &&
+                after(review.submitted_at) &&
+                (review.body?.trim() || review.state !== "COMMENTED"),
+            )
             .slice(since === undefined ? -FIRST_CHECK_LIMIT : 0)
             .map((review) => {
               const kind = GitHubCopilot.authorKind(review.user?.login, review.user?.type)
@@ -1120,7 +1231,9 @@ export function tools(deps: Deps): Tool.Info[] {
     input: Schema.Struct({
       repo: GitHubShared.RepoField,
       pr: GitHubShared.PRField,
-      for: Schema.optionalKey(Schema.Literals(["copilot", "checks", "both"])).annotate({ description: "Default copilot." }),
+      for: Schema.optionalKey(Schema.Literals(["copilot", "checks", "both"])).annotate({
+        description: "Default copilot.",
+      }),
       timeout_minutes: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 720 }))).annotate({
         description: "Default from the wait_timeout_minutes preference (20).",
       }),
@@ -1148,7 +1261,9 @@ export function tools(deps: Deps): Tool.Info[] {
         // Kick off a review up front so a request failure is reported to the caller, not to a background message.
         let requested: "none" | "requested" | "re-requested" = "none"
         if (goal !== "checks") {
-          const [data, reviewList] = yield* Effect.all([pull(api, repo, number), reviews(api, repo, number)], { concurrency: 2 })
+          const [data, reviewList] = yield* Effect.all([pull(api, repo, number), reviews(api, repo, number)], {
+            concurrency: 2,
+          })
           const current = yield* copilotStatus(api, repo, number, data.headRefOid, reviewList)
           const action = requestAction(current, "if_needed")
           if (action !== "none" && !allowRequest && current.state !== "requested")
@@ -1190,8 +1305,10 @@ export function tools(deps: Deps): Tool.Info[] {
           yield* notify
           return backgroundResult(label, goal, requested)
         }
-        if (blocked?.info.status === "error") return yield* new GitHubClient.Error({ kind: "server", message: blocked.info.error ?? "wait failed" })
-        if (blocked?.info.status === "cancelled") return yield* new GitHubClient.Error({ kind: "validation", message: "wait cancelled" })
+        if (blocked?.info.status === "error")
+          return yield* new GitHubClient.Error({ kind: "server", message: blocked.info.error ?? "wait failed" })
+        if (blocked?.info.status === "cancelled")
+          return yield* new GitHubClient.Error({ kind: "validation", message: "wait cancelled" })
         return yield* Deferred.await(settled)
       }),
   })
@@ -1206,10 +1323,16 @@ export function tools(deps: Deps): Tool.Info[] {
 
   function discovery(target: GitHubShared.Target): Effect.Effect<Discovery, GitHubClient.Error> {
     return Effect.gen(function* () {
-      const data = yield* target.api.graphql<ContextData>(CONTEXT_QUERY, { owner: target.repo.owner, name: target.repo.name })
+      const data = yield* target.api.graphql<ContextData>(CONTEXT_QUERY, {
+        owner: target.repo.owner,
+        name: target.repo.name,
+      })
       const repository = data.repository
       if (!repository)
-        return yield* new GitHubClient.Error({ kind: "not_found", message: `Repository ${GitHubRepo.slug(target.repo)} not found` })
+        return yield* new GitHubClient.Error({
+          kind: "not_found",
+          message: `Repository ${GitHubRepo.slug(target.repo)} not found`,
+        })
       const counts = yield* target.api
         .graphql<CountsData>(COUNTS_QUERY, {
           owner: target.repo.owner,
@@ -1385,7 +1508,10 @@ function collect(input: {
     return input.author === "all" || input.author === kind
   }
   const viewer = input.viewer.toLowerCase()
-  const mark = (item: Omit<Item, "new">): Item => ({ ...item, new: !input.seen.has(seenToken({ ...item, new: false })) })
+  const mark = (item: Omit<Item, "new">): Item => ({
+    ...item,
+    new: !input.seen.has(seenToken({ ...item, new: false })),
+  })
 
   const threadItems = input.threads.flatMap((thread): Item[] => {
     const [first, ...rest] = thread.comments.nodes
@@ -1403,8 +1529,10 @@ function collect(input: {
         ...(known?.title ? { title: known.title } : {}),
         body: GitHubShared.clip(body, input.max),
         path: thread.path,
-        ...(thread.line ?? thread.originalLine ? { line: thread.line ?? thread.originalLine ?? 0 } : {}),
-        ...(thread.startLine && thread.line && thread.startLine !== thread.line ? { line: thread.startLine, end_line: thread.line } : {}),
+        ...((thread.line ?? thread.originalLine) ? { line: thread.line ?? thread.originalLine ?? 0 } : {}),
+        ...(thread.startLine && thread.line && thread.startLine !== thread.line
+          ? { line: thread.startLine, end_line: thread.line }
+          : {}),
         ...(known?.severity ? { severity: known.severity } : {}),
         url: first.url,
         created_at: first.createdAt,
@@ -1541,8 +1669,18 @@ type Response = {
   readonly id: string
   readonly body?: string
   readonly resolve?: boolean
-  readonly reason?: "fixed" | "false_positive" | "wont_fix" | "used_in_tests" | "noted" | "deferred" | "duplicate" | "outdated"
-  readonly issue?: boolean | { readonly title?: string; readonly body?: string; readonly labels?: ReadonlyArray<string> }
+  readonly reason?:
+    | "fixed"
+    | "false_positive"
+    | "wont_fix"
+    | "used_in_tests"
+    | "noted"
+    | "deferred"
+    | "duplicate"
+    | "outdated"
+  readonly issue?:
+    | boolean
+    | { readonly title?: string; readonly body?: string; readonly labels?: ReadonlyArray<string> }
 }
 
 type Result = {
@@ -1564,7 +1702,9 @@ interface NodeData {
   readonly body?: string
   readonly author?: GqlAuthor | null
   readonly viewerCanMinimize?: boolean
-  readonly comments?: { readonly nodes: ReadonlyArray<{ readonly author: GqlAuthor | null; readonly body: string; readonly url: string }> }
+  readonly comments?: {
+    readonly nodes: ReadonlyArray<{ readonly author: GqlAuthor | null; readonly body: string; readonly url: string }>
+  }
 }
 
 const NODES_QUERY = `query($ids: [ID!]!) {
@@ -1607,7 +1747,9 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
   const { api, repo, number } = input.target
   const slug = GitHubRepo.slug(repo)
   const warnings: string[] = []
-  const graphIDs = input.responses.map((response) => response.id).filter((id) => !id.startsWith("alert:") && !id.startsWith("copilot:"))
+  const graphIDs = input.responses
+    .map((response) => response.id)
+    .filter((id) => !id.startsWith("alert:") && !id.startsWith("copilot:"))
   const nodes = graphIDs.length
     ? (yield* api.graphql<{ nodes: ReadonlyArray<NodeData | null> }>(NODES_QUERY, { ids: graphIDs })).nodes
     : []
@@ -1668,7 +1810,13 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
           yield* api.json("PATCH", `/repos/${slug}/code-scanning/alerts/${alertNumber}`, { body: { state: "open" } })
           return { id: response.id, kind: "alert", status: "done", resolved: false }
         }
-        if (!response.resolve) return { id: response.id, kind: "alert", status: "done", note: "Alerts take no replies; set resolve to dismiss." }
+        if (!response.resolve)
+          return {
+            id: response.id,
+            kind: "alert",
+            status: "done",
+            note: "Alerts take no replies; set resolve to dismiss.",
+          }
         if (response.reason === "fixed")
           return {
             id: response.id,
@@ -1682,10 +1830,16 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
           : /(^|\/)(tests?|__tests__|spec|fixtures?)\/|[._-](test|spec)\.\w+$/i.test(path)
             ? "used in tests"
             : "won't fix"
-        const comment = (response.body ?? (response.reason ? DEFAULT_REPLY[response.reason] : "Dismissed after review.")).slice(0, 280)
-        const updated = yield* api.json<{ state: string }>("PATCH", `/repos/${slug}/code-scanning/alerts/${alertNumber}`, {
-          body: { state: "dismissed", dismissed_reason: reason, dismissed_comment: comment },
-        })
+        const comment = (
+          response.body ?? (response.reason ? DEFAULT_REPLY[response.reason] : "Dismissed after review.")
+        ).slice(0, 280)
+        const updated = yield* api.json<{ state: string }>(
+          "PATCH",
+          `/repos/${slug}/code-scanning/alerts/${alertNumber}`,
+          {
+            body: { state: "dismissed", dismissed_reason: reason, dismissed_comment: comment },
+          },
+        )
         if (updated.state !== "dismissed")
           return {
             id: response.id,
@@ -1717,9 +1871,17 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
 
       if (node.__typename === "PullRequestReviewThread") {
         const first = node.comments?.nodes[0]
-        const issue = yield* fileIssue(response, node.path ?? "review thread", first?.url ?? data.url, first?.body ?? "")
+        const issue = yield* fileIssue(
+          response,
+          node.path ?? "review thread",
+          first?.url ?? data.url,
+          first?.body ?? "",
+        )
         const text = response.body ?? defaultBody(response) ?? (issue ? "" : undefined)
-        const body = text === undefined ? undefined : [text, issue ? `Tracked in #${issue.number}.` : ""].filter(Boolean).join("\n\n")
+        const body =
+          text === undefined
+            ? undefined
+            : [text, issue ? `Tracked in #${issue.number}.` : ""].filter(Boolean).join("\n\n")
         const reply = body
           ? yield* api.graphql<{
               addPullRequestReviewThreadReply: {
@@ -1733,13 +1895,19 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
         const review = reply?.addPullRequestReviewThreadReply.comment.pullRequestReview
         if (review?.state === "PENDING") pendingReviews.set(review.id, (pendingReviews.get(review.id) ?? 0) + 1)
         if (response.resolve === true && !node.isResolved)
-          yield* api.graphql(`mutation($thread: ID!) { resolveReviewThread(input: { threadId: $thread }) { thread { isResolved } } }`, {
-            thread: node.id,
-          })
+          yield* api.graphql(
+            `mutation($thread: ID!) { resolveReviewThread(input: { threadId: $thread }) { thread { isResolved } } }`,
+            {
+              thread: node.id,
+            },
+          )
         if (response.resolve === false && node.isResolved)
-          yield* api.graphql(`mutation($thread: ID!) { unresolveReviewThread(input: { threadId: $thread }) { thread { isResolved } } }`, {
-            thread: node.id,
-          })
+          yield* api.graphql(
+            `mutation($thread: ID!) { unresolveReviewThread(input: { threadId: $thread }) { thread { isResolved } } }`,
+            {
+              thread: node.id,
+            },
+          )
         if (response.resolve === true && !body) warnings.push(`${node.id} was resolved without a reply.`)
         return {
           id: response.id,
@@ -1753,9 +1921,17 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
 
       if (node.__typename === "IssueComment" || node.__typename === "PullRequestReview") {
         const kind = node.__typename === "IssueComment" ? "comment" : "review"
-        const issue = yield* fileIssue(response, `comment by @${node.author?.login ?? "ghost"}`, node.url ?? data.url, node.body ?? "")
+        const issue = yield* fileIssue(
+          response,
+          `comment by @${node.author?.login ?? "ghost"}`,
+          node.url ?? data.url,
+          node.body ?? "",
+        )
         const text = response.body ?? defaultBody(response)
-        const body = text === undefined ? undefined : [text, issue ? `Tracked in #${issue.number}.` : ""].filter(Boolean).join("\n\n")
+        const body =
+          text === undefined
+            ? undefined
+            : [text, issue ? `Tracked in #${issue.number}.` : ""].filter(Boolean).join("\n\n")
         const quote = (node.body ?? "").split("\n").find((line) => line.trim()) ?? ""
         const posted = body
           ? yield* api.json<{ html_url: string }>("POST", `/repos/${slug}/issues/${number}/comments`, {
@@ -1779,9 +1955,12 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
         }
         if (response.resolve === false) {
           if (kind === "comment" && node.viewerCanMinimize)
-            yield* api.graphql(`mutation($id: ID!) { unminimizeComment(input: { subjectId: $id }) { unminimizedComment { isMinimized } } }`, {
-              id: node.id,
-            })
+            yield* api.graphql(
+              `mutation($id: ID!) { unminimizeComment(input: { subjectId: $id }) { unminimizedComment { isMinimized } } }`,
+              {
+                id: node.id,
+              },
+            )
           yield* removeFromList(input.deps, handledKey(repo, number), node.id)
           resolved = false
         }
@@ -1795,7 +1974,10 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
         }
       }
 
-      return yield* new GitHubClient.Error({ kind: "validation", message: `Unsupported item type ${node.__typename} for ${response.id}` })
+      return yield* new GitHubClient.Error({
+        kind: "validation",
+        message: `Unsupported item type ${node.__typename} for ${response.id}`,
+      })
     }).pipe(
       Effect.catch((error: GitHubClient.Error) =>
         Effect.succeed<Result>({
@@ -1823,7 +2005,9 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
       { id: reviewID },
     )
     if ((review.node?.comments.totalCount ?? 0) > count) {
-      warnings.push("Some replies are in a pending review that also holds your own draft comments; submit it on GitHub to publish them.")
+      warnings.push(
+        "Some replies are in a pending review that also holds your own draft comments; submit it on GitHub to publish them.",
+      )
       continue
     }
     yield* api.graphql(
@@ -1837,7 +2021,14 @@ const respondAll = Effect.fn("GitHubReview.respond")(function* (input: {
 })
 
 const removeFromList = (deps: Deps, key: string, value: string) =>
-  readList(deps, key).pipe(Effect.flatMap((current) => deps.kv.set(key, current.filter((item) => item !== value))))
+  readList(deps, key).pipe(
+    Effect.flatMap((current) =>
+      deps.kv.set(
+        key,
+        current.filter((item) => item !== value),
+      ),
+    ),
+  )
 
 // ---------------------------------------------------------------------------------------------------------------
 // Copilot requests and waiting
@@ -1927,7 +2118,11 @@ function commitSummary(commit: CompareData["commits"][number]) {
   }
 }
 
-function backgroundResult(label: string, goal: string, requested: "none" | "requested" | "re-requested"): typeof WaitResult.Type {
+function backgroundResult(
+  label: string,
+  goal: string,
+  requested: "none" | "requested" | "re-requested",
+): typeof WaitResult.Type {
   return {
     pr: label,
     status: "running",
@@ -1982,7 +2177,11 @@ const poll = Effect.fn("GitHubReview.poll")(function* (input: {
       ...(checkSummary ? { checks: checkSummary } : {}),
     }
     if (data.state !== "OPEN")
-      return { ...base, status: "stopped" as const, message: `${label} is ${data.state.toLowerCase()}. ${summarize(base)}` }
+      return {
+        ...base,
+        status: "stopped" as const,
+        message: `${label} is ${data.state.toLowerCase()}. ${summarize(base)}`,
+      }
     if (copilotDone && checksDone) return { ...base, status: "completed" as const, message: summarize(base) }
     if (now - input.started >= Duration.toMillis(input.timeout))
       return { ...base, status: "timed_out" as const, message: `Timed out after ${waited}s. ${summarize(base)}` }
@@ -2005,7 +2204,11 @@ const poll = Effect.fn("GitHubReview.poll")(function* (input: {
   }
 })
 
-function summarize(input: { readonly copilot?: CopilotStatus; readonly checks?: typeof Checks.Type; readonly pr: string }) {
+function summarize(input: {
+  readonly copilot?: CopilotStatus
+  readonly checks?: typeof Checks.Type
+  readonly pr: string
+}) {
   const lines: string[] = []
   if (input.copilot) {
     const copilot = input.copilot
@@ -2016,7 +2219,9 @@ function summarize(input: { readonly copilot?: CopilotStatus; readonly checks?: 
     )
     const findings = copilot.findings.filter((finding) => finding.new)
     if (findings.length > 0)
-      lines.push(`${findings.length} new finding(s): ${findings.map((finding) => `[${finding.severity ?? "?"}] ${finding.title}`).join("; ")}`)
+      lines.push(
+        `${findings.length} new finding(s): ${findings.map((finding) => `[${finding.severity ?? "?"}] ${finding.title}`).join("; ")}`,
+      )
     if (copilot.body_findings > 0) lines.push(`${copilot.body_findings} finding(s) only in the review body.`)
   }
   if (input.checks)
@@ -2063,7 +2268,11 @@ function readiness(input: {
   readonly copilot: CopilotStatus
   readonly checks: typeof Checks.Type
   readonly localHead: string | undefined
-  readonly threads: ReadonlyArray<{ readonly kind: GitHubCopilot.AuthorKind; readonly outdated: boolean; readonly severity?: string }>
+  readonly threads: ReadonlyArray<{
+    readonly kind: GitHubCopilot.AuthorKind
+    readonly outdated: boolean
+    readonly severity?: string
+  }>
   readonly alerts: ReadonlyArray<string>
 }) {
   const blockers: string[] = []
@@ -2075,21 +2284,30 @@ function readiness(input: {
   const failing = input.checks.failing.filter((check) => check.required)
   if (failing.length) blockers.push(`Required checks failing: ${failing.map((check) => check.name).join(", ")}.`)
   if (input.checks.failing.length > failing.length)
-    warnings.push(`Optional checks failing: ${input.checks.failing.filter((check) => !check.required).map((check) => check.name).join(", ")}.`)
+    warnings.push(
+      `Optional checks failing: ${input.checks.failing
+        .filter((check) => !check.required)
+        .map((check) => check.name)
+        .join(", ")}.`,
+    )
   if (input.checks.pending.length) blockers.push(`${input.checks.pending.length} check(s) still running.`)
   if (input.data.reviewDecision === "CHANGES_REQUESTED") blockers.push("A reviewer requested changes.")
   if (input.data.reviewDecision === "REVIEW_REQUIRED") blockers.push("An approving review is required.")
   const human = input.threads.filter((thread) => thread.kind === "human")
   if (human.length) blockers.push(`${human.length} unresolved thread(s) from people.`)
-  const serious = input.threads.filter((thread) => thread.kind !== "human" && (thread.severity === "high" || thread.severity === "critical"))
+  const serious = input.threads.filter(
+    (thread) => thread.kind !== "human" && (thread.severity === "high" || thread.severity === "critical"),
+  )
   if (serious.length) blockers.push(`${serious.length} unresolved high-severity bot finding(s).`)
   const minor = input.threads.length - human.length - serious.length
   if (minor > 0) warnings.push(`${minor} unresolved lower-severity bot thread(s); resolve or file them as follow-ups.`)
   const severeAlerts = input.alerts.filter((level) => level === "critical" || level === "high" || level === "error")
   if (severeAlerts.length) blockers.push(`${severeAlerts.length} open high-severity code scanning alert(s).`)
-  if (input.alerts.length > severeAlerts.length) warnings.push(`${input.alerts.length - severeAlerts.length} other open code scanning alert(s).`)
+  if (input.alerts.length > severeAlerts.length)
+    warnings.push(`${input.alerts.length - severeAlerts.length} other open code scanning alert(s).`)
   if (input.data.mergeStateStatus === "BEHIND") warnings.push(`Behind ${input.data.baseRefName}.`)
-  if (input.copilot.state === "in_progress" || input.copilot.state === "requested") warnings.push("Copilot is still reviewing.")
+  if (input.copilot.state === "in_progress" || input.copilot.state === "requested")
+    warnings.push("Copilot is still reviewing.")
   if (input.copilot.state === "stale") warnings.push("Copilot has not reviewed the latest commit.")
   return { merge: blockers.length === 0, blockers, warnings }
 }
@@ -2104,7 +2322,8 @@ function nextSteps(input: {
 }) {
   const steps: string[] = []
   if (input.data.state !== "OPEN") return [`The pull request is ${input.data.state.toLowerCase()}.`]
-  if (input.localHead && input.localHead !== input.data.headRefOid) steps.push("Local HEAD differs from the pushed head: push before asking for review.")
+  if (input.localHead && input.localHead !== input.data.headRefOid)
+    steps.push("Local HEAD differs from the pushed head: push before asking for review.")
   if (input.feedback.unresolved_threads > 0 || (input.feedback.open_alerts ?? 0) > 0 || input.copilot.body_findings > 0)
     steps.push("Read open findings with feedback, then respond.")
   if (input.copilot.state === "in_progress" || input.copilot.state === "requested")
@@ -2114,8 +2333,11 @@ function nextSteps(input: {
   if (input.copilot.stuck) steps.push("Copilot's review looks stuck: copilot re-requests it.")
   if (input.checks.failing.length > 0) steps.push("Checks failing: inspect with run and logs.")
   if (input.checks.pending.length > 0) steps.push("Checks pending: wait with for: checks.")
-  if (input.data.mergeable === "CONFLICTING") steps.push(`Merge conflicts with ${input.data.baseRefName}: merge or rebase the target branch.`)
-  if (input.data.mergeStateStatus === "BEHIND") steps.push(`Branch is behind ${input.data.baseRefName}: update it before merging.`)
-  if (steps.length === 0 && input.data.mergeStateStatus === "CLEAN") steps.push("Ready to merge (pr_merge) once you are satisfied.")
+  if (input.data.mergeable === "CONFLICTING")
+    steps.push(`Merge conflicts with ${input.data.baseRefName}: merge or rebase the target branch.`)
+  if (input.data.mergeStateStatus === "BEHIND")
+    steps.push(`Branch is behind ${input.data.baseRefName}: update it before merging.`)
+  if (steps.length === 0 && input.data.mergeStateStatus === "CLEAN")
+    steps.push("Ready to merge (pr_merge) once you are satisfied.")
   return steps
 }

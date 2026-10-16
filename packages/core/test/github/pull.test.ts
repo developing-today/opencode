@@ -48,7 +48,9 @@ describe("GitHubPulls helpers", () => {
         label: ["bug", "needs review"],
         draft: false,
       }),
-    ).toBe('is:pr is:closed is:unmerged repo:acme/widgets author:octo review-requested:@me base:main label:bug label:"needs review" draft:false sort:updated-desc')
+    ).toBe(
+      'is:pr is:closed is:unmerged repo:acme/widgets author:octo review-requested:@me base:main label:bug label:"needs review" draft:false sort:updated-desc',
+    )
   })
 
   test("pathMatcher treats plain text as a substring and * ? as wildcards", () => {
@@ -91,7 +93,12 @@ describe("github pull request tools", () => {
             },
           },
         })
-        const result = yield* run<object, unknown>(tool("prs"), { repo: "acme/widgets", author: "octo", label: "bug", limit: 5 })
+        const result = yield* run<object, unknown>(tool("prs"), {
+          repo: "acme/widgets",
+          author: "octo",
+          label: "bug",
+          limit: 5,
+        })
         expect(result).toEqual({
           total: 41,
           query: "is:pr is:open repo:acme/widgets author:octo label:bug sort:updated-desc",
@@ -125,10 +132,14 @@ describe("github pull request tools", () => {
   it.live("prs leaves out the repo qualifier when the query names an org, even without a git checkout", () =>
     withEnv(env, () =>
       Effect.gen(function* () {
-        const { github, tool } = yield* setup({ "GRAPHQL search(type: ISSUE": { body: { search: { issueCount: 0, nodes: [] } } } })
+        const { github, tool } = yield* setup({
+          "GRAPHQL search(type: ISSUE": { body: { search: { issueCount: 0, nodes: [] } } },
+        })
         const result = yield* run<object, { query: string }>(tool("prs"), { state: "merged", query: "org:acme flaky" })
         expect(result.query).toBe("is:pr is:merged org:acme flaky sort:updated-desc")
-        expect((github.requests[0].body as { variables: { q: string } }).variables.q).toBe("is:pr is:merged org:acme flaky sort:updated-desc")
+        expect((github.requests[0].body as { variables: { q: string } }).variables.q).toBe(
+          "is:pr is:merged org:acme flaky sort:updated-desc",
+        )
       }),
     ),
   )
@@ -139,9 +150,11 @@ describe("github pull request tools", () => {
         const { github, tool } = yield* setup({
           "GET /repos/acme/widgets/branches/feature/pages": { status: 404, body: { message: "Branch not found" } },
         })
-        const error = yield* run(tool("pr_create"), { repo: "acme/widgets", title: "Add pagination", head: "feature/pages" }).pipe(
-          Effect.flip,
-        )
+        const error = yield* run(tool("pr_create"), {
+          repo: "acme/widgets",
+          title: "Add pagination",
+          head: "feature/pages",
+        }).pipe(Effect.flip)
         expect(error.message).toContain("Branch feature/pages does not exist on acme/widgets.")
         expect(error.message).toContain("git push -u origin feature/pages")
         expect(writes(github.requests)).toEqual([])
@@ -190,10 +203,22 @@ describe("github pull request tools", () => {
           ],
         })
         expect(writes(github.requests)).toEqual([
-          ["POST", "/repos/acme/widgets/pulls", { title: "Add pagination", head: "feature/pages", base: "trunk", body: "Pages results.", draft: true }],
+          [
+            "POST",
+            "/repos/acme/widgets/pulls",
+            { title: "Add pagination", head: "feature/pages", base: "trunk", body: "Pages results.", draft: true },
+          ],
           ["POST", "/repos/acme/widgets/issues/7/labels", { labels: ["enhancement"] }],
-          ["POST", "/repos/acme/widgets/pulls/7/requested_reviewers", { reviewers: ["copilot-pull-request-reviewer[bot]", "stranger"] }],
-          ["POST", "/repos/acme/widgets/pulls/7/requested_reviewers", { reviewers: ["copilot-pull-request-reviewer[bot]"] }],
+          [
+            "POST",
+            "/repos/acme/widgets/pulls/7/requested_reviewers",
+            { reviewers: ["copilot-pull-request-reviewer[bot]", "stranger"] },
+          ],
+          [
+            "POST",
+            "/repos/acme/widgets/pulls/7/requested_reviewers",
+            { reviewers: ["copilot-pull-request-reviewer[bot]"] },
+          ],
           ["POST", "/repos/acme/widgets/pulls/7/requested_reviewers", { reviewers: ["stranger"] }],
         ])
         expect(asserted.map((assertion) => assertion.action)).toEqual(["github_pr_create"])
@@ -217,9 +242,21 @@ describe("github pull request tools", () => {
           },
         })
         const drafted = yield* run<object, unknown>(tool("pr_update"), { repo: "acme/widgets", pr: 7, draft: true })
-        expect(drafted).toEqual({ number: 7, url: "https://github.com/acme/widgets/pull/7", state: "open", draft: true, changed: ["draft"] })
+        expect(drafted).toEqual({
+          number: 7,
+          url: "https://github.com/acme/widgets/pull/7",
+          state: "open",
+          draft: true,
+          changed: ["draft"],
+        })
         const ready = yield* run<object, unknown>(tool("pr_update"), { repo: "acme/widgets", pr: 7, draft: false })
-        expect(ready).toEqual({ number: 7, url: "https://github.com/acme/widgets/pull/7", state: "open", draft: false, changed: ["draft"] })
+        expect(ready).toEqual({
+          number: 7,
+          url: "https://github.com/acme/widgets/pull/7",
+          state: "open",
+          draft: false,
+          changed: ["draft"],
+        })
         const mutations = github.requests
           .filter((request) => request.path === "/graphql")
           .map((request) => {
@@ -240,7 +277,10 @@ describe("github pull request tools", () => {
         const { github, tool } = yield* setup({
           "GET /repos/acme/widgets/pulls/7": { body: { ...restPull(), state: "closed" } },
           "PATCH /repos/acme/widgets/pulls/7": { body: restPull() },
-          "DELETE /repos/acme/widgets/issues/7/labels/needs%20triage": { status: 404, body: { message: "Label does not exist" } },
+          "DELETE /repos/acme/widgets/issues/7/labels/needs%20triage": {
+            status: 404,
+            body: { message: "Label does not exist" },
+          },
           "DELETE /repos/acme/widgets/pulls/7/requested_reviewers": { body: {} },
         })
         const result = yield* run<object, { state: string; changed: string[] }>(tool("pr_update"), {
@@ -272,9 +312,16 @@ describe("github pull request tools", () => {
         const { github, tool } = yield* setup({
           "GET /repos/acme/widgets/pulls/7": { body: restPull() },
           "GET /repos/acme/widgets": {
-            body: { default_branch: "main", allow_merge_commit: false, allow_squash_merge: true, allow_rebase_merge: true },
+            body: {
+              default_branch: "main",
+              allow_merge_commit: false,
+              allow_squash_merge: true,
+              allow_rebase_merge: true,
+            },
           },
-          "PUT /repos/acme/widgets/pulls/7/merge": { body: { sha: "m".repeat(40), merged: true, message: "Pull Request successfully merged" } },
+          "PUT /repos/acme/widgets/pulls/7/merge": {
+            body: { sha: "m".repeat(40), merged: true, message: "Pull Request successfully merged" },
+          },
           "DELETE /repos/acme/widgets/git/refs/heads/feature/pages": { status: 204 },
         })
         const result = yield* run<object, unknown>(tool("pr_merge"), {
@@ -305,7 +352,12 @@ describe("github pull request tools", () => {
           "GET /repos/acme/widgets": { body: { default_branch: "main" } },
           "PUT /repos/acme/widgets/pulls/7/merge": { body: { sha: "m".repeat(40), merged: true } },
         })
-        yield* GitHubPreferences.write(kv, GitHubPreferences.repoKey({ host: "github.com", owner: "acme", name: "widgets" }), { merge_method: "rebase" }, [])
+        yield* GitHubPreferences.write(
+          kv,
+          GitHubPreferences.repoKey({ host: "github.com", owner: "acme", name: "widgets" }),
+          { merge_method: "rebase" },
+          [],
+        )
         const result = yield* run<object, { branch_deleted?: boolean; message: string }>(tool("pr_merge"), {
           repo: "acme/widgets",
           pr: 7,
@@ -313,7 +365,9 @@ describe("github pull request tools", () => {
         })
         expect(result.branch_deleted).toBe(false)
         expect(result.message).toBe("Merged #7 (rebase). Head branch kept: it lives in another repository.")
-        expect(writes(github.requests)).toEqual([["PUT", "/repos/acme/widgets/pulls/7/merge", { merge_method: "rebase" }]])
+        expect(writes(github.requests)).toEqual([
+          ["PUT", "/repos/acme/widgets/pulls/7/merge", { merge_method: "rebase" }],
+        ])
       }),
     ),
   )
@@ -323,13 +377,25 @@ describe("github pull request tools", () => {
       Effect.gen(function* () {
         const { github, tool } = yield* setup({
           "GET /repos/acme/widgets/pulls/7": { body: restPull() },
-          "PUT /repos/acme/widgets/pulls/7/merge": { status: 405, body: { message: "Required status check is failing" } },
-          "GRAPHQL enablePullRequestAutoMerge": { body: { enablePullRequestAutoMerge: { pullRequest: { number: 7 } } } },
+          "PUT /repos/acme/widgets/pulls/7/merge": {
+            status: 405,
+            body: { message: "Required status check is failing" },
+          },
+          "GRAPHQL enablePullRequestAutoMerge": {
+            body: { enablePullRequestAutoMerge: { pullRequest: { number: 7 } } },
+          },
         })
         const error = yield* run(tool("pr_merge"), { repo: "acme/widgets", pr: 7, method: "merge" }).pipe(Effect.flip)
-        expect(error.message).toContain("#7 cannot be merged: PUT /repos/acme/widgets/pulls/7/merge failed (405): Required status check is failing")
+        expect(error.message).toContain(
+          "#7 cannot be merged: PUT /repos/acme/widgets/pulls/7/merge failed (405): Required status check is failing",
+        )
         expect(error.message).toContain("pass auto: true")
-        const auto = yield* run<object, unknown>(tool("pr_merge"), { repo: "acme/widgets", pr: 7, method: "squash", auto: true })
+        const auto = yield* run<object, unknown>(tool("pr_merge"), {
+          repo: "acme/widgets",
+          pr: 7,
+          method: "squash",
+          auto: true,
+        })
         expect(auto).toEqual({
           merged: false,
           auto_merge: "squash",
@@ -355,11 +421,22 @@ describe("github pull request tools", () => {
             body: [
               { filename: "src/page.ts", status: "modified", additions: 10, deletions: 2, patch: "@@ -1 +1 @@" },
               { filename: "src/page.test.ts", status: "added", additions: 30, deletions: 0, patch: "@@ +1,30 @@" },
-              { filename: "test/old.test.ts", status: "renamed", additions: 1, deletions: 4, previous_filename: "test/legacy.test.ts" },
+              {
+                filename: "test/old.test.ts",
+                status: "renamed",
+                additions: 1,
+                deletions: 4,
+                previous_filename: "test/legacy.test.ts",
+              },
             ],
           },
         })
-        const result = yield* run<object, unknown>(tool("pr_files"), { repo: "acme/widgets", pr: 7, path: "*.test.ts", patch: true })
+        const result = yield* run<object, unknown>(tool("pr_files"), {
+          repo: "acme/widgets",
+          pr: 7,
+          path: "*.test.ts",
+          patch: true,
+        })
         expect(result).toEqual({
           total: 2,
           additions: 31,
@@ -367,7 +444,13 @@ describe("github pull request tools", () => {
           truncated: false,
           files: [
             { path: "src/page.test.ts", status: "added", additions: 30, deletions: 0, patch: "@@ +1,30 @@" },
-            { path: "test/old.test.ts", status: "renamed", additions: 1, deletions: 4, previous_path: "test/legacy.test.ts" },
+            {
+              path: "test/old.test.ts",
+              status: "renamed",
+              additions: 1,
+              deletions: 4,
+              previous_path: "test/legacy.test.ts",
+            },
           ],
         })
       }),
@@ -380,8 +463,17 @@ describe("github pull request tools", () => {
         const { github, tool, asserted } = yield* setup({
           "POST /repos/acme/widgets/pulls/7/reviews": (request) =>
             (request.body as { event: string }).event === "APPROVE"
-              ? { status: 422, body: { message: "Unprocessable Entity", errors: ["Can not approve your own pull request"] } }
-              : { body: { id: 55, state: "CHANGES_REQUESTED", html_url: "https://github.com/acme/widgets/pull/7#pullrequestreview-55" } },
+              ? {
+                  status: 422,
+                  body: { message: "Unprocessable Entity", errors: ["Can not approve your own pull request"] },
+                }
+              : {
+                  body: {
+                    id: 55,
+                    state: "CHANGES_REQUESTED",
+                    html_url: "https://github.com/acme/widgets/pull/7#pullrequestreview-55",
+                  },
+                },
         })
         const result = yield* run<object, unknown>(tool("review"), {
           repo: "acme/widgets",
@@ -390,7 +482,11 @@ describe("github pull request tools", () => {
           body: "Cap the retries.",
           comments: [{ path: "src/retry.ts", line: 44, start_line: 40, body: "Unbounded loop." }],
         })
-        expect(result).toEqual({ id: 55, state: "CHANGES_REQUESTED", url: "https://github.com/acme/widgets/pull/7#pullrequestreview-55" })
+        expect(result).toEqual({
+          id: 55,
+          state: "CHANGES_REQUESTED",
+          url: "https://github.com/acme/widgets/pull/7#pullrequestreview-55",
+        })
         const error = yield* run(tool("review"), { repo: "acme/widgets", pr: 7, event: "approve" }).pipe(Effect.flip)
         expect(error.message).toContain("submit event: comment instead")
         expect(writes(github.requests)).toEqual([
@@ -400,7 +496,16 @@ describe("github pull request tools", () => {
             {
               event: "REQUEST_CHANGES",
               body: "Cap the retries.",
-              comments: [{ path: "src/retry.ts", line: 44, body: "Unbounded loop.", side: "RIGHT", start_line: 40, start_side: "RIGHT" }],
+              comments: [
+                {
+                  path: "src/retry.ts",
+                  line: 44,
+                  body: "Unbounded loop.",
+                  side: "RIGHT",
+                  start_line: 40,
+                  start_side: "RIGHT",
+                },
+              ],
             },
           ],
           ["POST", "/repos/acme/widgets/pulls/7/reviews", { event: "APPROVE" }],

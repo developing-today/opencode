@@ -40,7 +40,10 @@ export function parse(input: string, host = "github.com"): Ref | undefined {
 }
 
 /** Parses a pull request, issue or discussion reference: `12`, `#12`, `owner/repo#12`, or a web URL. */
-export function parseNumber(input: string | number, host = "github.com"): { readonly repo?: Ref; readonly number: number } | undefined {
+export function parseNumber(
+  input: string | number,
+  host = "github.com",
+): { readonly repo?: Ref; readonly number: number } | undefined {
   if (typeof input === "number") return Number.isInteger(input) && input > 0 ? { number: input } : undefined
   const text = input.trim()
   const plain = /^#?(\d+)$/.exec(text)
@@ -94,14 +97,17 @@ export const local = Effect.fn("GitHubRepo.local")(function* (process: AppProces
       hint: "Pass `repo` as owner/name, or run from a clone of the repository.",
     })
   const pushRemote = branch
-    ? (yield* git(["config", "--get", `branch.${branch}.pushRemote`])) || (yield* git(["config", "--get", `branch.${branch}.remote`]))
+    ? (yield* git(["config", "--get", `branch.${branch}.pushRemote`])) ||
+      (yield* git(["config", "--get", `branch.${branch}.remote`]))
     : ""
   const merge = branch ? yield* git(["config", "--get", `branch.${branch}.merge`]) : ""
   const selected = resolved
     .split("\n")
     .map((line) => /^remote\.(.+)\.gh-resolved\s+base$/.exec(line.trim())?.[1])
     .find((name) => name !== undefined && urls.has(name))
-  const order = [selected, pushRemote, "origin", ...urls.keys()].filter((name): name is string => !!name && urls.has(name))
+  const order = [selected, pushRemote, "origin", ...urls.keys()].filter(
+    (name): name is string => !!name && urls.has(name),
+  )
   const found = order.flatMap((name) => {
     const repo = parse(urls.get(name) ?? "")
     return repo ? [{ ...repo, remote: name }] : []

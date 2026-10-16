@@ -12,9 +12,12 @@ const it = testEffect(LayerNode.compile(AppProcess.node))
 const env = { GH_TOKEN: "test-token", GITHUB_TOKEN: undefined }
 
 type Body = { query: string; variables: Record<string, unknown> }
-const graphql = (requests: ReadonlyArray<Request>) => requests.filter((request) => request.path === "/graphql").map((request) => request.body as Body)
+const graphql = (requests: ReadonlyArray<Request>) =>
+  requests.filter((request) => request.path === "/graphql").map((request) => request.body as Body)
 const rest = (requests: ReadonlyArray<Request>) =>
-  requests.filter((request) => request.path !== "/graphql").map((request) => [request.method, request.path, request.body])
+  requests
+    .filter((request) => request.path !== "/graphql")
+    .map((request) => [request.method, request.path, request.body])
 
 const searchNode = {
   number: 12,
@@ -35,7 +38,9 @@ describe("github issues", () => {
   it.live("issues builds a repo-scoped issue search with qualifiers and maps results", () =>
     withEnv(env, () =>
       Effect.gen(function* () {
-        const github = fakeGitHub({ "GRAPHQL search(type: ISSUE": { body: { search: { issueCount: 41, nodes: [searchNode, {}] } } } })
+        const github = fakeGitHub({
+          "GRAPHQL search(type: ISSUE": { body: { search: { issueCount: 41, nodes: [searchNode, {}] } } },
+        })
         const { deps } = yield* makeDeps({ http: github.http })
         const result = yield* run<object, unknown>(find(GitHubIssues.tools(deps), "issues"), {
           repo: "acme/widgets",
@@ -46,12 +51,14 @@ describe("github issues", () => {
           limit: 5,
         })
         expect(graphql(github.requests)[0]?.variables).toEqual({
-          query: 'is:issue repo:acme/widgets is:closed assignee:alice label:bug label:"good first issue" sort:updated-desc crash',
+          query:
+            'is:issue repo:acme/widgets is:closed assignee:alice label:bug label:"good first issue" sort:updated-desc crash',
           first: 5,
         })
         expect(result).toEqual({
           total: 41,
-          query: 'is:issue repo:acme/widgets is:closed assignee:alice label:bug label:"good first issue" sort:updated-desc crash',
+          query:
+            'is:issue repo:acme/widgets is:closed assignee:alice label:bug label:"good first issue" sort:updated-desc crash',
           items: [
             {
               repo: "acme/widgets",
@@ -78,8 +85,16 @@ describe("github issues", () => {
       Effect.gen(function* () {
         const github = fakeGitHub({ "GRAPHQL search(type: ISSUE": { body: { search: { issueCount: 0, nodes: [] } } } })
         const { deps } = yield* makeDeps({ http: github.http })
-        yield* run(find(GitHubIssues.tools(deps), "issues"), { repo: "acme/widgets", state: "all", sort: "created", query: "org:acme flaky" })
-        expect(graphql(github.requests)[0]?.variables).toEqual({ query: "is:issue sort:created-desc org:acme flaky", first: 30 })
+        yield* run(find(GitHubIssues.tools(deps), "issues"), {
+          repo: "acme/widgets",
+          state: "all",
+          sort: "created",
+          query: "org:acme flaky",
+        })
+        expect(graphql(github.requests)[0]?.variables).toEqual({
+          query: "is:issue sort:created-desc org:acme flaky",
+          first: 30,
+        })
       }),
     ),
   )
@@ -142,7 +157,11 @@ describe("github issues", () => {
           },
         })
         const { deps } = yield* makeDeps({ http: github.http })
-        const result = yield* run<object, unknown>(find(GitHubIssues.tools(deps), "issue"), { repo: "acme/widgets", issue: "#12", comment_limit: 10 })
+        const result = yield* run<object, unknown>(find(GitHubIssues.tools(deps), "issue"), {
+          repo: "acme/widgets",
+          issue: "#12",
+          comment_limit: 10,
+        })
         expect(graphql(github.requests)[0]?.variables).toEqual({
           owner: "acme",
           name: "widgets",
@@ -164,8 +183,21 @@ describe("github issues", () => {
           milestone: { number: 3, title: "v1" },
           created_at: "2026-01-01T00:00:00Z",
           linked_pull_requests: [
-            { repo: "acme/widgets", number: 20, title: "Fix 20", url: "https://github.com/acme/widgets/pull/20", state: "merged", closes: true },
-            { repo: "acme/widgets", number: 21, title: "Fix 21", url: "https://github.com/acme/widgets/pull/21", state: "merged" },
+            {
+              repo: "acme/widgets",
+              number: 20,
+              title: "Fix 20",
+              url: "https://github.com/acme/widgets/pull/20",
+              state: "merged",
+              closes: true,
+            },
+            {
+              repo: "acme/widgets",
+              number: 21,
+              title: "Fix 21",
+              url: "https://github.com/acme/widgets/pull/21",
+              state: "merged",
+            },
           ],
           comments_total: 9,
           comments: [
@@ -188,9 +220,14 @@ describe("github issues", () => {
     withEnv(env, () =>
       Effect.gen(function* () {
         const github = fakeGitHub({
-          "PATCH /repos/acme/widgets/issues/12": { body: { html_url: "https://github.com/acme/widgets/issues/12", state: "closed" } },
+          "PATCH /repos/acme/widgets/issues/12": {
+            body: { html_url: "https://github.com/acme/widgets/issues/12", state: "closed" },
+          },
           "POST /repos/acme/widgets/issues/12/labels": { body: [] },
-          "DELETE /repos/acme/widgets/issues/12/labels/needs%20triage": { status: 404, body: { message: "Label does not exist" } },
+          "DELETE /repos/acme/widgets/issues/12/labels/needs%20triage": {
+            status: 404,
+            body: { message: "Label does not exist" },
+          },
           "PUT /repos/acme/widgets/issues/12/lock": { status: 204 },
         })
         const { deps, asserted } = yield* makeDeps({ http: github.http })
@@ -203,7 +240,9 @@ describe("github issues", () => {
           remove_labels: ["needs triage"],
           lock: true,
         })
-        expect(asserted.map((item) => [item.action, item.resources])).toEqual([["github_issue_update", ["github.com/acme/widgets"]]])
+        expect(asserted.map((item) => [item.action, item.resources])).toEqual([
+          ["github_issue_update", ["github.com/acme/widgets"]],
+        ])
         expect(rest(github.requests)).toEqual([
           ["PATCH", "/repos/acme/widgets/issues/12", { state: "closed", state_reason: "not_planned" }],
           ["POST", "/repos/acme/widgets/issues/12/labels", { labels: ["wontfix"] }],
@@ -229,15 +268,27 @@ describe("github issues", () => {
           },
           "GRAPHQL discussion(number: $number) { id }": { body: { repository: { discussion: { id: "D_5" } } } },
           "GRAPHQL addDiscussionComment": {
-            body: { addDiscussionComment: { comment: { id: "DC_new", url: "https://github.com/acme/widgets/discussions/5#discussioncomment-1" } } },
+            body: {
+              addDiscussionComment: {
+                comment: { id: "DC_new", url: "https://github.com/acme/widgets/discussions/5#discussioncomment-1" },
+              },
+            },
           },
         })
         const { deps, asserted } = yield* makeDeps({ http: github.http })
         const tool = find(GitHubIssues.tools(deps), "comment")
         const onIssue = yield* run(tool, { repo: "acme/widgets", on: 7, body: "Thanks!" })
-        const onDiscussion = yield* run(tool, { repo: "acme/widgets", discussion: 5, reply_to: "DC_parent", body: "Agreed" })
+        const onDiscussion = yield* run(tool, {
+          repo: "acme/widgets",
+          discussion: 5,
+          reply_to: "DC_parent",
+          body: "Agreed",
+        })
         expect(onIssue).toEqual({ id: "IC_new", url: "https://github.com/acme/widgets/pull/7#issuecomment-1" })
-        expect(onDiscussion).toEqual({ id: "DC_new", url: "https://github.com/acme/widgets/discussions/5#discussioncomment-1" })
+        expect(onDiscussion).toEqual({
+          id: "DC_new",
+          url: "https://github.com/acme/widgets/discussions/5#discussioncomment-1",
+        })
         expect(rest(github.requests)).toEqual([["POST", "/repos/acme/widgets/issues/7/comments", { body: "Thanks!" }]])
         expect(graphql(github.requests).map((body) => body.variables)).toEqual([
           { owner: "acme", name: "widgets", number: 5 },
@@ -256,9 +307,13 @@ describe("github issues", () => {
       Effect.gen(function* () {
         const github = fakeGitHub({
           "GRAPHQL node(id: $id)": { body: { node: { __typename: "DiscussionComment", url: "https://old" } } },
-          "GRAPHQL updateDiscussionComment(": { body: { result: { comment: { url: "https://github.com/acme/widgets/discussions/5#c" } } } },
+          "GRAPHQL updateDiscussionComment(": {
+            body: { result: { comment: { url: "https://github.com/acme/widgets/discussions/5#c" } } },
+          },
           "GRAPHQL { minimizeComment(": { body: { minimizeComment: { minimizedComment: { isMinimized: true } } } },
-          "PATCH /repos/acme/widgets/issues/comments/555": { body: { node_id: "IC_555", html_url: "https://github.com/acme/widgets/issues/1#issuecomment-555" } },
+          "PATCH /repos/acme/widgets/issues/comments/555": {
+            body: { node_id: "IC_555", html_url: "https://github.com/acme/widgets/issues/1#issuecomment-555" },
+          },
         })
         const { deps } = yield* makeDeps({ http: github.http })
         const tool = find(GitHubIssues.tools(deps), "comment_update")
@@ -267,12 +322,22 @@ describe("github issues", () => {
         const rested = yield* run(tool, { repo: "acme/widgets", id: "555", body: "REST edit" })
         expect(edited).toEqual({ id: "DC_9", action: "edited", url: "https://github.com/acme/widgets/discussions/5#c" })
         expect(hidden).toEqual({ id: "IC_3", action: "hidden" })
-        expect(rested).toEqual({ id: "IC_555", action: "edited", url: "https://github.com/acme/widgets/issues/1#issuecomment-555" })
+        expect(rested).toEqual({
+          id: "IC_555",
+          action: "edited",
+          url: "https://github.com/acme/widgets/issues/1#issuecomment-555",
+        })
         const calls = graphql(github.requests)
-        expect(calls.map((body) => body.variables)).toEqual([{ id: "DC_9" }, { id: "DC_9", body: "Edited" }, { id: "IC_3", classifier: "OFF_TOPIC" }])
+        expect(calls.map((body) => body.variables)).toEqual([
+          { id: "DC_9" },
+          { id: "DC_9", body: "Edited" },
+          { id: "IC_3", classifier: "OFF_TOPIC" },
+        ])
         expect(calls[1]?.query).toContain("updateDiscussionComment(input: { commentId: $id")
         expect(calls[2]?.query).toContain("minimizeComment(input:")
-        expect(rest(github.requests)).toEqual([["PATCH", "/repos/acme/widgets/issues/comments/555", { body: "REST edit" }]])
+        expect(rest(github.requests)).toEqual([
+          ["PATCH", "/repos/acme/widgets/issues/comments/555", { body: "REST edit" }],
+        ])
       }),
     ),
   )

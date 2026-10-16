@@ -81,7 +81,10 @@ export function parseReview(input: string | undefined | null): Review {
   }
 }
 
-function verdict(headline: string | undefined, counts: { open?: number; generated?: number; findings: number }): Verdict {
+function verdict(
+  headline: string | undefined,
+  counts: { open?: number; generated?: number; findings: number },
+): Verdict {
   if (headline && /approv/i.test(headline)) return "approve"
   if (headline && /changes/i.test(headline)) return "changes"
   if (headline && /closer look/i.test(headline)) return "closer_look"
@@ -94,7 +97,11 @@ function bodyKind(summary: string): BodyFindingKind | undefined {
   if (/low confidence/i.test(summary)) return "low_confidence"
   if (/previously missed/i.test(summary)) return "previously_missed"
   if (/outside (?:of )?(?:the )?(?:diff|changed)|unchanged|not part of the diff/i.test(summary)) return "outside_diff"
-  if (/open findings?|resolved since|what changed|pull request overview|file summar|review details|summary per file/i.test(summary))
+  if (
+    /open findings?|resolved since|what changed|pull request overview|file summar|review details|summary per file/i.test(
+      summary,
+    )
+  )
     return undefined
   if (/\(\d+\)/.test(summary) && /comment|finding|suggest/i.test(summary)) return "other"
   return undefined
@@ -189,7 +196,10 @@ function details(body: string): Section[] {
     const summary = /<summary>([\s\S]*?)<\/summary>/.exec(inner)
     const raw = summary?.[1] ?? ""
     const childText = open.children.length > 0 ? inner.slice(0, inner.indexOf("<details")) : inner
-    const text = raw.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()
+    const text = raw
+      .replace(/<[^>]+>/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
     // `clean` has already turned Copilot's severity badge into a `[Medium]` prefix.
     const badge = /^\[(\w+)\]\s*/.exec(text)
     const section: Section = {
@@ -271,7 +281,9 @@ export function state(input: {
   const requested = last((event) => event.event === "review_requested" && copilot(event))
   const removed = last((event) => event.event === "review_request_removed" && copilot(event))
   const started = last((event) => event.event === "copilot_work_started")
-  const finished = last((event) => event.event === "copilot_work_finished" || event.event === "copilot_work_finished_failure")
+  const finished = last(
+    (event) => event.event === "copilot_work_finished" || event.event === "copilot_work_finished_failure",
+  )
   const rounds = input.reviews.length
   const base = { rounds, ...(latest ? { latest } : {}) }
   if (started > reviewed && started > finished)
@@ -284,7 +296,8 @@ export function state(input: {
       ...(pendingSince ? { since: iso(pendingSince) } : {}),
       stuck: pendingSince > 0 && input.now - pendingSince > STUCK_REQUEST_MS,
     }
-  if (latest) return { ...base, state: latest.commit === input.head ? "reviewed" : "stale", since: latest.at, stuck: false }
+  if (latest)
+    return { ...base, state: latest.commit === input.head ? "reviewed" : "stale", since: latest.at, stuck: false }
   return { ...base, state: "none", stuck: false }
 }
 

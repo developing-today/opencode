@@ -22,7 +22,15 @@ const it = testEffect(
   AppNodeBuilder.build(LayerNode.group([Tool.node, AppProcess.node]), [Image.node.replace(imagePassthrough)]),
 )
 
-const groups = [GitHubReview, GitHubPulls, GitHubIssues, GitHubDiscussions, GitHubActions, GitHubReleases, GitHubExplore]
+const groups = [
+  GitHubReview,
+  GitHubPulls,
+  GitHubIssues,
+  GitHubDiscussions,
+  GitHubActions,
+  GitHubReleases,
+  GitHubExplore,
+]
 
 describe("github tool registration", () => {
   it.live("every tool registers in the Code Mode catalog under github with a valid definition", () =>
@@ -62,4 +70,3 @@ describe("github tool registration", () => {
     }),
   )
 })
-

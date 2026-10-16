@@ -14,7 +14,9 @@ const COMMENT_MAX = 2000
 
 const Author = GitHubShared.Author
 
-const DiscussionRef = GitHubShared.NumberRef.annotate({ description: "Discussion number, #number, owner/repo#number or URL." })
+const DiscussionRef = GitHubShared.NumberRef.annotate({
+  description: "Discussion number, #number, owner/repo#number or URL.",
+})
 
 interface GqlAuthor {
   readonly login: string
@@ -51,12 +53,18 @@ const REPO_QUERY = `query($owner: String!, $name: String!) {
 }`
 
 const categoryList = (repo: RepoData) =>
-  repo.discussionCategories.nodes.map((category) => ({ name: category.name, slug: category.slug, answerable: category.isAnswerable }))
+  repo.discussionCategories.nodes.map((category) => ({
+    name: category.name,
+    slug: category.slug,
+    answerable: category.isAnswerable,
+  }))
 
 /** Finds a category by slug or name, case-insensitively; a miss lists what exists so the model can retry. */
 export function resolveCategory(categories: ReadonlyArray<CategoryNode>, wanted: string) {
   const key = wanted.trim().toLowerCase()
-  const found = categories.find((category) => category.slug.toLowerCase() === key || category.name.toLowerCase() === key)
+  const found = categories.find(
+    (category) => category.slug.toLowerCase() === key || category.name.toLowerCase() === key,
+  )
   if (found) return Effect.succeed(found)
   return Effect.fail(
     new GitHubClient.Error({
@@ -67,9 +75,15 @@ export function resolveCategory(categories: ReadonlyArray<CategoryNode>, wanted:
 }
 
 const repository = Effect.fn("GitHubDiscussions.repository")(function* (target: GitHubShared.Target) {
-  const data = yield* target.api.graphql<{ repository: RepoData | null }>(REPO_QUERY, { owner: target.repo.owner, name: target.repo.name })
+  const data = yield* target.api.graphql<{ repository: RepoData | null }>(REPO_QUERY, {
+    owner: target.repo.owner,
+    name: target.repo.name,
+  })
   if (!data.repository)
-    return yield* new GitHubClient.Error({ kind: "not_found", message: `Repository ${GitHubRepo.slug(target.repo)} not found` })
+    return yield* new GitHubClient.Error({
+      kind: "not_found",
+      message: `Repository ${GitHubRepo.slug(target.repo)} not found`,
+    })
   return data.repository
 })
 
@@ -180,7 +194,9 @@ const Reply = Schema.Struct({
 })
 
 const Comment = Schema.Struct({
-  id: Schema.String.annotate({ description: "Node id; pass as reply_to to comment, or as answer to discussion_update." }),
+  id: Schema.String.annotate({
+    description: "Node id; pass as reply_to to comment, or as answer to discussion_update.",
+  }),
   author: Author,
   body: Schema.String,
   created_at: Schema.String,
@@ -223,31 +239,38 @@ export function tools(deps: Deps): Tool.Info[] {
       Effect.gen(function* () {
         const resolved = yield* GitHubShared.target(deps, input.repo)
         const repo = yield* repository(resolved)
-        const category = input.category === undefined ? undefined : yield* resolveCategory(repo.discussionCategories.nodes, input.category)
+        const category =
+          input.category === undefined
+            ? undefined
+            : yield* resolveCategory(repo.discussionCategories.nodes, input.category)
         const first = input.limit ?? 20
         const list = input.query?.trim()
           ? yield* resolved.api
-              .graphql<{ search: { discussionCount: number; nodes: ReadonlyArray<DiscussionSummary | null> } }>(SEARCH_QUERY, {
-                query: [
-                  `repo:${GitHubRepo.slug(resolved.repo)}`,
-                  ...(category ? [`category:${quote(category.name)}`] : []),
-                  ...(input.answered === undefined ? [] : [input.answered ? "is:answered" : "is:unanswered"]),
-                  input.query.trim(),
-                ].join(" "),
-                first,
-              })
-              .pipe(Effect.map((data) => ({ total: data.search.discussionCount, nodes: data.search.nodes })))
-          : yield* resolved.api
-              .graphql<{ repository: { discussions: { totalCount: number; nodes: ReadonlyArray<DiscussionSummary | null> } } | null }>(
-                LIST_QUERY,
+              .graphql<{ search: { discussionCount: number; nodes: ReadonlyArray<DiscussionSummary | null> } }>(
+                SEARCH_QUERY,
                 {
-                  owner: resolved.repo.owner,
-                  name: resolved.repo.name,
+                  query: [
+                    `repo:${GitHubRepo.slug(resolved.repo)}`,
+                    ...(category ? [`category:${quote(category.name)}`] : []),
+                    ...(input.answered === undefined ? [] : [input.answered ? "is:answered" : "is:unanswered"]),
+                    input.query.trim(),
+                  ].join(" "),
                   first,
-                  ...(category ? { categoryId: category.id } : {}),
-                  ...(input.answered === undefined ? {} : { answered: input.answered }),
                 },
               )
+              .pipe(Effect.map((data) => ({ total: data.search.discussionCount, nodes: data.search.nodes })))
+          : yield* resolved.api
+              .graphql<{
+                repository: {
+                  discussions: { totalCount: number; nodes: ReadonlyArray<DiscussionSummary | null> }
+                } | null
+              }>(LIST_QUERY, {
+                owner: resolved.repo.owner,
+                name: resolved.repo.name,
+                first,
+                ...(category ? { categoryId: category.id } : {}),
+                ...(input.answered === undefined ? {} : { answered: input.answered }),
+              })
               .pipe(
                 Effect.map((data) => ({
                   total: data.repository?.discussions.totalCount ?? 0,
@@ -280,7 +303,8 @@ export function tools(deps: Deps): Tool.Info[] {
 
   const discussion = GitHubShared.define(deps, {
     name: "discussion",
-    description: "Read one discussion with its body, category, answer and comments with their replies (ids feed comment and discussion_update).",
+    description:
+      "Read one discussion with its body, category, answer and comments with their replies (ids feed comment and discussion_update).",
     input: Schema.Struct({
       repo: GitHubShared.RepoField,
       discussion: DiscussionRef,
@@ -309,14 +333,21 @@ export function tools(deps: Deps): Tool.Info[] {
       Effect.gen(function* () {
         const resolved = yield* GitHubShared.numbered(deps, { repo: input.repo, ref: input.discussion })
         const slug = GitHubRepo.slug(resolved.repo)
-        const data = yield* resolved.api.graphql<{ repository: { discussion: DiscussionData | null } | null }>(DISCUSSION_QUERY, {
-          owner: resolved.repo.owner,
-          name: resolved.repo.name,
-          number: resolved.number,
-          commentLimit: input.comment_limit ?? 50,
-        })
+        const data = yield* resolved.api.graphql<{ repository: { discussion: DiscussionData | null } | null }>(
+          DISCUSSION_QUERY,
+          {
+            owner: resolved.repo.owner,
+            name: resolved.repo.name,
+            number: resolved.number,
+            commentLimit: input.comment_limit ?? 50,
+          },
+        )
         const found = data.repository?.discussion
-        if (!found) return yield* new GitHubClient.Error({ kind: "not_found", message: `Discussion ${slug}#${resolved.number} not found` })
+        if (!found)
+          return yield* new GitHubClient.Error({
+            kind: "not_found",
+            message: `Discussion ${slug}#${resolved.number} not found`,
+          })
         return {
           repo: slug,
           number: found.number,
@@ -344,7 +375,8 @@ export function tools(deps: Deps): Tool.Info[] {
 
   const discussionCreate = GitHubShared.define(deps, {
     name: "discussion_create",
-    description: "Start a discussion in a category (name or slug; the error lists the categories when it does not match).",
+    description:
+      "Start a discussion in a category (name or slug; the error lists the categories when it does not match).",
     input: Schema.Struct({
       repo: GitHubShared.RepoField,
       title: Schema.String,
@@ -358,7 +390,9 @@ export function tools(deps: Deps): Tool.Info[] {
         const repo = yield* repository(resolved)
         const category = yield* resolveCategory(repo.discussionCategories.nodes, input.category)
         yield* GitHubShared.authorize(deps, context, "discussion_create", resolved.repo)
-        const created = yield* resolved.api.graphql<{ createDiscussion: { discussion: { number: number; url: string } } }>(
+        const created = yield* resolved.api.graphql<{
+          createDiscussion: { discussion: { number: number; url: string } }
+        }>(
           `mutation($repositoryId: ID!, $categoryId: ID!, $title: String!, $body: String!) { createDiscussion(input: { repositoryId: $repositoryId, categoryId: $categoryId, title: $title, body: $body }) { discussion { number url } } }`,
           { repositoryId: repo.id, categoryId: category.id, title: input.title, body: input.body },
         )
@@ -411,7 +445,9 @@ export function tools(deps: Deps): Tool.Info[] {
             message: `Discussion ${GitHubRepo.slug(resolved.repo)}#${resolved.number} not found`,
           })
         const category =
-          input.category === undefined ? undefined : yield* resolveCategory(data.repository.discussionCategories.nodes, input.category)
+          input.category === undefined
+            ? undefined
+            : yield* resolveCategory(data.repository.discussionCategories.nodes, input.category)
         yield* GitHubShared.authorize(deps, context, "discussion_update", resolved.repo)
 
         const changed: string[] = []
@@ -430,19 +466,28 @@ export function tools(deps: Deps): Tool.Info[] {
           if (category) changed.push(`category: ${category.name}`)
         }
         if (input.reopen === true) {
-          yield* api.graphql(`mutation($discussionId: ID!) { reopenDiscussion(input: { discussionId: $discussionId }) { discussion { closed } } }`, {
-            discussionId: found.id,
-          })
+          yield* api.graphql(
+            `mutation($discussionId: ID!) { reopenDiscussion(input: { discussionId: $discussionId }) { discussion { closed } } }`,
+            {
+              discussionId: found.id,
+            },
+          )
           changed.push("reopened")
         }
         if (input.answer !== undefined) {
-          yield* api.graphql(`mutation($id: ID!) { markDiscussionCommentAsAnswer(input: { id: $id }) { discussion { id } } }`, { id: input.answer })
+          yield* api.graphql(
+            `mutation($id: ID!) { markDiscussionCommentAsAnswer(input: { id: $id }) { discussion { id } } }`,
+            { id: input.answer },
+          )
           changed.push(`answer: ${input.answer}`)
         }
         if (input.unanswer !== undefined) {
-          yield* api.graphql(`mutation($id: ID!) { unmarkDiscussionCommentAsAnswer(input: { id: $id }) { discussion { id } } }`, {
-            id: input.unanswer,
-          })
+          yield* api.graphql(
+            `mutation($id: ID!) { unmarkDiscussionCommentAsAnswer(input: { id: $id }) { discussion { id } } }`,
+            {
+              id: input.unanswer,
+            },
+          )
           changed.push(`unanswered: ${input.unanswer}`)
         }
         if (input.close !== undefined) {

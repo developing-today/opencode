@@ -14,7 +14,8 @@ export const Info = Schema.Struct({
       "Whether out-of-scope or minor review findings may be resolved by filing a follow-up issue: auto (just do it), ask (ask the user first), never.",
   }),
   human_reply_prefix: Schema.optionalKey(Schema.String).annotate({
-    description: "Prefix added to replies on human-written comments so readers know an agent wrote them. Empty to disable.",
+    description:
+      "Prefix added to replies on human-written comments so readers know an agent wrote them. Empty to disable.",
   }),
   copilot_auto_request: Schema.optionalKey(Schema.Boolean).annotate({
     description: "Whether waiting for a Copilot review requests one when none is pending. Default true.",

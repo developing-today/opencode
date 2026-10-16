@@ -12,7 +12,8 @@ const it = testEffect(LayerNode.compile(AppProcess.node))
 const env = { GH_TOKEN: "test-token", GITHUB_TOKEN: undefined }
 
 type Body = { query: string; variables: Record<string, unknown> }
-const graphql = (requests: ReadonlyArray<Request>) => requests.filter((request) => request.path === "/graphql").map((request) => request.body as Body)
+const graphql = (requests: ReadonlyArray<Request>) =>
+  requests.filter((request) => request.path === "/graphql").map((request) => request.body as Body)
 
 const categories = {
   nodes: [
@@ -28,7 +29,9 @@ describe("github discussions", () => {
     withEnv(env, () =>
       Effect.gen(function* () {
         const github = fakeGitHub({
-          "GRAPHQL { id discussionCategories": { body: { repository: { id: "R_1", discussionCategories: categories } } },
+          "GRAPHQL { id discussionCategories": {
+            body: { repository: { id: "R_1", discussionCategories: categories } },
+          },
           "GRAPHQL discussions(first: $first": {
             body: {
               repository: {
@@ -53,8 +56,18 @@ describe("github discussions", () => {
           },
         })
         const { deps } = yield* makeDeps({ http: github.http })
-        const result = yield* run(find(GitHubDiscussions.tools(deps), "discussions"), { repo: "acme/widgets", category: "q-a", answered: true })
-        expect(graphql(github.requests)[1]?.variables).toEqual({ owner: "acme", name: "widgets", first: 20, categoryId: "DIC_qa", answered: true })
+        const result = yield* run(find(GitHubDiscussions.tools(deps), "discussions"), {
+          repo: "acme/widgets",
+          category: "q-a",
+          answered: true,
+        })
+        expect(graphql(github.requests)[1]?.variables).toEqual({
+          owner: "acme",
+          name: "widgets",
+          first: 20,
+          categoryId: "DIC_qa",
+          answered: true,
+        })
         expect(result).toEqual({
           total: 1,
           items: [
@@ -83,12 +96,22 @@ describe("github discussions", () => {
     withEnv(env, () =>
       Effect.gen(function* () {
         const github = fakeGitHub({
-          "GRAPHQL { id discussionCategories": { body: { repository: { id: "R_1", discussionCategories: categories } } },
+          "GRAPHQL { id discussionCategories": {
+            body: { repository: { id: "R_1", discussionCategories: categories } },
+          },
           "GRAPHQL search(type: DISCUSSION": { body: { search: { discussionCount: 0, nodes: [] } } },
         })
         const { deps } = yield* makeDeps({ http: github.http })
-        yield* run(find(GitHubDiscussions.tools(deps), "discussions"), { repo: "acme/widgets", category: "general", answered: false, query: "timeout" })
-        expect(graphql(github.requests)[1]?.variables).toEqual({ query: "repo:acme/widgets category:General is:unanswered timeout", first: 20 })
+        yield* run(find(GitHubDiscussions.tools(deps), "discussions"), {
+          repo: "acme/widgets",
+          category: "general",
+          answered: false,
+          query: "timeout",
+        })
+        expect(graphql(github.requests)[1]?.variables).toEqual({
+          query: "repo:acme/widgets category:General is:unanswered timeout",
+          first: 20,
+        })
       }),
     ),
   )
@@ -97,20 +120,36 @@ describe("github discussions", () => {
     withEnv(env, () =>
       Effect.gen(function* () {
         const github = fakeGitHub({
-          "GRAPHQL { id discussionCategories": { body: { repository: { id: "R_1", discussionCategories: categories } } },
+          "GRAPHQL { id discussionCategories": {
+            body: { repository: { id: "R_1", discussionCategories: categories } },
+          },
           "GRAPHQL createDiscussion": {
-            body: { createDiscussion: { discussion: { number: 9, url: "https://github.com/acme/widgets/discussions/9" } } },
+            body: {
+              createDiscussion: { discussion: { number: 9, url: "https://github.com/acme/widgets/discussions/9" } },
+            },
           },
         })
         const { deps, asserted } = yield* makeDeps({ http: github.http })
         const tool = find(GitHubDiscussions.tools(deps), "discussion_create")
         const created = yield* run(tool, { repo: "acme/widgets", title: "Idea", body: "Details", category: "q&a" })
         expect(created).toEqual({ number: 9, url: "https://github.com/acme/widgets/discussions/9" })
-        expect(graphql(github.requests)[1]?.variables).toEqual({ repositoryId: "R_1", categoryId: "DIC_qa", title: "Idea", body: "Details" })
+        expect(graphql(github.requests)[1]?.variables).toEqual({
+          repositoryId: "R_1",
+          categoryId: "DIC_qa",
+          title: "Idea",
+          body: "Details",
+        })
         expect(asserted.map((item) => item.action)).toEqual(["github_discussion_create"])
 
-        const missing = yield* run(tool, { repo: "acme/widgets", title: "Idea", body: "Details", category: "Ideas" }).pipe(Effect.flip)
-        expect(missing.message).toBe('github.discussion_create: No discussion category "Ideas". Available: General (general), Q&A (q-a).')
+        const missing = yield* run(tool, {
+          repo: "acme/widgets",
+          title: "Idea",
+          body: "Details",
+          category: "Ideas",
+        }).pipe(Effect.flip)
+        expect(missing.message).toBe(
+          'github.discussion_create: No discussion category "Ideas". Available: General (general), Q&A (q-a).',
+        )
         expect(graphql(github.requests).filter((body) => body.query.includes("createDiscussion"))).toHaveLength(1)
         expect(asserted).toHaveLength(1)
       }),
@@ -153,7 +192,10 @@ describe("github discussions", () => {
                       {
                         ...comment("DC_2", "dave", "Set X=1"),
                         isAnswer: true,
-                        replies: { totalCount: 1, nodes: [{ ...comment("DC_3", "carol", "Thanks"), isMinimized: true }] },
+                        replies: {
+                          totalCount: 1,
+                          nodes: [{ ...comment("DC_3", "carol", "Thanks"), isMinimized: true }],
+                        },
                       },
                     ],
                   },
@@ -167,7 +209,12 @@ describe("github discussions", () => {
           repo: "acme/widgets",
           discussion: "https://github.com/acme/widgets/discussions/5",
         })
-        expect(graphql(github.requests)[0]?.variables).toEqual({ owner: "acme", name: "widgets", number: 5, commentLimit: 50 })
+        expect(graphql(github.requests)[0]?.variables).toEqual({
+          owner: "acme",
+          name: "widgets",
+          number: 5,
+          commentLimit: 50,
+        })
         expect(result.answer).toEqual({ id: "DC_2", author: { login: "dave", kind: "human" } })
         expect(result.category).toEqual({ name: "Q&A", slug: "q-a", answerable: true })
         expect(result.comments).toEqual([
@@ -210,9 +257,16 @@ describe("github discussions", () => {
       Effect.gen(function* () {
         const github = fakeGitHub({
           "GRAPHQL discussion(number: $number) { id url }": {
-            body: { repository: { discussion: { id: "D_5", url: "https://github.com/acme/widgets/discussions/5" }, discussionCategories: categories } },
+            body: {
+              repository: {
+                discussion: { id: "D_5", url: "https://github.com/acme/widgets/discussions/5" },
+                discussionCategories: categories,
+              },
+            },
           },
-          "GRAPHQL { markDiscussionCommentAsAnswer(": { body: { markDiscussionCommentAsAnswer: { discussion: { id: "D_5" } } } },
+          "GRAPHQL { markDiscussionCommentAsAnswer(": {
+            body: { markDiscussionCommentAsAnswer: { discussion: { id: "D_5" } } },
+          },
           "GRAPHQL closeDiscussion(": { body: { closeDiscussion: { discussion: { closed: true } } } },
         })
         const { deps, asserted } = yield* makeDeps({ http: github.http })
@@ -222,9 +276,16 @@ describe("github discussions", () => {
           answer: "DC_2",
           close: "resolved",
         })
-        expect(result).toEqual({ number: 5, url: "https://github.com/acme/widgets/discussions/5", changed: ["answer: DC_2", "closed: resolved"] })
+        expect(result).toEqual({
+          number: 5,
+          url: "https://github.com/acme/widgets/discussions/5",
+          changed: ["answer: DC_2", "closed: resolved"],
+        })
         const calls = graphql(github.requests)
-        expect(calls.slice(1).map((body) => body.variables)).toEqual([{ id: "DC_2" }, { discussionId: "D_5", reason: "RESOLVED" }])
+        expect(calls.slice(1).map((body) => body.variables)).toEqual([
+          { id: "DC_2" },
+          { discussionId: "D_5", reason: "RESOLVED" },
+        ])
         expect(calls[1]?.query).toContain("{ markDiscussionCommentAsAnswer(input: { id: $id })")
         expect(calls[2]?.query).toContain("closeDiscussion(input: { discussionId: $discussionId, reason: $reason })")
         expect(asserted.map((item) => item.action)).toEqual(["github_discussion_update"])
