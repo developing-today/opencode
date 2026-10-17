@@ -64,6 +64,17 @@ describe("Host.resolve", () => {
     })
   }
 
+  it("falls back to the root export for a local directory whose exports omit ./server", async () => {
+    // The shape OpenChamber writes for its agent tool: a local directory (no
+    // package name) with exports { ".": "./index.js" } and no server file.
+    // Probing "<dir>/server" fails first; that miss must fall through to index.
+    await using plugin = await fixture({
+      "package.json": JSON.stringify({ name: "local-only", type: "module", exports: { ".": "./index.js" } }),
+      "index.js": source,
+    })
+    assert.deepEqual(Host.resolve(plugin.target), { server: plugin.url("index.js"), tui: undefined, rpc: undefined })
+  })
+
   it("resolves local conventional entrypoints with package.json but no exports", async () => {
     await using plugin = await fixture({
       "package.json": JSON.stringify({ name, type: "module" }),
