@@ -92,7 +92,7 @@ export function entries(
           const call = entry(
             index,
             "tools",
-            `${item.name}(${summarize(item.state.input)}) → ${item.state.status}`,
+            `${item.name}(${serialize(item.state.input)}) → ${item.state.status}`,
             item.name,
           )
           const result =
@@ -130,9 +130,9 @@ function synthetic(message: SessionMessage.Synthetic) {
   return { text: message.description ? `${message.description}\n${message.text}` : message.text }
 }
 
-function summarize(input: unknown) {
-  const text = typeof input === "string" ? input : JSON.stringify(input)
-  return text.length > 160 ? `${text.slice(0, 157)}...` : text
+/** The complete tool input, so grep and search see every argument; entries are clipped only when returned. */
+function serialize(input: unknown) {
+  return typeof input === "string" ? input : JSON.stringify(input)
 }
 
 /** Shortens long entries to a head and tail around an omission marker. */

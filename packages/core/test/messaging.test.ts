@@ -519,6 +519,9 @@ describe("Messaging search and listing", () => {
         "Deployment failed on staging cluster",
       ])
       expect((yield* search("deployment", { match: "exact", from: [`${tree.root.id}+children`] })).data).toHaveLength(2)
+      // Surrounding whitespace is part of an exact substring.
+      expect((yield* search(" order ", { match: "exact" })).data).toEqual(["Lunch order is pizza"])
+      expect((yield* search(" deployment", { match: "exact" })).data).toEqual([])
       // Without a local model, semantic and hybrid searches fall back to fuzzy matching and say so.
       const hybrid = yield* search("deploy failure")
       expect(hybrid.match).toBe("fuzzy")

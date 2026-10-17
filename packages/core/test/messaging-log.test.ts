@@ -60,6 +60,33 @@ describe("MessagingLog.entries", () => {
     ])
   })
 
+  test("keeps every tool argument searchable", () => {
+    const [long] = decode([
+      {
+        id: "msg_6",
+        type: "assistant",
+        agent: "build",
+        model: { id: "model", providerID: "provider" },
+        time: { created: 6_000 },
+        content: [
+          {
+            type: "tool",
+            id: "call_2",
+            name: "edit",
+            state: {
+              status: "completed",
+              input: { oldString: "x".repeat(400), newString: "needle" },
+              content: [{ type: "text", text: "Edited" }],
+            },
+            time: { created: 6_000 },
+          },
+        ],
+      },
+    ])
+    const [entry] = MessagingLog.entries("ses_a", long ? [long] : [], new Set(["tools"]))
+    expect(entry?.text).toContain('"newString":"needle"')
+  })
+
   test("clips long entries around an omission marker", () => {
     const clipped = MessagingLog.clip("a".repeat(500) + "b".repeat(500), 100)
     expect(clipped.length).toBeLessThan(140)

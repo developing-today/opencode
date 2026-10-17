@@ -77,6 +77,10 @@ describe("MessagingEmbedding.resolve", () => {
       expect(other?.url).toBeUndefined()
       expect(other?.pooling).toBe("mean")
       expect(other?.query).toBe("search: ")
+
+      // A link that is not an absolute URL is reported, not thrown.
+      expect(MessagingEmbedding.resolve({ url: "models/x.gguf" }, {}).error).toContain("Invalid embedding model URL")
+      expect(MessagingEmbedding.resolve("default", { OPENCODE_EMBEDDING: "https://" }).error).toContain("Invalid")
     }),
   )
 

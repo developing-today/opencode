@@ -218,7 +218,13 @@ export function resolve(
 
   const custom = source.path ?? source.url
   if (custom) {
-    const file = path.basename(source.path ?? new URL(custom).pathname)
+    // An unparseable link is a settings error reported as unavailable, never a thrown defect.
+    const file = source.path
+      ? path.basename(source.path)
+      : URL.canParse(custom)
+        ? path.basename(new URL(custom).pathname)
+        : ""
+    if (!file) return { remote, autostart, error: `Invalid embedding model URL: ${custom}` }
     const stem = file.replace(/\.gguf$/i, "")
     const qwen = file.toLowerCase().includes("qwen3-embedding")
     return {

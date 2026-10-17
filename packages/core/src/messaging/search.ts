@@ -31,11 +31,13 @@ export function ftsQuery(query: string) {
   return grams.map((gram) => `"${gram.replaceAll('"', '""')}"`).join(" OR ")
 }
 
-/** An FTS5 phrase matching the exact (case-insensitive) substring, or undefined when it is too short. */
+/**
+ * An FTS5 phrase matching the exact (case-insensitive) substring, or undefined when it is too short. Surrounding
+ * whitespace is part of the substring, as in the SQL fallback.
+ */
 export function ftsPhrase(query: string) {
-  const trimmed = query.trim()
-  if (trimmed.length < 3) return undefined
-  return `"${trimmed.replaceAll('"', '""')}"`
+  if (query.length < 3 || query.trim() === "") return undefined
+  return `"${query.replaceAll('"', '""')}"`
 }
 
 /**
