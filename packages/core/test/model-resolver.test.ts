@@ -1780,6 +1780,33 @@ describe("ModelResolver routes", () => {
     )
   })
 
+  it.effect("a requested route variant runs a target without a remap at the same native variant", () => {
+    ModelRoute.resetHealth()
+    const a = model(Provider.aisdk("@ai-sdk/openai"), {
+      providerID: Provider.ID.make("pa"),
+      modelID: "sonnet",
+      settings: { apiKey: "key" },
+      variants: [{ id: VariantID.make("low") }, { id: VariantID.make("high") }],
+    })
+    const b = leaf("pb")
+    // A family route (one model, its previous generation as failover) with no remaps and a default:
+    // `#low` must reach the target as low, not fall back to the default.
+    const route = Info.make({
+      ...routed([a, b], { ...ordered, targetVariants: [{ default: VariantID.make("high") }, {}] }),
+      variants: [{ id: VariantID.make("low") }, { id: VariantID.make("high") }],
+    })
+    return withResolver([a, b], (resolver) =>
+      Effect.gen(function* () {
+        const low = yield* resolver.resolveModel(route, VariantID.make("low"))
+        expect(targetOf(low)).toBe("pa")
+        expect(low.routing?.target.variant).toBe(VariantID.make("low"))
+        // Without a requested variant the target's default still applies.
+        const plain = yield* resolver.resolveModel(route)
+        expect(plain.routing?.target.variant).toBe(VariantID.make("high"))
+      }),
+    )
+  })
+
   it.effect("learned adjustments take effect only on the routes whose level they were made for", () => {
     ModelRoute.resetHealth()
     const a = leaf("pa")

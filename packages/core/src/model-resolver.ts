@@ -490,8 +490,14 @@ export const layer = Layer.effect(
           const source = yield* models.get(target.providerID, target.id)
           if (!source?.enabled) continue
           const targetVariants = definition.targetVariants[index]
+          // A requested route variant runs the target at its remap, else at the same variant when the
+          // target has it natively: the route only offers variants every target can produce one of
+          // those two ways (config/plugin/model-routes.ts routeVariants).
           const mapped =
-            requestedVariant !== undefined ? targetVariants?.map?.[requestedVariant] : targetVariants?.default
+            requestedVariant !== undefined
+              ? (targetVariants?.map?.[requestedVariant] ??
+                (source.variants.some((item) => item.id === requestedVariant) ? requestedVariant : undefined))
+              : targetVariants?.default
           const resolved = yield* Effect.result(load(source, target.variant ?? mapped))
           if (Result.isFailure(resolved)) {
             ModelRoute.failed(target, definition.health, now)
