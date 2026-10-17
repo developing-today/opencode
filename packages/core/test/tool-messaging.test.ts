@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { DateTime, Effect, Layer } from "effect"
+import { DateTime, Effect, Layer, Schedule } from "effect"
 import { Agent } from "@opencode/core/agent"
 import { AISDK } from "@opencode/core/aisdk"
 import { Bus } from "@opencode/core/bus"
@@ -44,6 +44,8 @@ import { WorktreeStrategies } from "@opencode/core/worktree/strategies"
 import { LayerNodePlatform } from "@opencode/util/effect/app-node-platform"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Npm } from "@opencode/util/npm"
+import { Document, Event as ConfigEvent, Info } from "@opencode/schema/config"
+import { ConfigMessaging } from "@opencode/schema/config/messaging"
 import { AppProcess } from "@opencode/util/process"
 import { tempLocationLayer } from "./fixture/location"
 import { emptyMcpLayer } from "./fixture/mcp"
@@ -257,6 +259,32 @@ describe("MessagingTools", () => {
         "step-up",
         "top",
       ])
+    }),
+  )
+
+  it.live("applies an edited messaging section to calls that never use a tool", () =>
+    Effect.gen(function* () {
+      const { root, child } = yield* setup
+      const test = yield* Config.Test
+      const bus = yield* Bus.Service
+      const messaging = yield* Messaging.Service
+      yield* test.setEntries([
+        new Document({
+          type: "document",
+          info: new Info({ messaging: new ConfigMessaging.Info({ delivery: { direct: "inbox" } }) }),
+        }),
+      ])
+      yield* bus.publish(ConfigEvent.Updated, { sections: ["messaging"] })
+      // The plugin applies the section on its own fiber; an HTTP send reads it from the global services.
+      const delivered = yield* messaging.send({ as: child.id, to: "parent", text: "configured?" }).pipe(
+        Effect.map((result) => result.delivered),
+        Effect.repeat({
+          until: (result) => result[0]?.delivery === "inbox",
+          times: 50,
+          schedule: Schedule.spaced("20 millis"),
+        }),
+      )
+      expect(delivered).toEqual([{ session: root.id, delivery: "inbox" }])
     }),
   )
 

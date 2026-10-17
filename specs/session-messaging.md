@@ -89,9 +89,10 @@ client end to end (send, unread, topics, chain, semantic and hybrid search, mode
 `messaging` section in `opencode.json` (separator, custom variable, `tiny` tier) takes effect once a location's plugins
 activate.
 
-Known limits: config reaches the global messaging service when a location's plugins activate, so HTTP calls made
-before any location is active use the built-in defaults. Direct messages wake their recipient by default, so the `msg`
-tool tells agents to reply only when an answer is needed (`deliver: "inbox"` or `"none"` avoids waking).
+Known limits: config reaches the global messaging service when a location's plugins activate and whenever an active
+location's `messaging` section changes, so HTTP calls made before any location is active use the built-in defaults.
+Direct messages wake their recipient by default, so the `msg` tool tells agents to reply only when an answer is needed
+(`deliver: "inbox"` or `"none"` avoids waking).
 
 Test-suite note (environment, not this feature): on a machine with the `mcpx` CLI installed, core tests that activate
 the built-in plugins spawn a detached `mcpx daemon` with the isolated test HOME; that daemon starts `codedb mcp`, which

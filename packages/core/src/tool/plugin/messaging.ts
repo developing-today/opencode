@@ -3,9 +3,9 @@ export * as MessagingTools from "./messaging.js"
 import { SystemPart, ToolFailure } from "@opencode/ai"
 import type { Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
-import { Effect, Ref, Schema } from "effect"
+import { Effect, Ref, Schema, Stream } from "effect"
 import type { ConfigMessaging } from "@opencode/schema/config/messaging"
-import { Config } from "../../config.js"
+import { Config, reloadsSections } from "../../config.js"
 import { Messaging } from "../../messaging.js"
 import { MessagingEmbedding } from "../../messaging/embedding.js"
 import { MessagingTemplate } from "../../messaging/template.js"
@@ -205,6 +205,13 @@ export const Plugin = {
       if (previous.embedding !== next.embedding) yield* embedding.configure(value?.embedding)
       return value
     })
+    // An edited messaging section applies at once, also to HTTP clients that never call a tool.
+    // Subscribed before the first read so an edit racing activation is not missed.
+    yield* ctx.event.subscribe().pipe(
+      Stream.filter((event) => reloadsSections(event, ["messaging"])),
+      Stream.runForEach(() => settings()),
+      Effect.forkScoped({ startImmediately: true }),
+    )
     yield* settings()
 
     // Every session starts with the session-start line (by default its creation date, time and
