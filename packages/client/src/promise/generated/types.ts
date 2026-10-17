@@ -1948,7 +1948,16 @@ export type MessagingMessageCreated = {
   metadata?: { [x: string]: any }
   type: "messaging.message.created"
   location?: LocationRef
-  data: { topic: string; seq: number; kind: string; type: string; writer: string; time: number; preview: string }
+  data: {
+    topic: string
+    seq: number
+    kind: string
+    type: string
+    writer: string
+    time: number
+    preview: string
+    inbox?: boolean
+  }
 }
 
 export type SessionStatusUpdated = {
@@ -7241,6 +7250,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7264,6 +7274,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7287,6 +7298,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7310,6 +7322,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7333,6 +7346,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7356,6 +7370,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7379,6 +7394,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7402,6 +7418,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7425,6 +7442,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7448,6 +7466,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7471,6 +7490,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7494,6 +7514,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7517,6 +7538,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7540,6 +7562,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7563,6 +7586,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7586,6 +7610,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7609,11 +7634,36 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
     readonly wait?: number
   }["unread"]
+  readonly inbox?: {
+    readonly as?: string
+    readonly topics?: ReadonlyArray<string>
+    readonly query?: string
+    readonly match?: "exact" | "regex" | "fuzzy" | "semantic" | "hybrid" | "advanced"
+    readonly from?: ReadonlyArray<string>
+    readonly types?: ReadonlyArray<string>
+    readonly kinds?: ReadonlyArray<string>
+    readonly since?: string
+    readonly until?: string
+    readonly after?: number
+    readonly before?: number
+    readonly hidden?: "exclude" | "include" | "only"
+    readonly hiddenBy?: ReadonlyArray<string>
+    readonly hiddenFrom?: ReadonlyArray<string>
+    readonly hiddenSince?: string
+    readonly hiddenUntil?: string
+    readonly unread?: boolean
+    readonly inbox?: boolean
+    readonly limit?: number
+    readonly order?: "asc" | "desc"
+    readonly markRead?: boolean
+    readonly wait?: number
+  }["inbox"]
   readonly limit?: {
     readonly as?: string
     readonly topics?: ReadonlyArray<string>
@@ -7632,6 +7682,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7655,6 +7706,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7678,6 +7730,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean
@@ -7701,6 +7754,7 @@ export type MessagingQueryInput = {
     readonly hiddenSince?: string
     readonly hiddenUntil?: string
     readonly unread?: boolean
+    readonly inbox?: boolean
     readonly limit?: number
     readonly order?: "asc" | "desc"
     readonly markRead?: boolean

@@ -2188,6 +2188,7 @@ export type MessagingQueryInput = {
   readonly hiddenSince?: string | undefined
   readonly hiddenUntil?: string | undefined
   readonly unread?: boolean | undefined
+  readonly inbox?: boolean | undefined
   readonly limit?: number | undefined
   readonly order?: "asc" | "desc" | undefined
   readonly markRead?: boolean | undefined

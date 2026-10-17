@@ -341,7 +341,7 @@ Message search and log search share these `match` modes:
 | `hybrid`   | Fuzzy and semantic rankings fused together (default)  |
 | `advanced` | Hybrid, then reranked by a fast language model        |
 
-`advanced` uses `messaging.search.model`, or the small model of the session's provider. If no embedding model is available, semantic and hybrid searches fall back to fuzzy matching and say so in a note.
+`advanced` uses `messaging.search.model`, or the small model of the searching session's provider. Searches made through the HTTP API, the CLI or a plugin rank the same way; a search by the person uses the small model of the default model's provider. If no embedding model is available, semantic and hybrid searches fall back to fuzzy matching and say so in a note.
 
 New messages are embedded in the background once a model is ready, so searches rarely wait on embedding.
 

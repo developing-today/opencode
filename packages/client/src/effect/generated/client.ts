@@ -1591,6 +1591,7 @@ const EndpointMessagingQuery = (raw: RawClient["server.messaging"]) => (input?: 
         hiddenSince: input?.["hiddenSince"],
         hiddenUntil: input?.["hiddenUntil"],
         unread: input?.["unread"],
+        inbox: input?.["inbox"],
         limit: input?.["limit"],
         order: input?.["order"],
         markRead: input?.["markRead"],

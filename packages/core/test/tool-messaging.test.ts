@@ -216,6 +216,18 @@ describe("MessagingTools", () => {
         "rollout plan for friday",
       ])
       expect(advanced.value.match).toBe("advanced")
+
+      // HTTP, plugin and CLI searches pass no reranker and get the location's.
+      const messaging = yield* Messaging.Service
+      const direct = yield* messaging.query({
+        as: child.id,
+        query: "roll",
+        match: "advanced",
+        hidden: "include",
+        kinds: ["message"],
+      })
+      expect(direct.match).toBe("advanced")
+      expect(direct.messages.map((message) => message.data)).toEqual(["rollback steps", "rollout plan for friday"])
     }),
   )
 

@@ -370,6 +370,13 @@ describe("Messaging delivery", () => {
       expect(unread.messages.map((message) => [message.writer, message.data])).toEqual([
         ["user", "Please also update the docs"],
       ])
+
+      // The inbox holds what reached the person through user topics; a "user" label elsewhere is just a label.
+      yield* messaging.send({ as: tree.child.id, topic: "builds", type: "user", text: "internal" })
+      const inbox = yield* messaging.query({ inbox: true, markRead: false })
+      expect(inbox.messages.map((message) => message.data).toSorted()).toEqual(
+        ["Build is green", "Please also update the docs", "Secret for the user"].toSorted(),
+      )
     }),
   )
 })
@@ -522,6 +529,9 @@ describe("Messaging search and listing", () => {
       // Surrounding whitespace is part of an exact substring.
       expect((yield* search(" order ", { match: "exact" })).data).toEqual(["Lunch order is pizza"])
       expect((yield* search(" deployment", { match: "exact" })).data).toEqual([])
+      // Characters outside the basic plane count once, as the trigram index counts them.
+      yield* messaging.send({ as: tree.sibling.id, topic: "other", text: "ship it 👍👍 today" })
+      expect((yield* search("👍👍", { match: "exact" })).data).toEqual(["ship it 👍👍 today"])
       // Without a local model, semantic and hybrid searches fall back to fuzzy matching and say so.
       const hybrid = yield* search("deploy failure")
       expect(hybrid.match).toBe("fuzzy")

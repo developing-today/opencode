@@ -223,7 +223,8 @@ test.each([40, 120])("messaging notices show user messages and navigate to the s
       type: "synthetic",
       text: '<message topic="plan" seq="2" from="ses_sender" from_title="Worker &lt;a>" time="2026-01-01T00:00:00Z">\nStarting phase two\nDetails follow\n</message>',
       description: "✉ Worker <a> → plan: Starting phase two",
-      metadata: { source: "messaging", topic: "plan", seq: 2, from: sender.id, type: "message" },
+      // A writer may label any message "user"; only an audience marks one sent to the person.
+      metadata: { source: "messaging", topic: "plan", seq: 2, from: sender.id, type: "user" },
       time: { created: 2 },
     },
   ]

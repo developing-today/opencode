@@ -8,7 +8,7 @@ const handler = Effect.fn("cli.msg.inbox")(function* (
 ) {
   // Query newest first so the limit keeps the latest messages, then print newest last.
   const result = yield* request(input, (client, signal) =>
-    client.messaging.query({ types: ["user"], order: "desc", limit: Option.getOrUndefined(input.limit) }, { signal }),
+    client.messaging.query({ inbox: true, order: "desc", limit: Option.getOrUndefined(input.limit) }, { signal }),
   )
   const messages = result.messages.toReversed()
   if (input.format === "json") return print(json({ ...result, messages }))

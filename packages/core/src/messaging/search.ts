@@ -12,31 +12,34 @@ export function words(text: string) {
   return text.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []
 }
 
+// Trigrams count Unicode code points, as the SQLite trigram tokenizer does, so a character outside the basic plane
+// is one character, never two halves of a surrogate pair.
 export function trigrams(text: string): Set<string> {
   const result = new Set<string>()
   for (const word of words(text)) {
-    if (word.length < 3) {
+    const characters = Array.from(word)
+    if (characters.length < 3) {
       result.add(word)
       continue
     }
-    for (let index = 0; index + 3 <= word.length; index++) result.add(word.slice(index, index + 3))
+    for (let index = 0; index + 3 <= characters.length; index++) result.add(characters.slice(index, index + 3).join(""))
   }
   return result
 }
 
 /** An FTS5 query matching any trigram of the query words, or undefined when no word has three characters. */
 export function ftsQuery(query: string) {
-  const grams = Array.from(trigrams(query)).filter((gram) => gram.length === 3)
+  const grams = Array.from(trigrams(query)).filter((gram) => Array.from(gram).length === 3)
   if (grams.length === 0) return undefined
   return grams.map((gram) => `"${gram.replaceAll('"', '""')}"`).join(" OR ")
 }
 
 /**
- * An FTS5 phrase matching the exact (case-insensitive) substring, or undefined when it is too short. Surrounding
- * whitespace is part of the substring, as in the SQL fallback.
+ * An FTS5 phrase matching the exact (case-insensitive) substring, or undefined when it is too short for the
+ * trigram index. Surrounding whitespace is part of the substring, as in the SQL fallback.
  */
 export function ftsPhrase(query: string) {
-  if (query.length < 3 || query.trim() === "") return undefined
+  if (Array.from(query).length < 3 || query.trim() === "") return undefined
   return `"${query.replaceAll('"', '""')}"`
 }
 

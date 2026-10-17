@@ -88,6 +88,13 @@ export interface Interface {
     readonly register: (definition: KindDefinition) => Effect.Effect<void, InvalidError, Scope.Scope>
     readonly list: () => Effect.Effect<ReadonlyArray<KindDefinition>>
   }
+  /**
+   * The reranker advanced searches use when the caller passes none (HTTP, plugins, the CLI). A location that can
+   * reach a language model registers one for the scope of its activation; the latest registration wins.
+   */
+  readonly reranker: {
+    readonly register: (rerank: (viewer: string) => Rerank) => Effect.Effect<void, never, Scope.Scope>
+  }
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Messaging") {}
@@ -123,12 +130,16 @@ const layer = Layer.effect(
     const fts = yield* setupFts(db)
 
     const invalid = (error: MessagingTemplate.TemplateError) => new InvalidError({ message: error.message })
+    const rerankers: Array<(viewer: string) => Rerank> = []
 
-    /** Applies the configured messaging settings when a caller (HTTP, skills) passes none. */
-    const resolveOptions = Effect.fnUntraced(function* (requested: Options | undefined) {
-      if (requested?.config) return requested
-      const config = yield* vars.config()
-      return { ...requested, ...(config ? { config } : {}) }
+    /**
+     * Applies the configured messaging settings when a caller (HTTP, skills) passes none, and for searches the
+     * registered reranker acting for the viewer.
+     */
+    const resolveOptions = Effect.fnUntraced(function* (requested: Options | undefined, viewer?: string) {
+      const rerank = requested?.rerank ?? (viewer === undefined ? undefined : rerankers.at(-1)?.(viewer))
+      const config = requested?.config ?? (yield* vars.config())
+      return { ...requested, ...(config ? { config } : {}), ...(rerank ? { rerank } : {}) }
     })
 
     const scopeFor = (actor: string, options?: Options, args?: Record<string, string>) =>
@@ -485,6 +496,7 @@ const layer = Layer.effect(
           writer: input.writer,
           time: message.time,
           preview: input.data.length > 200 ? `${input.data.slice(0, 197)}...` : input.data,
+          ...(topic.kind === "user" ? { inbox: true } : {}),
         },
         { global: true },
       )
@@ -619,7 +631,7 @@ const layer = Layer.effect(
     })
 
     const query: Interface["query"] = Effect.fn("Messaging.query")(function* (input, requested) {
-      const options = yield* resolveOptions(requested)
+      const options = yield* resolveOptions(requested, input.as ?? "user")
       if (!input.unread || !input.wait || input.wait <= 0) return yield* read(input, options)
       const seconds = Math.min(input.wait, MAX_WAIT_SECONDS)
       const viewer = input.as ?? "user"
@@ -752,6 +764,8 @@ const layer = Layer.effect(
       }
       if (input.types && input.types.length > 0) conditions.push(inArray(m.type, Array.from(input.types)))
       if (input.kinds && input.kinds.length > 0) conditions.push(inArray(m.kind, Array.from(input.kinds)))
+      // The type is a free label any writer sets; a message reaches the person through a user topic.
+      if (input.inbox) conditions.push(sql`${m.topic_id} IN (SELECT t.id FROM messaging_topic t WHERE t.kind = 'user')`)
       if (input.unread) {
         conditions.push(sql`${m.writer} <> ${viewer}`)
         conditions.push(
@@ -1745,7 +1759,7 @@ const layer = Layer.effect(
     })
 
     const log: Interface["log"] = Effect.fn("Messaging.log")(function* (input, requested) {
-      const options = yield* resolveOptions(requested)
+      const options = yield* resolveOptions(requested, input.as ?? "user")
       const viewer = input.as ?? "user"
       const now = Date.now()
       const ids = Array.from(yield* MessagingGraph.expand(db, input.sessions, viewer)).filter((id) =>
@@ -1908,6 +1922,17 @@ const layer = Layer.effect(
           yield* Effect.addFinalizer(() => Effect.sync(() => kinds.delete(definition.name)))
         }),
         list: () => Effect.sync(() => Array.from(kinds.values())),
+      },
+      reranker: {
+        register: Effect.fn("Messaging.reranker.register")(function* (rerank: (viewer: string) => Rerank) {
+          rerankers.push(rerank)
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              const index = rerankers.lastIndexOf(rerank)
+              if (index !== -1) rerankers.splice(index, 1)
+            }),
+          )
+        }),
       },
     })
 

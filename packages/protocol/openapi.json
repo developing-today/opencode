@@ -19027,6 +19027,9 @@
           "unread": {
             "type": "boolean"
           },
+          "inbox": {
+            "type": "boolean"
+          },
           "limit": {
             "type": "integer",
             "exclusiveMinimum": 0

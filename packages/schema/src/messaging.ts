@@ -178,6 +178,9 @@ export const Query = Schema.Struct({
   hiddenSince: Schema.String.pipe(optional).annotate({ description: "Re-include only messages hidden since then" }),
   hiddenUntil: Schema.String.pipe(optional).annotate({ description: "Re-include only messages hidden until then" }),
   unread: Schema.Boolean.pipe(optional),
+  inbox: Schema.Boolean.pipe(optional).annotate({
+    description: "Only messages addressed to the person: those written to sessions' user topics",
+  }),
   limit: PositiveInt.pipe(optional),
   order: Order.pipe(optional),
   markRead: Schema.Boolean.pipe(optional).annotate({
@@ -510,6 +513,7 @@ const Created = ephemeral({
     writer: Schema.String,
     time: Schema.Number,
     preview: Schema.String,
+    inbox: Schema.Boolean.pipe(optional).annotate({ description: "Addressed to the person: written to a user topic" }),
   },
 })
 

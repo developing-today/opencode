@@ -11,7 +11,7 @@ import { MessagingEmbedding } from "../../messaging/embedding.js"
 import { MessagingTemplate } from "../../messaging/template.js"
 import { MessagingVars } from "../../messaging/vars.js"
 import { Model } from "../../model.js"
-import type { SessionSchema } from "../../session/schema.js"
+import { SessionSchema } from "../../session/schema.js"
 
 const TOPIC =
   "Topic: a preset (private, readonly, readwrite, tasks, family, children, tree, root, user, global, roots, workdir, project, git, dm@<session>, child_link@<child>, parent_link), preset@<session> for another session's, a {var} template, or any raw name (=name forces raw). topics({ mode: 'presets' }) lists presets and variables."
@@ -229,10 +229,10 @@ export const Plugin = {
     yield* ctx.session.hook("generate", sessionStart)
 
     const rerank =
-      (sessionID: SessionSchema.ID, configured: ConfigMessaging.Info | undefined): Messaging.Rerank =>
+      (viewer: string, configured: ConfigMessaging.Info | undefined): Messaging.Rerank =>
       (query, candidates) =>
         Effect.gen(function* () {
-          const model = yield* rerankModel(sessionID, configured)
+          const model = yield* rerankModel(viewer, configured)
           const prompt = [
             "Rank the items by how well they answer or match the search query, by meaning.",
             "Reply with only a JSON array of the ids of relevant items, most relevant first. Omit irrelevant items.",
@@ -248,17 +248,28 @@ export const Plugin = {
           return parsed.value.map(String)
         }).pipe(Effect.orElseSucceed(() => candidates.map((item) => item.key)))
 
-    const rerankModel = Effect.fnUntraced(function* (
-      sessionID: SessionSchema.ID,
-      configured: ConfigMessaging.Info | undefined,
-    ) {
+    // The configured model, else the small model of the viewer's provider: the session's own, or the default
+    // model's when the person searches.
+    const rerankModel = Effect.fnUntraced(function* (viewer: string, configured: ConfigMessaging.Info | undefined) {
       const named = configured?.search?.model
       if (named) return yield* Effect.try(() => Model.Ref.parse(named)).pipe(Effect.orElseSucceed(() => undefined))
-      const session = yield* ctx.session.get({ sessionID })
-      if (!session.model) return undefined
-      const small = yield* models.small(session.model.providerID)
-      return small ? Model.Ref.make({ providerID: small.providerID, id: small.id }) : session.model
+      const base = viewer.startsWith("ses")
+        ? (yield* ctx.session.get({ sessionID: SessionSchema.ID.make(viewer) })).model
+        : yield* models
+            .default()
+            .pipe(
+              Effect.map((info) => (info ? Model.Ref.make({ providerID: info.providerID, id: info.id }) : undefined)),
+            )
+      if (!base) return undefined
+      const small = yield* models.small(base.providerID)
+      return small ? Model.Ref.make({ providerID: small.providerID, id: small.id }) : base
     })
+
+    // Searches from HTTP, plugins and the CLI pass no reranker; they get this location's.
+    yield* messaging.reranker.register(
+      (viewer) => (query, candidates) =>
+        settings().pipe(Effect.flatMap((configured) => rerank(viewer, configured)(query, candidates))),
+    )
 
     const options = Effect.fnUntraced(function* (sessionID: SessionSchema.ID) {
       const configured = yield* settings()
