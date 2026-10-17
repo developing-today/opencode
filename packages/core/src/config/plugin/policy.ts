@@ -16,7 +16,7 @@ export const Plugin = define({
     const reload = State.batch(
       Effect.all([ctx.provider.reload(), ctx.mcp.reload(), ctx.skill.reload()], { discard: true }),
     )
-    const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, ["experimental"], reload)
+    const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, ["policies", "experimental"], reload)
     yield* managed.changes().pipe(
       Stream.runForEach(() => reload),
       Effect.forkScoped({ startImmediately: true }),

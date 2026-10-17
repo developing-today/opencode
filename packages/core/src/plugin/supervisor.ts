@@ -223,7 +223,11 @@ export const layer = Layer.effectDiscard(
     yield* watch(Stream.fromEffectRepeat(Effect.sleep("24 hours")))
     yield* watch(
       bus.subscribe([Event.Updated, SdkPlugins.Updated]).pipe(
-        Stream.filter((event) => event.type !== "config.updated" || reloadsSections(event, ["plugins"])),
+        // Plugin loading consults file policies (top-level `policies`, formerly
+        // `experimental.policies`), so a policy-only edit must reload plugins too.
+        Stream.filter(
+          (event) => event.type !== "config.updated" || reloadsSections(event, ["plugins", "policies", "experimental"]),
+        ),
       ),
     )
     yield* watch(

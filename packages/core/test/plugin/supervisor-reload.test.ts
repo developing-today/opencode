@@ -11,6 +11,7 @@ import { Global } from "@opencode/util/global"
 import { Npm } from "@opencode/util/npm"
 import { Bus } from "@opencode/core/bus"
 import { Command } from "@opencode/core/command"
+import { Config } from "@opencode/core/config"
 import { Database } from "@opencode/core/database/database"
 import { Watcher } from "@opencode/core/filesystem/watcher"
 import { ManagedPolicy } from "@opencode/core/managed-policy"
@@ -364,12 +365,15 @@ it.live("applies organization integration changes to running external plugins", 
       const plugins = yield* Plugin.Service
       const commands = yield* Command.Service
       const managed = yield* ManagedPolicy.Service
-      const bus = yield* Bus.Service
+      const config = yield* Config.Service
       yield* plugins.awaitActivation
       expect(yield* commands.get("policy-greet")).toBeUndefined()
       expect(yield* Effect.promise(() => Bun.file(entered).exists())).toBe(false)
       yield* Effect.promise(() => Bun.write(configuration, JSON.stringify({ plugins: [root] })))
-      yield* bus.publish(Event.Updated, { sections: ["*"] })
+      // Drive the real reload path: Config re-reads the file, refreshes its
+      // cached entries, and publishes config.updated with the changed sections.
+      // Publishing the bus event by hand left the cached deny policy in place.
+      yield* config.reload()
       yield* commands.get("policy-greet").pipe(
         Effect.flatMap((command) => (command ? Effect.void : Effect.fail("pending"))),
         Effect.retry({ times: 200, schedule: Schedule.spaced("10 millis") }),
