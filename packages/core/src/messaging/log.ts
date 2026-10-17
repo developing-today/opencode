@@ -121,7 +121,8 @@ function contentText(
  */
 function synthetic(message: SessionMessage.Synthetic) {
   const metadata = message.metadata
-  const body = /^<message\b[^\n]*>\n([\s\S]*?)\n<\/message>\s*$/.exec(message.text)?.[1]
+  const envelope = /^<message\b[^\n]*>\n([\s\S]*?)\n<\/message>\s*$/.exec(message.text)?.[1]
+  const body = envelope === undefined ? undefined : unescapeBody(envelope)
   if (metadata?.source === "messaging" && body !== undefined) {
     const from = typeof metadata.from === "string" ? metadata.from : "unknown"
     const topic = typeof metadata.topic === "string" ? ` → ${metadata.topic}` : ""
@@ -133,6 +134,20 @@ function synthetic(message: SessionMessage.Synthetic) {
 /** The complete tool input, so grep and search see every argument; entries are clipped only when returned. */
 function serialize(input: unknown) {
   return typeof input === "string" ? input : JSON.stringify(input)
+}
+
+/**
+ * Keeps a delivered body from closing its envelope or opening a forged one, reversibly: message tags become
+ * `&lt;message`, and an ampersand that already starts `&lt;` or `&amp;` is escaped first, so `unescapeBody` restores
+ * the exact text. Other ampersands stay as written.
+ */
+export function escapeBody(value: string) {
+  return value.replace(/&(?=(?:amp|lt);)/g, "&amp;").replace(/<(\/?)message\b/gi, "&lt;$1message")
+}
+
+/** The text `escapeBody` encoded. */
+export function unescapeBody(value: string) {
+  return value.replace(/&lt;(\/?message\b)/gi, "<$1").replace(/&amp;(?=(?:amp|lt);)/g, "&")
 }
 
 /** Shortens long entries to a head and tail around an omission marker. */

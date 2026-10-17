@@ -536,7 +536,7 @@ const layer = Layer.effect(
         `topic="${escapeAttribute(resolved.name)}"`,
         `seq="${message.seq}"`,
       ]
-      const text = `<message ${attributes.join(" ")}>\n${escapeBody(input.text)}\n</message>`
+      const text = `<message ${attributes.join(" ")}>\n${MessagingLog.escapeBody(input.text)}\n</message>`
       if (mode === "wake") {
         yield* sessions.synthetic({ sessionID: SessionSchema.ID.make(root.id), text, description, metadata }).pipe(
           Effect.catch((error) => Effect.logWarning("messaging user delivery failed", { error })),
@@ -1032,10 +1032,11 @@ const layer = Layer.effect(
             .all()
             .pipe(Effect.orDie),
         )
+        // A vector of other dimensions came from the same model under other settings; it is embedded again.
         const vectors = new Map<string, Float32Array>(
           cached
             .flat()
-            .filter((row) => hashes.get(row.key) === row.hash)
+            .filter((row) => hashes.get(row.key) === row.hash && row.dimensions === vector.length)
             .map((row) => [row.key, MessagingSearch.fromBytes(row.vector)]),
         )
         const missing = rows.filter((row) => !vectors.has(keyOf(row))).slice(0, SEMANTIC_EMBED_LIMIT)
@@ -1063,6 +1064,7 @@ const layer = Layer.effect(
                   target: [MessagingVectorTable.source, MessagingVectorTable.key, MessagingVectorTable.model],
                   set: {
                     hash: hashes.get(keyOf(row)) ?? "",
+                    dimensions: value.length,
                     vector: MessagingSearch.toBytes(value),
                     time_created: now,
                   },
@@ -1773,7 +1775,10 @@ const layer = Layer.effect(
             return yield* new NotFoundError({ message: `Session not found: ${id}` })
           const messages =
             input.scope === "context"
-              ? yield* SessionHistory.load(db, SessionSchema.ID.make(id), "latest").pipe(Effect.orDie)
+              ? // What the model sees: user-only notices never reach it.
+                (yield* SessionHistory.load(db, SessionSchema.ID.make(id), "latest").pipe(Effect.orDie)).filter(
+                  (message) => !(message.type === "synthetic" && message.metadata?.audience === "user"),
+                )
               : yield* db
                   .select()
                   .from(SessionMessageTable)
@@ -1961,7 +1966,9 @@ const indexer = (
           .where(
             and(
               notInArray(MessagingMessageTable.kind, ["delete", "restore", "settings"]),
-              sql`NOT EXISTS (SELECT 1 FROM messaging_vector v WHERE v.source = 'message' AND v.model = ${model.id} AND v.key = CAST(${MessagingMessageTable.id} AS TEXT))`,
+              model.dimensions === undefined
+                ? sql`NOT EXISTS (SELECT 1 FROM messaging_vector v WHERE v.source = 'message' AND v.model = ${model.id} AND v.key = CAST(${MessagingMessageTable.id} AS TEXT))`
+                : sql`NOT EXISTS (SELECT 1 FROM messaging_vector v WHERE v.source = 'message' AND v.model = ${model.id} AND v.key = CAST(${MessagingMessageTable.id} AS TEXT) AND v.dimensions = ${model.dimensions})`,
             ),
           )
           .orderBy(desc(MessagingMessageTable.id))
@@ -1990,7 +1997,15 @@ const indexer = (
                 vector: MessagingSearch.toBytes(vector),
                 time_created: now,
               })
-              .onConflictDoNothing()
+              .onConflictDoUpdate({
+                target: [MessagingVectorTable.source, MessagingVectorTable.key, MessagingVectorTable.model],
+                set: {
+                  hash: MessagingSearch.hash(row.data),
+                  dimensions: vector.length,
+                  vector: MessagingSearch.toBytes(vector),
+                  time_created: now,
+                },
+              })
               .run()
               .pipe(Effect.orDie, Effect.asVoid)
           },
@@ -2137,18 +2152,13 @@ function render(
       ? `${message.data.slice(0, DELIVERED_CHARS)}\n…[${message.data.length - DELIVERED_CHARS} more characters; read ${topic}#${message.seq} for the rest]`
       : message.data
   return {
-    text: `<message ${attributes.join(" ")}>\n${escapeBody(body)}\n</message>`,
+    text: `<message ${attributes.join(" ")}>\n${MessagingLog.escapeBody(body)}\n</message>`,
     description: `✉ ${message.title || message.writer} → ${topic}: ${firstLine(message.data)}`,
   }
 }
 
 function escapeAttribute(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;")
-}
-
-/** Keeps a body from closing its envelope or opening a forged one. */
-function escapeBody(value: string) {
-  return value.replace(/<(\/?)message\b/gi, "&lt;$1message")
 }
 
 /**

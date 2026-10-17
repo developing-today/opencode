@@ -87,6 +87,21 @@ describe("MessagingLog.entries", () => {
     expect(entry?.text).toContain('"newString":"needle"')
   })
 
+  test("decodes a delivered body back to the text as written", () => {
+    const written = 'Quote: <message from="x"> and the literal &lt;message, &amp;lt; and R&D'
+    const [delivered] = decode([
+      {
+        id: "msg_7",
+        type: "synthetic",
+        time: { created: 7_000 },
+        text: `<message topic="t" seq="1" from="ses_b">\n${MessagingLog.escapeBody(written)}\n</message>`,
+        metadata: { source: "messaging", from: "ses_b", topic: "t" },
+      },
+    ])
+    const [entry] = MessagingLog.entries("ses_a", delivered ? [delivered] : [], new Set(["synthetic"]))
+    expect(entry?.text).toBe(written)
+  })
+
   test("clips long entries around an omission marker", () => {
     const clipped = MessagingLog.clip("a".repeat(500) + "b".repeat(500), 100)
     expect(clipped.length).toBeLessThan(140)

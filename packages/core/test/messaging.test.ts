@@ -8,6 +8,8 @@ import { Database } from "@opencode/core/database/database"
 import { Location } from "@opencode/core/location"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
 import { Messaging } from "@opencode/core/messaging"
+import { MessagingEmbedding } from "@opencode/core/messaging/embedding"
+import { MessagingVectorTable } from "@opencode/core/messaging/sql"
 import { MessagingTemplate } from "@opencode/core/messaging/template"
 import { MessagingVars } from "@opencode/core/messaging/vars"
 import { Project } from "@opencode/core/project"
@@ -31,6 +33,7 @@ const it = testEffect(
       SessionStore.node,
       Session.node,
       MessagingVars.node,
+      MessagingEmbedding.node,
       Messaging.node,
     ]),
     [
@@ -628,6 +631,76 @@ describe("Messaging sessions", () => {
         expect.arrayContaining([tree.child.id, tree.grandchild.id]),
       )
       expect((yield* messaging.log({ sessions: [tree.child.id], include: ["output"] })).entries).toEqual([])
+
+      // A notice only the person sees is in the transcript but not in what the model sees.
+      yield* bus.publish(SessionEvent.Synthetic, {
+        sessionID: tree.child.id,
+        text: "only for the person",
+        metadata: { source: "messaging", audience: "user", topic: "x", seq: 1, from: tree.grandchild.id },
+      })
+      const find = (scope: "all" | "context") =>
+        messaging
+          .log({ sessions: [tree.child.id], op: "grep", query: "only for", scope })
+          .pipe(Effect.map((log) => log.entries.map((entry) => entry.text)))
+      expect(yield* find("all")).toEqual(["only for the person"])
+      expect(yield* find("context")).toEqual([])
+    }),
+  )
+})
+
+describe("Messaging vector cache", () => {
+  it.live("embeds again when the same model now answers with other dimensions", () =>
+    Effect.gen(function* () {
+      const state = { dimensions: 3 }
+      const server = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          Bun.serve({
+            port: 0,
+            fetch: async (request) => {
+              const body = (await request.json()) as { input: string[] }
+              return Response.json({
+                data: body.input.map((_, index) => ({
+                  index,
+                  embedding: Array.from({ length: state.dimensions }, (_, axis) => (axis === 0 ? 1 : 0.1)),
+                })),
+              })
+            },
+          }),
+        ),
+        (fake) => Effect.promise(() => fake.stop(true)),
+      )
+      const tree = yield* family
+      const messaging = yield* Messaging.Service
+      const embedding = yield* MessagingEmbedding.Service
+      const db = (yield* Database.Service).db
+      const remote = (dimensions?: number) =>
+        embedding.configure({
+          tier: "off",
+          remote: { url: `http://127.0.0.1:${server.port}/v1`, model: "fake", ...(dimensions ? { dimensions } : {}) },
+        })
+      const dimensions = () =>
+        db
+          .select({ dimensions: MessagingVectorTable.dimensions })
+          .from(MessagingVectorTable)
+          .all()
+          .pipe(
+            Effect.orDie,
+            Effect.map((rows) => Array.from(new Set(rows.map((row) => row.dimensions)))),
+          )
+      const search = messaging
+        .query({ query: "cache", match: "semantic", markRead: false })
+        .pipe(Effect.map((result) => result.messages.map((message) => message.data)))
+
+      yield* remote()
+      yield* messaging.send({ as: tree.child.id, topic: "notes", text: "vector cache entry" })
+      expect(yield* search).toEqual(["vector cache entry"])
+      expect(yield* dimensions()).toEqual([3])
+
+      // Same model name, other dimensions: the cached vector no longer fits the query vector.
+      state.dimensions = 4
+      yield* remote(4)
+      expect(yield* search).toEqual(["vector cache entry"])
+      expect(yield* dimensions()).toEqual([4])
     }),
   )
 })

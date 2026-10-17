@@ -2038,12 +2038,15 @@ function SessionMessagingNotice(props: { message: Extract<SessionMessageInfo, { 
       .replaceAll("&lt;", "<")
       .replaceAll("&amp;", "&")
   const sender = () => title() || from() || "unknown"
-  // The body escapes only message tags, so a quoted envelope cannot close or forge the real one.
+  // The body escapes message tags, and the ampersands that start `&lt;` or `&amp;`, so a quoted envelope cannot
+  // close or forge the real one; decoding restores the text as written.
   const body = () =>
     (
       props.message.text.match(/^<message\b(?:[^>"]|"[^"]*")*>\n?([\s\S]*?)\n?<\/message>\s*$/)?.[1] ??
       props.message.text
-    ).replace(/&lt;(\/?message\b)/gi, "<$1")
+    )
+      .replace(/&lt;(\/?message\b)/gi, "<$1")
+      .replace(/&amp;(?=(?:amp|lt);)/g, "&")
   const senderID = () => (from()?.startsWith("ses") ? from() : undefined)
   const heading = () => `✉ ${sender()} → ${stringValue(metadata()?.topic) ?? "message"}`
   const suffix = () =>
