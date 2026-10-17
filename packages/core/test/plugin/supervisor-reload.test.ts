@@ -393,3 +393,75 @@ it.live("applies organization integration changes to running external plugins", 
     )
   }),
 )
+
+describe("PluginSupervisor reload after an entrypoint load failure", () => {
+  const recovered = (plugins: Plugin.Interface) =>
+    plugins.list().pipe(
+      Effect.flatMap((inventory) => {
+        const local = inventory.filter((plugin) => plugin.source.type === "local")
+        return local.some((plugin) => plugin.id === "greeter" && plugin.state.status === "active") &&
+          !local.some((plugin) => plugin.state.status === "failed")
+          ? Effect.void
+          : Effect.fail("activation pending" as const)
+      }),
+      Effect.retry({ times: 80, schedule: Schedule.spaced("25 millis") }),
+    )
+
+  it.live("recovers a discovered plugin fixed in place after a decode failure", () =>
+    Effect.gen(function* () {
+      const directory = yield* tmpdirScoped()
+      const file = path.join(directory.path, ".opencode/plugins/greeter.ts")
+      yield* Effect.promise(() => Bun.write(file, `export default async () => ({})`))
+      const watcher = yield* Watcher.Test
+      const locations = yield* LocationServiceMap.Service
+      yield* Effect.gen(function* () {
+        const plugins = yield* Plugin.Service
+        const commands = yield* Command.Service
+        yield* plugins.awaitActivation
+        const failure = yield* failed(plugins)
+        expect(failure.state).toMatchObject({
+          status: "failed",
+          error: "Plugin must export a default definition with an id and an effect or setup function.",
+        })
+        yield* Effect.promise(() => Bun.write(file, greeter("greet-fixed")))
+        yield* watcher.emit({ path: file, type: "update" })
+        yield* recovered(plugins)
+        expect(yield* commands.get("greet-fixed")).toBeDefined()
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(directory.path) }))),
+      )
+    }),
+  )
+
+  it.live("recovers a discovered plugin replaced by a symlink to a working plugin after a decode failure", () =>
+    Effect.gen(function* () {
+      const directory = yield* tmpdirScoped()
+      const file = path.join(directory.path, ".opencode/plugins/greeter.ts")
+      const target = path.join(directory.path, "elsewhere/greeter.ts")
+      yield* Effect.promise(async () => {
+        await Bun.write(file, `export default async () => ({})`)
+        await Bun.write(target, greeter("greet-good"))
+      })
+      const watcher = yield* Watcher.Test
+      const locations = yield* LocationServiceMap.Service
+      yield* Effect.gen(function* () {
+        const plugins = yield* Plugin.Service
+        const commands = yield* Command.Service
+        yield* plugins.awaitActivation
+        yield* failed(plugins)
+        // The swap reported in #18: the failing file is replaced by a symlink to the working source.
+        yield* Effect.promise(async () => {
+          await fs.rm(file)
+          await fs.symlink(target, file)
+        })
+        yield* watcher.emit({ path: file, type: "update" })
+        yield* recovered(plugins)
+        expect(yield* commands.get("greet-good")).toBeDefined()
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(directory.path) }))),
+      )
+    }),
+  )
+})
