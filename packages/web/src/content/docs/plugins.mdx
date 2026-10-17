@@ -66,8 +66,29 @@ Duplicate npm packages with the same name and version are loaded once. However, 
 
 ## Create a plugin
 
-A plugin is a **JavaScript/TypeScript module** that exports one or more plugin
-functions. Each function receives a context object and returns a hooks object.
+A plugin is a **JavaScript/TypeScript module** that exports a default plugin
+definition with an `id` and a `setup` function (or, for Effect-flavored plugins,
+an `effect` function). `setup` receives a context object and registers hooks
+imperatively on it.
+
+```ts title=".opencode/plugins/my-plugin.ts"
+import { Plugin } from "@opencode/plugin"
+
+export default Plugin.define({
+  id: "my-plugin",
+  setup: async (ctx) => {
+    await ctx.shell.hook("create.before", (input) => {
+      input.env.MY_PLUGIN_LOADED = "1"
+    })
+  },
+})
+```
+
+The loader rejects any other shape with
+`Plugin must export a default definition with an id and an effect or setup function.`
+That includes the v1 shape of named async plugin functions
+(`export const MyPlugin = async (ctx) => ({ ...hooks })`) — it will fail on
+every load, so don't write new plugins that way.
 
 ---
 
@@ -86,122 +107,225 @@ Local plugins and custom tools can use external npm packages. Add a `package.jso
 OpenCode runs `bun install` at startup to install these. Your plugins and tools can then import them.
 
 ```ts title=".opencode/plugins/my-plugin.ts"
+import { Plugin } from "@opencode/plugin"
 import { escape } from "shescape"
 
-export const MyPlugin = async (ctx) => {
-  return {
-    "tool.execute.before": async (input, output) => {
-      if (input.tool === "bash") {
-        output.args.command = escape(output.args.command)
+export default Plugin.define({
+  id: "my-plugin",
+  setup: async (ctx) => {
+    await ctx.tool.hook("execute.before", (input) => {
+      if (input.tool === "shell" && typeof input.input === "object" && input.input !== null) {
+        const args = input.input as { command?: string }
+        if (args.command) args.command = escape(args.command)
       }
-    },
-  }
-}
+    })
+  },
+})
 ```
 
 ---
 
 ### Basic structure
 
-```js title=".opencode/plugins/example.js"
-export const MyPlugin = async ({ project, client, $, directory, worktree }) => {
-  console.log("Plugin initialized!")
+```ts title=".opencode/plugins/example.ts"
+import { Plugin } from "@opencode/plugin"
 
-  return {
-    // Hook implementations go here
-  }
-}
+export default Plugin.define({
+  id: "example",
+  setup: async (ctx) => {
+    console.log("Plugin initialized!")
+    // Register hooks, transforms, and subscriptions here.
+    return () => {
+      // Optional cleanup: runs when the plugin is unloaded or replaced.
+    }
+  },
+})
 ```
 
-The plugin function receives:
+Every plugin needs a unique `id`. `setup` may be sync or async and may return
+an optional cleanup function. If you use the Effect API instead, the shape is
+`export default Plugin.define({ id, effect: (ctx) => Effect.gen(...) })` from
+`@opencode/plugin/effect`.
 
-- `project`: The current project information.
-- `directory`: The current working directory.
-- `worktree`: The git worktree path.
-- `client`: An opencode SDK client for interacting with the AI.
-- `$`: Bun's [shell API](https://bun.com/docs/runtime/shell) for executing commands.
+The setup context gives you the plugin's world:
+
+- `ctx.app`: app information for the running instance.
+- `ctx.location`: where the plugin runs — `directory`, `project` (id, directory,
+  canonical), and optional `workspaceID`.
+- `ctx.options`: configuration supplied for the plugin in the config file.
+- Hook domains: `shell.hook`, `tool.hook` / `tool.transform`, `session.hook`,
+  `agent` / `command` / `model` / `provider` / `skill` / `mcp` / `websearch`
+  `.transform`, and many more (see below).
+- `ctx.event.subscribe()`: an async iterator of server events
+  (see [Events](#events)).
 
 ---
 
 ### TypeScript support
 
-For TypeScript plugins, you can import types from the plugin package:
+Import `Plugin` from the plugin package for the typed `define` helper:
 
-```ts title="my-plugin.ts" {1}
-import type { Plugin } from "@opencode-ai/plugin"
+```ts title="my-plugin.ts" {1,3}
+import { Plugin } from "@opencode/plugin"
 
-export const MyPlugin: Plugin = async ({ project, client, $, directory, worktree }) => {
-  return {
-    // Type-safe hook implementations
-  }
-}
+export default Plugin.define({
+  id: "my-plugin",
+  setup: async (ctx) => {
+    // ctx is fully typed: hooks, transforms, and event payloads included.
+  },
+})
 ```
+
+### Runtime hooks
+
+Runtime hooks intercept live operations. Register them imperatively inside
+`setup`:
+
+```ts
+export default Plugin.define({
+  id: "my-plugin",
+  setup: async (ctx) => {
+    // Mutate shell creation before it runs: command, cwd, timeout, shell, env.
+    await ctx.shell.hook("create.before", (input) => {
+      input.env.MY_API_KEY = "secret"
+    })
+
+    // Observe or mutate tool executions. `input.input` is the tool's input
+    // and is mutable; assign a repaired value to change it.
+    await ctx.tool.hook("execute.before", (input) => {
+      if (input.tool === "shell") {
+        input.input = { ...(input.input as object), timeout: 30_000 }
+      }
+    })
+
+    // Mutate the session context before it reaches the provider.
+    await ctx.session.hook("context", (input) => {
+      input.tools.read.description = "Read a file using narrow line ranges."
+      delete input.tools.write
+    })
+
+    // Other session hooks: "prompt", "compaction", "generate", "title",
+    // "retry", "model.request", "http.request", "http.response".
+  },
+})
+```
+
+Each `hook()` call returns a `Registration` whose `dispose()` removes it early.
+Hook names that don't exist on the domain's hook spec are a type error.
+
+### Transform hooks
+
+Transform hooks contribute to stateful domains through a synchronous editor.
+Load any async data first, then register the transform:
+
+```ts
+import { Schema } from "effect"
+
+await ctx.tool.transform((tools) => {
+  tools.add({
+    name: "echo",
+    description: "Echo text",
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ text: Schema.String }),
+    execute: async ({ text }) => ({ output: { text }, content: text }),
+  })
+})
+```
+
+Available transform domains: `agent`, `command`, `integration`, `mcp`,
+`model`, `provider`, `reference`, `skill`, `tool`, `vcs`, `websearch`.
+When the captured data changes, call the domain's `reload()`
+(`ctx.tool.reload()`) to rerun its transforms.
+
+### v1 → v2 renames
+
+The v1 plugin shape (named functions returning hook objects) is not loaded by
+v2. Along with it, several names changed:
+
+| v1                                              | v2                                                                  |
+| ----------------------------------------------- | ------------------------------------------------------------------- |
+| `bash` tool                                     | `shell` tool                                                        |
+| `task` tool                                     | `subagent` tool                                                     |
+| `event: async ({ event }) => ...` returned hook | `ctx.event.subscribe()` async iterator                              |
+| `message.updated` event                         | `session.message.content.updated`                                   |
+| `session.idle` event                            | `session.status` (deprecated alias; check `status.type === "idle"`) |
 
 ---
 
 ### Events
 
-Plugins can subscribe to events as seen below in the Examples section. Here is a list of the different events available.
+Subscribe with `ctx.event.subscribe()`, which yields the server's event stream:
 
-#### Command Events
+```ts
+for await (const event of ctx.event.subscribe()) {
+  if (event.type === "session.status" && event.data.status.type === "idle") {
+    // A session just went idle.
+  }
+}
+```
 
-- `command.executed`
+The events plugins can observe, grouped by area:
 
-#### File Events
+#### Session Events
 
-- `file.edited`
-- `file.watcher.updated`
+- `session.created`, `session.deleted`, `session.renamed`, `session.moved`,
+  `session.forked`, `session.viewed`, `session.compacted`
+- `session.status` (idle/busy/retry; the deprecated `session.idle` alias is still emitted)
+- `session.execution.started`, `session.execution.succeeded`,
+  `session.execution.failed`, `session.execution.interrupted`
+- `session.inbox.enqueued`, `session.inbox.delivered`,
+  `session.inbox.cancelled`, `session.inbox.delivery.changed`
+- `session.retry.scheduled`, `session.permissions`
+- `session.model.selected`, `session.agent.selected`
+- `session.text.started`, `session.text.delta`, `session.text.ended`
+- `session.reasoning.started`, `session.reasoning.delta`, `session.reasoning.ended`
+- `session.tool.called`, `session.tool.input.started`, `session.tool.input.delta`,
+  `session.tool.input.ended`, `session.tool.progress`, `session.tool.success`,
+  `session.tool.failed`
+- `session.step.started`, `session.step.streamed`, `session.step.ended`,
+  `session.step.failed`
+- `session.shell.started`, `session.shell.ended`
+- `session.message.content.updated`, `session.metadata.updated`,
+  `session.instructions.updated`
+- `session.usage.recorded`, `session.usage.updated`
+- `session.compaction.started`, `session.compaction.delta`,
+  `session.compaction.ended`, `session.compaction.failed`
+- `session.synthetic`
 
-#### Installation Events
+#### Shell Events
 
-- `installation.updated`
-
-#### LSP Events
-
-- `lsp.client.diagnostics`
-- `lsp.updated`
-
-#### Message Events
-
-- `message.part.removed`
-- `message.part.updated`
-- `message.removed`
-- `message.updated`
+- `shell.created`, `shell.exited`, `shell.deleted`
 
 #### Permission Events
 
 - `permission.asked`
 - `permission.replied`
 
+#### Registry & Config Events
+
+- `config.updated`, `agent.updated`, `model.updated`, `provider.updated`,
+  `command.updated`, `skill.updated`, `project.updated`, `integration.updated`
+- `mcp.tools.changed`, `mcp.status.changed`, `mcp.resources.changed`
+- `credential.updated`, `credential.switched`
+- `filesystem.changed`, `reference.updated`, `websearch.updated`,
+  `vcs.branch.updated`, `lsp.updated`
+- `worktree.created`, `worktree.updated`, `worktree.ready`, `worktree.failed`,
+  `worktree.resolved`
+- `workspace.ready`, `workspace.failed`, `workspace.status`
+- `installation.updated`, `installation.update-available`, `models-dev.refreshed`
+- `form.created`, `form.replied`, `form.cancelled`
+- `plugin.updated`, `messaging.message.created`
+
 #### Server Events
 
-- `server.connected`
-
-#### Session Events
-
-- `session.created`
-- `session.compacted`
-- `session.deleted`
-- `session.diff`
-- `session.error`
-- `session.idle`
-- `session.status`
-- `session.updated`
-
-#### Shell Events
-
-- `shell.env`
-
-#### Tool Events
-
-- `tool.execute.after`
-- `tool.execute.before`
+- `server.connected`, `location.shutdown`, `global.disposed`
 
 #### TUI Events
 
 - `tui.prompt.append`
 - `tui.command.execute`
 - `tui.toast.show`
+- `tui.session.select`
 
 ---
 
@@ -213,93 +337,116 @@ Here are some examples of plugins you can use to extend opencode.
 
 ### Send notifications
 
-Send notifications when certain events occur:
+Subscribe to the event stream and react when a session goes idle:
 
-```js title=".opencode/plugins/notification.js"
-export const NotificationPlugin = async ({ project, client, $, directory, worktree }) => {
-  return {
-    event: async ({ event }) => {
-      // Send notification on session completion
-      if (event.type === "session.idle") {
+```ts title=".opencode/plugins/notification.ts"
+import { Plugin } from "@opencode/plugin"
+import { $ } from "bun"
+
+export default Plugin.define({
+  id: "notification",
+  setup: async (ctx) => {
+    for await (const event of ctx.event.subscribe()) {
+      if (event.type === "session.status" && event.data.status.type === "idle") {
         await $`osascript -e 'display notification "Session completed!" with title "opencode"'`
       }
-    },
-  }
-}
+    }
+  },
+})
 ```
+
+:::note
+`session.idle` still exists but is deprecated — listen to `session.status`
+with `status.type === "idle"` instead.
+:::
 
 We are using `osascript` to run AppleScript on macOS. Here we are using it to send notifications.
 
 :::note
-If you’re using the OpenCode desktop app, it can send system notifications automatically when a response is ready or when a session errors.
+If you're using the OpenCode desktop app, it can send system notifications automatically when a response is ready or when a session errors.
 :::
 
 ---
 
 ### .env protection
 
-Prevent opencode from reading `.env` files:
+Prevent opencode from reading `.env` files by rejecting the read in a tool hook:
 
-```javascript title=".opencode/plugins/env-protection.js"
-export const EnvProtection = async ({ project, client, $, directory, worktree }) => {
-  return {
-    "tool.execute.before": async (input, output) => {
-      if (input.tool === "read" && output.args.filePath.includes(".env")) {
-        throw new Error("Do not read .env files")
+```ts title=".opencode/plugins/env-protection.ts"
+import { Plugin } from "@opencode/plugin"
+
+export default Plugin.define({
+  id: "env-protection",
+  setup: async (ctx) => {
+    await ctx.tool.hook("execute.before", (input) => {
+      if (input.tool === "read" && typeof input.input === "object" && input.input !== null) {
+        const args = input.input as { filePath?: string }
+        if (args.filePath?.includes(".env")) {
+          throw new Error("Do not read .env files")
+        }
       }
-    },
-  }
-}
+    })
+  },
+})
 ```
 
 ---
 
 ### Inject environment variables
 
-Inject environment variables into all shell execution (AI tools and user terminals):
+Inject environment variables into every shell the plugin's server spawns:
 
-```javascript title=".opencode/plugins/inject-env.js"
-export const InjectEnvPlugin = async () => {
-  return {
-    "shell.env": async (input, output) => {
-      output.env.MY_API_KEY = "secret"
-      output.env.PROJECT_ROOT = input.cwd
-    },
-  }
-}
+```ts title=".opencode/plugins/inject-env.ts"
+import { Plugin } from "@opencode/plugin"
+
+export default Plugin.define({
+  id: "inject-env",
+  setup: async (ctx) => {
+    await ctx.shell.hook("create.before", (input) => {
+      input.env.MY_API_KEY = "secret"
+      input.env.PROJECT_ROOT = input.cwd
+    })
+  },
+})
 ```
+
+The `create.before` hook receives `{ command, cwd, timeout, shell, env }` and
+mutating it changes the spawned shell.
 
 ---
 
 ### Custom tools
 
-Plugins can also add custom tools to opencode:
+Add custom tools through a `tool.transform` — the editor is synchronous, so
+load async data before registering:
 
 ```ts title=".opencode/plugins/custom-tools.ts"
-import { type Plugin, tool } from "@opencode-ai/plugin"
+import { Plugin } from "@opencode/plugin"
+import { Schema } from "effect"
 
-export const CustomToolsPlugin: Plugin = async (ctx) => {
-  return {
-    tool: {
-      mytool: tool({
+export default Plugin.define({
+  id: "custom-tools",
+  setup: async (ctx) => {
+    await ctx.tool.transform((tools) => {
+      tools.add({
+        name: "mytool",
         description: "This is a custom tool",
-        args: {
-          foo: tool.schema.string(),
-        },
-        async execute(args, context) {
-          const { directory, worktree } = context
-          return `Hello ${args.foo} from ${directory} (worktree: ${worktree})`
-        },
-      }),
-    },
-  }
-}
+        input: Schema.Struct({ foo: Schema.String }),
+        output: Schema.Struct({ greeting: Schema.String }),
+        execute: async ({ foo }) => ({
+          output: { greeting: `Hello ${foo}` },
+          content: `Hello ${foo}`,
+        }),
+      })
+    })
+  },
+})
 ```
 
-The `tool` helper creates a custom tool that opencode can call. It takes a Zod schema function and returns a tool definition with:
+The tool definition takes:
 
 - `description`: What the tool does
-- `args`: Zod schema for the tool's arguments
+- `input` / `output`: Effect schemas for the tool's input and output
 - `execute`: Function that runs when the tool is called
 
 Your custom tools will be available to opencode alongside built-in tools.
@@ -312,74 +459,50 @@ If a plugin tool uses the same name as a built-in tool, the plugin tool takes pr
 
 ### Logging
 
-Use `client.app.log()` instead of `console.log` for structured logging:
+Use `console.log` / `console.error` — plugin output is captured in the
+server log:
 
 ```ts title=".opencode/plugins/my-plugin.ts"
-export const MyPlugin = async ({ client }) => {
-  await client.app.log({
-    body: {
-      service: "my-plugin",
-      level: "info",
-      message: "Plugin initialized",
-      extra: { foo: "bar" },
-    },
-  })
-}
-```
+import { Plugin } from "@opencode/plugin"
 
-Levels: `debug`, `info`, `warn`, `error`. See [SDK documentation](https://opencode.ai/docs/sdk) for details.
+export default Plugin.define({
+  id: "my-plugin",
+  setup: async (ctx) => {
+    console.log(`[${ctx.app.name}] Plugin initialized in ${ctx.location.directory}`)
+  },
+})
+```
 
 ---
 
 ### Compaction hooks
 
-Customize the context included when a session is compacted:
+Customize the context included when a session is compacted by setting
+`event.result` on the `compaction` hook — setting it replaces the model
+request entirely:
 
 ```ts title=".opencode/plugins/compaction.ts"
-import type { Plugin } from "@opencode-ai/plugin"
+import { Plugin } from "@opencode/plugin"
 
-export const CompactionPlugin: Plugin = async (ctx) => {
-  return {
-    "experimental.session.compacting": async (input, output) => {
-      // Inject additional context into the compaction prompt
-      output.context.push(`
-## Custom Context
-
-Include any state that should persist across compaction:
-- Current task status
-- Important decisions made
-- Files being actively worked on
-`)
-    },
-  }
-}
+export default Plugin.define({
+  id: "compaction",
+  setup: async (ctx) => {
+    await ctx.session.hook("compaction", (event) => {
+      event.result = {
+        summary: [
+          "## Custom Context",
+          "",
+          "Include any state that should persist across compaction:",
+          "- Current task status",
+          "- Important decisions made",
+          "- Files being actively worked on",
+        ].join("\n"),
+      }
+    })
+  },
+})
 ```
 
-The `experimental.session.compacting` hook fires before the LLM generates a continuation summary. Use it to inject domain-specific context that the default compaction prompt would miss.
-
-You can also replace the compaction prompt entirely by setting `output.prompt`:
-
-```ts title=".opencode/plugins/custom-compaction.ts"
-import type { Plugin } from "@opencode-ai/plugin"
-
-export const CustomCompactionPlugin: Plugin = async (ctx) => {
-  return {
-    "experimental.session.compacting": async (input, output) => {
-      // Replace the entire compaction prompt
-      output.prompt = `
-You are generating a continuation prompt for a multi-agent swarm session.
-
-Summarize:
-1. The current task and its status
-2. Which files are being modified and by whom
-3. Any blockers or dependencies between agents
-4. The next steps to complete the work
-
-Format as a structured prompt that a new agent can use to resume work.
-`
-    },
-  }
-}
-```
-
-When `output.prompt` is set, it completely replaces the default compaction prompt. The `output.context` array is ignored in this case.
+The `compaction` hook fires before the LLM generates a continuation summary.
+Set `event.result.summary` (plus optional `providerState`, `metadata`, and
+`tokens`) to use your own summary and skip the model request.
