@@ -89,11 +89,15 @@ export interface Interface {
     readonly list: () => Effect.Effect<ReadonlyArray<KindDefinition>>
   }
   /**
-   * The reranker advanced searches use when the caller passes none (HTTP, plugins, the CLI). A location that can
-   * reach a language model registers one for the scope of its activation; the latest registration wins.
+   * The reranker advanced searches use when the caller passes none (HTTP, plugins, the CLI). Each location that can
+   * reach a language model registers one for its directory and the scope of its activation; a search uses the one
+   * for the searching session's directory. Calls without a session use the latest registration.
    */
   readonly reranker: {
-    readonly register: (rerank: (viewer: string) => Rerank) => Effect.Effect<void, never, Scope.Scope>
+    readonly register: (
+      rerank: (viewer: string) => Rerank,
+      directory?: string,
+    ) => Effect.Effect<void, never, Scope.Scope>
   }
 }
 
@@ -130,15 +134,22 @@ const layer = Layer.effect(
     const fts = yield* setupFts(db)
 
     const invalid = (error: MessagingTemplate.TemplateError) => new InvalidError({ message: error.message })
-    const rerankers: Array<(viewer: string) => Rerank> = []
+    const rerankers: Array<{ readonly directory?: string; readonly rerank: (viewer: string) => Rerank }> = []
 
     /**
-     * Applies the configured messaging settings when a caller (HTTP, skills) passes none, and for searches the
-     * registered reranker acting for the viewer.
+     * Fills what a caller (HTTP, plugins, skills) leaves out from the actor's location: the messaging config and
+     * the reranker registered there. Calls without a session use the latest applied.
      */
-    const resolveOptions = Effect.fnUntraced(function* (requested: Options | undefined, viewer?: string) {
-      const rerank = requested?.rerank ?? (viewer === undefined ? undefined : rerankers.at(-1)?.(viewer))
-      const config = requested?.config ?? (yield* vars.config())
+    const resolveOptions = Effect.fnUntraced(function* (requested: Options | undefined, actor: string) {
+      if (requested?.config && requested.rerank) return requested
+      const directory = actor === "user" ? undefined : (yield* MessagingGraph.row(db, actor))?.directory
+      const registered =
+        directory === undefined
+          ? rerankers.at(-1)
+          : (rerankers.findLast((entry) => entry.directory === directory) ??
+            rerankers.findLast((entry) => entry.directory === undefined))
+      const rerank = requested?.rerank ?? registered?.rerank(actor)
+      const config = requested?.config ?? (yield* vars.config(directory))
       return { ...requested, ...(config ? { config } : {}), ...(rerank ? { rerank } : {}) }
     })
 
@@ -430,7 +441,7 @@ const layer = Layer.effect(
     })
 
     const send: Interface["send"] = Effect.fn("Messaging.send")(function* (input, requested) {
-      const options = yield* resolveOptions(requested)
+      const options = yield* resolveOptions(requested, input.as ?? "user")
       const writer = input.as ?? "user"
       const kind = options?.kind ?? "message"
       if (!kinds.has(kind)) return yield* new InvalidError({ message: `Unknown message kind: ${kind}` })
@@ -503,7 +514,7 @@ const layer = Layer.effect(
     })
 
     const user: Interface["user"] = Effect.fn("Messaging.user")(function* (input, requested) {
-      const options = yield* resolveOptions(requested)
+      const options = yield* resolveOptions(requested, input.as)
       const writer = input.as
       const session = writer === "user" ? undefined : yield* MessagingGraph.row(db, writer)
       if (writer !== "user" && !session) return yield* new NotFoundError({ message: `Session not found: ${writer}` })
@@ -716,7 +727,12 @@ const layer = Layer.effect(
           input.until ||
           (input.hidden && input.hidden !== "exclude"),
       )
-      if ((input.markRead ?? (viewer !== "user" && !filtered)) && messages.length > 0)
+      // The pointer is a high-water mark, so it moves only when the page holds every message up to its newest:
+      // an oldest-first read (unread reads are) or a page with nothing left over. A read across all topics
+      // follows none of them.
+      const ascending = input.order === "asc" || (input.order === undefined && input.unread === true)
+      const complete = topicIDs !== undefined && (ascending || !ranked.more)
+      if ((input.markRead ?? (viewer !== "user" && !filtered && complete)) && messages.length > 0)
         yield* markRead(viewer, ranked.rows)
       return {
         messages,
@@ -950,10 +966,17 @@ const layer = Layer.effect(
           )
         }
         if (match === "regex") {
-          const regex = MessagingSearch.pattern(text)
-          const rows = (yield* sources.all()).filter((row) => regex.test(content(row)))
+          if (text.length > MessagingSearch.MAX_PATTERN)
+            return yield* new InvalidError({
+              message: `Regular expressions are limited to ${MessagingSearch.MAX_PATTERN} characters`,
+            })
+          const result = yield* MessagingSearch.regexFilter(text, yield* sources.all(), content)
+          if (result.unchecked > 0)
+            notes.push(
+              `The pattern took too long to match; ${result.unchecked} older entries were not checked. Simplify it or narrow the search.`,
+            )
           return take(
-            rows.map((row) => ({ row, score: 1 })),
+            result.matched.map((row) => ({ row, score: 1 })),
             "regex",
           )
         }
@@ -1176,7 +1199,7 @@ const layer = Layer.effect(
     })
 
     const inspect: Interface["inspect"] = Effect.fn("Messaging.inspect")(function* (input, requested) {
-      const options = yield* resolveOptions(requested)
+      const options = yield* resolveOptions(requested, input.as ?? "user")
       const viewer = input.as ?? "user"
       const topic = yield* requireTopic(input.topic, viewer, options)
       const row = yield* db
@@ -1191,7 +1214,7 @@ const layer = Layer.effect(
     })
 
     const visibility: Interface["visibility"] = Effect.fn("Messaging.visibility")(function* (input, requested) {
-      const options = yield* resolveOptions(requested)
+      const options = yield* resolveOptions(requested, input.as ?? "user")
       const actor = input.as ?? "user"
       const topic = yield* requireTopic(input.topic, actor, options)
       const targets = Array.from(new Set(input.seqs ?? [])).sort((left, right) => left - right)
@@ -1408,7 +1431,7 @@ const layer = Layer.effect(
     })
 
     const settings: Interface["settings"] = Effect.fn("Messaging.settings")(function* (input, requested) {
-      const options = yield* resolveOptions(requested)
+      const options = yield* resolveOptions(requested, input.as ?? "user")
       const actor = input.as ?? "user"
       const resolved = yield* resolveTopic(input.topic, actor, options)
       const existing = yield* topicByName(resolved.name)
@@ -1455,7 +1478,7 @@ const layer = Layer.effect(
     })
 
     const subscribe: Interface["subscribe"] = Effect.fn("Messaging.subscribe")(function* (input, requested) {
-      const options = yield* resolveOptions(requested)
+      const options = yield* resolveOptions(requested, input.as)
       const resolved = yield* resolveTopic(input.topic, input.as, options)
       const existing = yield* topicByName(resolved.name)
       if (input.remove) {
@@ -1492,14 +1515,14 @@ const layer = Layer.effect(
     })
 
     const topic: Interface["topic"] = Effect.fn("Messaging.topic")(function* (input, requested) {
-      const options = yield* resolveOptions(requested)
+      const options = yield* resolveOptions(requested, input.as ?? "user")
       const viewer = input.as ?? "user"
       const resolved = yield* resolveTopic(input.topic, viewer, options)
       return yield* describe(resolved.name, yield* topicByName(resolved.name), viewer, input.expand, options)
     })
 
     const topics: Interface["topics"] = Effect.fn("Messaging.topics")(function* (input, requested) {
-      const options = yield* resolveOptions(requested)
+      const options = yield* resolveOptions(requested, input.as ?? "user")
       const viewer = input.as ?? "user"
       const t = MessagingTopicTable
       const conditions: SQL[] = []
@@ -1838,8 +1861,16 @@ const layer = Layer.effect(
       }
       if (!input.query) return yield* new InvalidError({ message: `${op} needs a query` })
       if (op === "grep") {
-        const regex = MessagingSearch.pattern(input.query)
-        const hits = all.flatMap((entry, index) => (regex.test(entry.text) ? [index] : []))
+        if (input.query.length > MessagingSearch.MAX_PATTERN)
+          return yield* new InvalidError({
+            message: `Regular expressions are limited to ${MessagingSearch.MAX_PATTERN} characters`,
+          })
+        const result = yield* MessagingSearch.regexFilter(
+          input.query,
+          all.map((entry, index) => ({ entry, index })),
+          (item) => item.entry.text,
+        )
+        const hits = result.matched.map((item) => item.index)
         const context = input.context ?? 0
         const selected = new Map<number, boolean>()
         for (const index of hits.slice(offset, offset + limit)) {
@@ -1850,7 +1881,16 @@ const layer = Layer.effect(
         const entries = Array.from(selected)
           .sort((left, right) => left[0] - right[0])
           .map(([index, match]) => ({ ...all[index], ...(context > 0 ? { match } : {}) }))
-        return { entries: output(entries), total: hits.length, more: offset + limit < hits.length }
+        return {
+          entries: output(entries),
+          total: hits.length,
+          more: offset + limit < hits.length,
+          ...(result.unchecked > 0
+            ? {
+                note: `The pattern took too long to match; the last ${result.unchecked} entries were not checked. Simplify it or narrow the range.`,
+              }
+            : {}),
+        }
       }
       const match = input.match ?? options?.config?.search?.match ?? "hybrid"
       // Newest first: ties and the per-search embedding budget favour recent entries.
@@ -1881,7 +1921,7 @@ const layer = Layer.effect(
     })
 
     const varsList: Interface["vars"] = Effect.fn("Messaging.vars")(function* (input, requested) {
-      const options = yield* resolveOptions(requested)
+      const options = yield* resolveOptions(requested, input.as ?? "user")
       const scope = yield* scopeFor(input.as ?? "user", options)
       const listed = yield* vars.list(scope, input.values ?? false)
       const rendered = input.render ? yield* vars.render(input.render, scope).pipe(Effect.mapError(invalid)) : undefined
@@ -1929,11 +1969,15 @@ const layer = Layer.effect(
         list: () => Effect.sync(() => Array.from(kinds.values())),
       },
       reranker: {
-        register: Effect.fn("Messaging.reranker.register")(function* (rerank: (viewer: string) => Rerank) {
-          rerankers.push(rerank)
+        register: Effect.fn("Messaging.reranker.register")(function* (
+          rerank: (viewer: string) => Rerank,
+          directory?: string,
+        ) {
+          const entry = { rerank, ...(directory !== undefined ? { directory } : {}) }
+          rerankers.push(entry)
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
-              const index = rerankers.lastIndexOf(rerank)
+              const index = rerankers.lastIndexOf(entry)
               if (index !== -1) rerankers.splice(index, 1)
             }),
           )

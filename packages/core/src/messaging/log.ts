@@ -52,11 +52,15 @@ export function entries(
           "user",
           [
             message.text,
-            ...(message.files ?? []).map(
-              (file) => `[file: ${file.name ?? (file.source.type === "uri" ? file.source.uri : "attachment")}]`,
-            ),
+            ...(message.files ?? []).flatMap((file) => [
+              `[file: ${file.name ?? (file.source.type === "uri" ? file.source.uri : "attachment")}]`,
+              file.description,
+              ...(file.mime === "text/plain" || file.mime === "application/x-directory"
+                ? [Buffer.from(file.data, "base64").toString("utf8")]
+                : []),
+            ]),
             ...(message.agents ?? []).map((agent) => `[agent: ${agent.name}]`),
-            ...(message.skills ?? []).map((skill) => `[skill: ${skill.name}]`),
+            ...(message.skills ?? []).flatMap((skill) => [`[skill: ${skill.name}]`, skill.text]),
           ]
             .filter(Boolean)
             .join("\n"),
@@ -75,7 +79,9 @@ export function entries(
         return entry(
           0,
           "compaction",
-          message.status === "failed" ? `[compaction failed: ${message.error.message}]` : message.summary,
+          message.status === "failed"
+            ? `[compaction failed: ${message.error.message}]`
+            : [message.summary, message.recent].filter(Boolean).join("\n\n"),
         )
       case "agent-switched":
         return entry(0, "events", `[agent ${message.previous ? `${message.previous} → ` : ""}${message.agent}]`)
@@ -142,12 +148,17 @@ function serialize(input: unknown) {
  * the exact text. Other ampersands stay as written.
  */
 export function escapeBody(value: string) {
-  return value.replace(/&(?=(?:amp|lt);)/g, "&amp;").replace(/<(\/?)message\b/gi, "&lt;$1message")
+  return value.replace(/&(?=(?:amp|lt);)/g, "&amp;").replace(/<(\/?message\b)/gi, "&lt;$1")
 }
 
-/** The text `escapeBody` encoded. */
+/**
+ * The text `escapeBody` encoded. The tag keeps the case it was written in; the entities are matched exactly as the
+ * encoder writes them, so a writer's own `&LT;message` stays as written.
+ */
 export function unescapeBody(value: string) {
-  return value.replace(/&lt;(\/?message\b)/gi, "<$1").replace(/&amp;(?=(?:amp|lt);)/g, "&")
+  return value
+    .replace(/&lt;(\/?message\b)/gi, (match, tag: string) => (match.startsWith("&lt;") ? `<${tag}` : match))
+    .replace(/&amp;(?=(?:amp|lt);)/g, "&")
 }
 
 /** Shortens long entries to a head and tail around an omission marker. */

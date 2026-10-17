@@ -88,7 +88,8 @@ describe("MessagingLog.entries", () => {
   })
 
   test("decodes a delivered body back to the text as written", () => {
-    const written = 'Quote: <message from="x"> and the literal &lt;message, &amp;lt; and R&D'
+    const written =
+      'Quote: <message from="x"> </MESSAGE> <Message> and the literal &lt;message, &LT;Message, &amp;lt; and R&D'
     const [delivered] = decode([
       {
         id: "msg_7",
@@ -100,6 +101,74 @@ describe("MessagingLog.entries", () => {
     ])
     const [entry] = MessagingLog.entries("ses_a", delivered ? [delivered] : [], new Set(["synthetic"]))
     expect(entry?.text).toBe(written)
+  })
+
+  test("keeps decoded text and directory attachments searchable without decoding binary files", () => {
+    const entries = MessagingLog.entries(
+      "ses_a",
+      decode([
+        {
+          id: "msg_8",
+          type: "user",
+          time: { created: 8_000 },
+          text: "Review the attachments",
+          files: [
+            {
+              name: "notes.txt",
+              mime: "text/plain",
+              data: Buffer.from("text-only needle").toString("base64"),
+              source: { type: "inline" },
+              description: "File description",
+            },
+            {
+              name: "src",
+              mime: "application/x-directory",
+              data: Buffer.from("directory-only.ts").toString("base64"),
+              source: { type: "uri", uri: "file:///project/src" },
+            },
+            {
+              name: "image.png",
+              mime: "image/png",
+              data: Buffer.from("binary bytes").toString("base64"),
+              source: { type: "inline" },
+            },
+          ],
+          skills: [{ id: "skill", name: "Review", text: "Skill instructions" }],
+        },
+      ]),
+      new Set(["user"]),
+    )
+    expect(entries.map((entry) => entry.text)).toEqual([
+      "Review the attachments\n[file: notes.txt]\nFile description\ntext-only needle\n[file: src]\ndirectory-only.ts\n[file: image.png]\n[skill: Review]\nSkill instructions",
+    ])
+  })
+
+  test("keeps the summary and retained recent context searchable in a compaction entry", () => {
+    const entries = MessagingLog.entries(
+      "ses_a",
+      decode([
+        {
+          id: "msg_9",
+          type: "compaction",
+          status: "completed",
+          reason: "auto",
+          time: { created: 9_000 },
+          summary: "Earlier work",
+          recent: "Retained recent needle",
+        },
+        {
+          id: "msg_10",
+          type: "compaction",
+          status: "completed",
+          reason: "auto",
+          time: { created: 10_000 },
+          summary: "Only the summary",
+          recent: "",
+        },
+      ]),
+      new Set(["compaction"]),
+    )
+    expect(entries.map((entry) => entry.text)).toEqual(["Earlier work\n\nRetained recent needle", "Only the summary"])
   })
 
   test("clips long entries around an omission marker", () => {

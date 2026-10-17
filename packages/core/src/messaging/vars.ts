@@ -68,11 +68,12 @@ export interface Interface {
     options?: { readonly config?: ConfigMessaging.Info; readonly stableTime?: boolean },
   ) => Effect.Effect<string>
   /**
-   * Sets the messaging config used when a caller passes none (HTTP requests, skills, instructions).
-   * Location plugins apply their resolved config here; the latest one wins.
+   * Sets the messaging config used when a caller passes none (HTTP requests, skills, instructions). Each location's
+   * plugin applies its resolved config for its directory; a session uses the config of its directory, and a caller
+   * without a session uses the latest applied. An inactive directory uses the built-in defaults.
    */
-  readonly configure: (config: ConfigMessaging.Info | undefined) => Effect.Effect<void>
-  readonly config: () => Effect.Effect<ConfigMessaging.Info | undefined>
+  readonly configure: (config: ConfigMessaging.Info | undefined, directory?: string) => Effect.Effect<void>
+  readonly config: (directory?: string) => Effect.Effect<ConfigMessaging.Info | undefined>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/MessagingVars") {}
@@ -95,7 +96,10 @@ const layer = Layer.effect(
     const fs = yield* FSUtil.Service
     const global = yield* Global.Service
     const commonDirs = new Map<string, string | undefined>()
-    const defaults = yield* Ref.make<ConfigMessaging.Info | undefined>(undefined)
+    const configs = new Map<string, ConfigMessaging.Info | undefined>()
+    const latest = yield* Ref.make<ConfigMessaging.Info | undefined>(undefined)
+    const configFor = (directory: string | undefined) =>
+      directory === undefined ? Ref.get(latest) : Effect.succeed(configs.get(directory))
 
     const commonDir = Effect.fnUntraced(function* (directory: string) {
       if (commonDirs.has(directory)) return commonDirs.get(directory)
@@ -124,11 +128,11 @@ const layer = Layer.effect(
     })
 
     const scope = Effect.fn("MessagingVars.scope")(function* (request: ScopeInput) {
-      const input = request.config ? request : { ...request, config: yield* Ref.get(defaults) }
       const session =
-        input.session && input.session !== "user" ? yield* MessagingGraph.row(db, input.session) : undefined
-      if (input.session && input.session !== "user" && !session)
-        return yield* new MessagingTemplate.TemplateError({ message: `Session not found: ${input.session}` })
+        request.session && request.session !== "user" ? yield* MessagingGraph.row(db, request.session) : undefined
+      if (request.session && request.session !== "user" && !session)
+        return yield* new MessagingTemplate.TemplateError({ message: `Session not found: ${request.session}` })
+      const input = request.config ? request : { ...request, config: yield* configFor(session?.directory) }
       const args = input.args ?? {}
       const originals = new Map<string, string>()
       const chain = memoize(session ? MessagingGraph.ancestors(db, session.id) : Effect.succeed([]))
@@ -444,7 +448,7 @@ const layer = Layer.effect(
       sessionID: string,
       requested?: ConfigMessaging.Info,
     ) {
-      const config = requested ?? (yield* Ref.get(defaults))
+      const config = requested ?? (yield* configFor((yield* MessagingGraph.row(db, sessionID))?.directory))
       const template = config?.session_start ?? MessagingTemplate.defaultSessionStart
       if (template.trim() === "") return undefined
       const current = yield* scope({ session: sessionID, config, stableTime: true })
@@ -490,8 +494,12 @@ const layer = Layer.effect(
       sessionStart,
       inject,
       expand,
-      configure: (config) => Ref.set(defaults, config),
-      config: () => Ref.get(defaults),
+      configure: (config, directory) =>
+        Effect.gen(function* () {
+          if (directory !== undefined) configs.set(directory, config)
+          yield* Ref.set(latest, config)
+        }),
+      config: configFor,
     })
   }),
 )

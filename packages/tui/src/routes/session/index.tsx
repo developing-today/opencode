@@ -2045,7 +2045,7 @@ function SessionMessagingNotice(props: { message: Extract<SessionMessageInfo, { 
       props.message.text.match(/^<message\b(?:[^>"]|"[^"]*")*>\n?([\s\S]*?)\n?<\/message>\s*$/)?.[1] ??
       props.message.text
     )
-      .replace(/&lt;(\/?message\b)/gi, "<$1")
+      .replace(/&lt;(\/?message\b)/gi, (match, tag: string) => (match.startsWith("&lt;") ? `<${tag}` : match))
       .replace(/&amp;(?=(?:amp|lt);)/g, "&")
   const senderID = () => (from()?.startsWith("ses") ? from() : undefined)
   const heading = () => `✉ ${sender()} → ${stringValue(metadata()?.topic) ?? "message"}`

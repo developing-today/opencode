@@ -19,6 +19,7 @@ import { SessionEvent } from "@opencode/core/session/event"
 import { SessionExecution } from "@opencode/core/session/execution"
 import { SessionProjector } from "@opencode/core/session/projector"
 import { SessionStore } from "@opencode/core/session/store"
+import { ConfigMessaging } from "@opencode/schema/config/messaging"
 import { TuiEvent } from "@opencode/schema/tui-event"
 import { promptLocationNode } from "./fixture/prompt-location"
 import { testEffect } from "./lib/effect"
@@ -198,6 +199,69 @@ describe("Messaging topics and presets", () => {
     }),
   )
 
+  it.effect("uses the messaging config of the acting session's location", () =>
+    Effect.gen(function* () {
+      const tree = yield* family
+      const vars = yield* MessagingVars.Service
+      const messaging = yield* Messaging.Service
+      yield* vars.configure(
+        new ConfigMessaging.Info({ session_start: "Project start {session_id}", delivery: { direct: "inbox" } }),
+        "/project",
+      )
+      yield* vars.configure(
+        new ConfigMessaging.Info({ session_start: "Elsewhere", delivery: { direct: "none" } }),
+        "/other",
+      )
+      // The latest config applied came from /other; sessions in /project keep their own.
+      expect(yield* vars.sessionStart(tree.child.id)).toBe(`Project start ${tree.child.id}`)
+      expect((yield* messaging.send({ as: tree.child.id, to: "parent", text: "configured?" })).delivered).toEqual([
+        { session: tree.root.id, delivery: "inbox" },
+      ])
+      expect((yield* vars.config())?.session_start).toBe("Elsewhere")
+      expect(yield* vars.config("/inactive")).toBeUndefined()
+
+      const calls: string[] = []
+      yield* messaging.reranker.register(
+        () => (_, candidates) =>
+          Effect.sync(() => {
+            calls.push("/project")
+            return candidates.map((candidate) => candidate.key)
+          }),
+        "/project",
+      )
+      yield* messaging.reranker.register(
+        () => (_, candidates) =>
+          Effect.sync(() => {
+            calls.push("/other")
+            return candidates.map((candidate) => candidate.key)
+          }),
+        "/other",
+      )
+      yield* messaging.query({ as: tree.child.id, query: "configured", match: "advanced" })
+      expect(calls).toEqual(["/project"])
+      // A location that has not activated gets no other location's reranker.
+      const sessions = yield* Session.Service
+      const inactive = yield* sessions.create({
+        location: Location.Ref.make({ directory: AbsolutePath.make("/inactive") }),
+      })
+      expect((yield* messaging.query({ as: inactive.id, query: "configured", match: "advanced" })).note).toContain(
+        "needs a language model",
+      )
+      expect(calls).toEqual(["/project"])
+      yield* messaging.query(
+        { as: tree.child.id, query: "configured", match: "advanced" },
+        {
+          rerank: (_, candidates) =>
+            Effect.sync(() => {
+              calls.push("explicit")
+              return candidates.map((candidate) => candidate.key)
+            }),
+        },
+      )
+      expect(calls).toEqual(["/project", "explicit"])
+    }),
+  )
+
   it.effect("renders the session start line and opted-in frontmatter", () =>
     Effect.gen(function* () {
       const tree = yield* family
@@ -315,6 +379,22 @@ describe("Messaging delivery", () => {
       // A plain read of one conversation marks it read up to what it returned.
       yield* messaging.query({ as: tree.root.id, topics: [`dm@${tree.child.id}`] })
       expect(yield* unread()).toEqual(["beta report"])
+
+      // A page of the newest messages that leaves older unread ones out moves nothing.
+      yield* messaging.send({ as: tree.child.id, to: "parent", text: "delta report", deliver: "none" })
+      yield* messaging.send({ as: tree.child.id, to: "parent", text: "epsilon report", deliver: "none" })
+      yield* messaging.query({ as: tree.root.id, topics: [`dm@${tree.child.id}`], limit: 1 })
+      expect(yield* unread()).toEqual(["beta report", "delta report", "epsilon report"])
+      // Reading every topic at once follows none of them.
+      yield* messaging.query({ as: tree.stranger.id })
+      expect(
+        (yield* messaging.topics({ as: tree.stranger.id, sessions: [tree.stranger.id], role: "reader" })).topics,
+      ).toEqual([])
+      // An explicit markRead still lets the caller acknowledge a global or filtered page.
+      yield* messaging.query({ as: tree.stranger.id, markRead: true })
+      expect(
+        (yield* messaging.topics({ as: tree.stranger.id, sessions: [tree.stranger.id], role: "reader" })).topics.length,
+      ).toBeGreaterThan(0)
     }),
   )
 
@@ -501,7 +581,7 @@ describe("Messaging visibility", () => {
 })
 
 describe("Messaging search and listing", () => {
-  it.effect("searches by substring, typo-tolerant fuzzy match, regex and filters", () =>
+  it.live("searches by substring, typo-tolerant fuzzy match, regex and filters", () =>
     Effect.gen(function* () {
       const tree = yield* family
       const messaging = yield* Messaging.Service
@@ -525,6 +605,9 @@ describe("Messaging search and listing", () => {
         "Deployment failed on staging cluster",
       )
       expect((yield* search("pizz?a", { match: "regex" })).data).toEqual(["Lunch order is pizza"])
+      expect(yield* messaging.query({ query: "x".repeat(513), match: "regex" }).pipe(Effect.flip)).toBeInstanceOf(
+        Messaging.InvalidError,
+      )
       expect((yield* search("deployment", { match: "exact", topics: ["ops"] })).data).toEqual([
         "Deployment failed on staging cluster",
       ])
@@ -535,6 +618,9 @@ describe("Messaging search and listing", () => {
       // Characters outside the basic plane count once, as the trigram index counts them.
       yield* messaging.send({ as: tree.sibling.id, topic: "other", text: "ship it 👍👍 today" })
       expect((yield* search("👍👍", { match: "exact" })).data).toEqual(["ship it 👍👍 today"])
+      // Short words still contribute to fuzzy scores when other query words have trigrams.
+      yield* messaging.send({ as: tree.sibling.id, topic: "other", text: "go js ts" })
+      expect((yield* search("go js ts abc", { match: "fuzzy" })).data).toEqual(["go js ts"])
       // Without a local model, semantic and hybrid searches fall back to fuzzy matching and say so.
       const hybrid = yield* search("deploy failure")
       expect(hybrid.match).toBe("fuzzy")
@@ -605,7 +691,7 @@ describe("Messaging sessions", () => {
     }),
   )
 
-  it.effect("reads, greps and searches session logs", () =>
+  it.live("reads, greps and searches session logs", () =>
     Effect.gen(function* () {
       const tree = yield* family
       const bus = yield* Bus.Service
@@ -644,6 +730,34 @@ describe("Messaging sessions", () => {
           .pipe(Effect.map((log) => log.entries.map((entry) => entry.text)))
       expect(yield* find("all")).toEqual(["only for the person"])
       expect(yield* find("context")).toEqual([])
+    }),
+  )
+
+  it.live("searches retained recent text after a completed compaction in the active context", () =>
+    Effect.gen(function* () {
+      const tree = yield* family
+      const bus = yield* Bus.Service
+      const messaging = yield* Messaging.Service
+      yield* bus.publish(SessionEvent.Synthetic, { sessionID: tree.child.id, text: "older discarded input" })
+      yield* bus.publish(SessionEvent.Compaction.Started, {
+        sessionID: tree.child.id,
+        reason: "auto",
+        recent: "retained needle",
+      })
+      yield* bus.publish(SessionEvent.Compaction.Ended, {
+        sessionID: tree.child.id,
+        reason: "auto",
+        text: "Summary of earlier work",
+        recent: "retained needle",
+      })
+      const request = { sessions: [tree.child.id], scope: "context" as const, include: ["compaction" as const] }
+      expect(
+        (yield* messaging.log({ ...request, op: "grep", query: "retained" })).entries.map((entry) => entry.text),
+      ).toEqual(["Summary of earlier work\n\nretained needle"])
+      expect((yield* messaging.log({ ...request, query: "retained", match: "exact" })).total).toBe(1)
+      expect(yield* messaging.log({ ...request, op: "grep", query: "x".repeat(513) }).pipe(Effect.flip)).toBeInstanceOf(
+        Messaging.InvalidError,
+      )
     }),
   )
 })

@@ -213,7 +213,7 @@ test.each([40, 120])("messaging notices show user messages and navigate to the s
     {
       id: "notice-0",
       type: "synthetic",
-      text: '<message to="user" from="ses_sender" from_title="Worker &lt;a>" topic="status" seq="1">\nBuild is green.\nPlease review the deploy plan.\n</message>',
+      text: '<message to="user" from="ses_sender" from_title="Worker &lt;a>" topic="status" seq="1">\nBuild is green.\nPlease review the deploy plan.\n&lt;Message> &amp;lt;message\n&LT;message &lt;/MESSAGE>\n</message>',
       description: "✉ Worker <a> → status: Build is green.",
       metadata: { source: "messaging", topic: "status", seq: 1, from: sender.id, type: "user", audience: "user" },
       time: { created: 1 },
@@ -263,6 +263,8 @@ test.each([40, 120])("messaging notices show user messages and navigate to the s
     expect(frame).toContain("only you see this")
     expect(frame).toContain("Build is green.")
     expect(frame).toContain("Please review the deploy plan.")
+    expect(frame).toContain("<Message> &lt;message")
+    expect(frame).toContain("&LT;message </MESSAGE>")
     expect(frame).not.toContain("</message>")
     expect(frame).not.toContain("Details follow")
     const lines = frame.split("\n")

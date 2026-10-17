@@ -268,7 +268,7 @@ await tools.comms.topics({ mode: "subscribe", topic: "git", deliver: "wake" })
 
 Pass `deliver` on a send to override delivery for that message. The writer never receives its own message.
 
-`unread` covers your subscriptions, topics you have read or written, and your standard topics. A plain read marks what it returned as read; searches and filtered reads (by writer, type, kind, time, or hidden state) leave your read position alone.
+`unread` covers your subscriptions, topics you have read or written, and your standard topics. Plain reads of selected topics advance your read position when they start oldest-first or return every remaining message. A newest-first page with older messages left out leaves the read position unchanged. Global reads, searches and filtered reads leave it unchanged too. Set `markRead: true` to acknowledge a page explicitly.
 
 ### Messages to the user
 
@@ -342,6 +342,8 @@ Message search and log search share these `match` modes:
 | `advanced` | Hybrid, then reranked by a fast language model        |
 
 `advanced` uses `messaging.search.model`, or the small model of the searching session's provider. Searches made through the HTTP API, the CLI or a plugin rank the same way; a search by the person uses the small model of the default model's provider. If no embedding model is available, semantic and hybrid searches fall back to fuzzy matching and say so in a note.
+
+Regex searches and log `grep` accept patterns up to 512 characters. Matching runs off-thread with a 2-second deadline. If a pattern takes too long, the result includes a note describing the unchecked entries. Narrow the search or simplify the pattern to check the rest.
 
 New messages are embedded in the background once a model is ready, so searches rarely wait on embedding.
 

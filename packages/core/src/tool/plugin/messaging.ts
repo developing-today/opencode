@@ -201,7 +201,7 @@ export const Plugin = {
       const value = Config.latest(yield* config.entries(), "messaging")
       const next = { all: JSON.stringify(value ?? null), embedding: JSON.stringify(value?.embedding ?? null) }
       const previous = yield* Ref.getAndSet(applied, next)
-      if (previous.all !== next.all) yield* vars.configure(value)
+      if (previous.all !== next.all) yield* vars.configure(value, ctx.location.directory)
       if (previous.embedding !== next.embedding) yield* embedding.configure(value?.embedding)
       return value
     })
@@ -265,10 +265,11 @@ export const Plugin = {
       return small ? Model.Ref.make({ providerID: small.providerID, id: small.id }) : base
     })
 
-    // Searches from HTTP, plugins and the CLI pass no reranker; they get this location's.
+    // Searches from HTTP, plugins and the CLI pass no reranker; sessions in this location get this one.
     yield* messaging.reranker.register(
       (viewer) => (query, candidates) =>
         settings().pipe(Effect.flatMap((configured) => rerank(viewer, configured)(query, candidates))),
+      ctx.location.directory,
     )
 
     const options = Effect.fnUntraced(function* (sessionID: SessionSchema.ID) {

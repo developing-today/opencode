@@ -1,6 +1,6 @@
 # Spec: Session Chain, Logs & Inter-Session Messaging
 
-Status: **In progress.** The original request is preserved verbatim below. The audit table at the end
+Status: **Implemented; final review and merge in progress.** The original request is preserved verbatim below. The audit table at the end
 tracks every item, where it is implemented, and how it was verified. Re-check this file until every
 row is done.
 
@@ -89,8 +89,9 @@ client end to end (send, unread, topics, chain, semantic and hybrid search, mode
 `messaging` section in `opencode.json` (separator, custom variable, `tiny` tier) takes effect once a location's plugins
 activate.
 
-Known limits: config reaches the global messaging service when a location's plugins activate and whenever an active
-location's `messaging` section changes, so HTTP calls made before any location is active use the built-in defaults.
+Known limits: each location applies its messaging config and reranker when its plugins activate, and reapplies the
+config when its `messaging` section changes. Session callers use their own directory's settings. Inactive directories
+use the built-in defaults; calls without an acting session use the latest active location's defaults.
 Direct messages wake their recipient by default, so the `msg` tool tells agents to reply only when an answer is needed
 (`deliver: "inbox"` or `"none"` avoids waking).
 
@@ -100,11 +101,19 @@ writes `$HOME/.claude/settings.json` into the test HOME. Config discovery tests 
 `.claude` directory. With `mcpx` masked on PATH the whole `test/config` directory passes on this branch. Tracked in
 developing-today/opencode#14.
 
-Final verification (rebased on `origin/main` at f4ea00c248): every package typechecks, oxlint reports no errors, the
-generated client and OpenAPI document are in sync, and `bun run migration --check` passes. The full core suite with
-`mcpx` masked passes 6948 tests; its 22 failures are the 21 that also fail on an untouched `origin/main` checkout plus
-the real-shell oracle, which fails the same way there when run alone. Server, CLI, TUI, SDK and plugin suites fail only
-on the tests that also fail on `origin/main`.
+Final core verification uses the pinned Bun 1.4.2 against `origin/main` at f9aa962d03. `bun run check` passes lint
+with 0 errors and all 36 package type-checks. The generated client and OpenAPI document are in sync, and
+`bun run migration --check` passes. With `mcpx` masked, the full core suite reports **6986 pass, 23 skip, 2 fail**
+across 7011 tests and 294 files. Both failures reproduce on untouched `origin/main`: the callable-namespace tool
+test expects pretty JSON after the upstream compact-JSON change, and the VCS untracked-file test observes 58
+spawns against its limit of 40. Focused messaging service/search/log/tool regressions pass 350/350 over 10 runs;
+the TUI notices pass 60/60 over 10 runs at widths 40 and 120. Earlier counts made with Bun 1.3.11 are superseded.
+
+Review regressions cover location-isolated config and rerankers, scoped read-pointer advancement, short-token fuzzy
+matches, attachment and retained-compaction text, and mixed-case delivered-body round trips. Regex search and log
+grep run in a disposable subprocess with a 2-second deadline and disclose incomplete results; a pathological-regex
+test verifies that the caller's event loop stays responsive and the subprocess terminates. The deadline regression
+also passes on Bun 1.3.11, and a compiled executable smoke test verifies matching and forced timeout.
 
 | #   | Item                                                                                     | Status | Where                                                                                                                                                                                                                         | Verified by                                                                          |
 | --- | ---------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |

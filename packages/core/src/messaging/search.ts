@@ -1,6 +1,7 @@
 export * as MessagingSearch from "./search.js"
 
 import { createHash } from "crypto"
+import { Effect } from "effect"
 
 /**
  * Text scoring shared by message and log search. Fuzzy matching uses character trigrams, the same
@@ -27,10 +28,14 @@ export function trigrams(text: string): Set<string> {
   return result
 }
 
-/** An FTS5 query matching any trigram of the query words, or undefined when no word has three characters. */
+/**
+ * An FTS5 query matching any trigram of the query words, or undefined when the index cannot narrow the search: a
+ * word shorter than three characters still counts toward the fuzzy score, so prefiltering by trigrams would drop
+ * texts that match only through it.
+ */
 export function ftsQuery(query: string) {
-  const grams = Array.from(trigrams(query)).filter((gram) => Array.from(gram).length === 3)
-  if (grams.length === 0) return undefined
+  const grams = Array.from(trigrams(query))
+  if (grams.length === 0 || grams.some((gram) => Array.from(gram).length < 3)) return undefined
   return grams.map((gram) => `"${gram.replaceAll('"', '""')}"`).join(" OR ")
 }
 
@@ -98,11 +103,83 @@ export function hash(text: string) {
   return createHash("sha256").update(text).digest("hex").slice(0, 32)
 }
 
-/** Compiles a user regex, falling back to a literal match when the pattern is invalid. */
-export function pattern(query: string) {
+/** The longest regular expression a search accepts. */
+export const MAX_PATTERN = 512
+/** How long one search may spend matching a regular expression, in milliseconds. */
+export const REGEX_BUDGET_MS = 2000
+
+// Inline source works in source and compiled executables without a separate asset. Patterns and text travel
+// over stdin, never executable source. A subprocess can be killed even on Bun versions whose worker threads
+// cannot interrupt a native regex call. Progress preserves completed batches if a match stalls.
+const regexWorker = String.raw`
+const input = JSON.parse(require("node:fs").readFileSync(0, "utf8"))
+const regex = (() => {
   try {
-    return new RegExp(query, "i")
+    return new RegExp(input.query, "i")
   } catch {
-    return new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
+    return new RegExp(input.query.replace(/[.*+?^{}$()|[\]\\]/g, "\\$&"), "i")
   }
+})()
+const matched = []
+for (let index = 0; index < input.texts.length; index++) {
+  if (regex.test(input.texts[index])) matched.push(index)
+  if ((index + 1) % 64 === 0 || index + 1 === input.texts.length)
+    process.stdout.write(JSON.stringify({ matched: matched.splice(0), checked: index + 1 }) + "\n")
+}
+`
+
+/**
+ * Runs all user regex compilation and matching off-thread. The caller's clock enforces the deadline and the
+ * subprocess is killed on completion, timeout or interruption, even if one RegExp.test is still backtracking.
+ * Items not reported by the worker are counted so the caller can disclose partial results.
+ */
+export function regexFilter<A>(
+  query: string,
+  items: ReadonlyArray<A>,
+  text: (item: A) => string,
+  budget = REGEX_BUDGET_MS,
+) {
+  return Effect.gen(function* () {
+    if (items.length === 0) return { matched: [], unchecked: 0 }
+    const { spawn } = yield* Effect.promise(() => import("node:child_process"))
+    const { createInterface } = yield* Effect.promise(() => import("node:readline"))
+    const progress = { matched: new Set<number>(), checked: 0 }
+    const worker = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        spawn(process.execPath, ["--eval", regexWorker], {
+          // A compiled Bun executable runs its embedded runtime when this is set; Node ignores it.
+          env: { ...process.env, BUN_BE_BUN: "1" },
+          stdio: ["pipe", "pipe", "pipe"],
+        }),
+      ),
+      (worker) =>
+        Effect.callback<void>((resume) => {
+          if (worker.exitCode !== null || worker.signalCode !== null) return resume(Effect.void)
+          worker.once("close", () => resume(Effect.void))
+          worker.kill("SIGKILL")
+        }),
+    )
+    yield* Effect.callback<void>((resume) => {
+      const lines = createInterface({ input: worker.stdout })
+      const errors: string[] = []
+      worker.stderr.setEncoding("utf8").on("data", (text: string) => errors.push(text))
+      lines.on("line", (line) => {
+        const message: { readonly matched: ReadonlyArray<number>; readonly checked: number } = JSON.parse(line)
+        message.matched.forEach((index) => progress.matched.add(index))
+        progress.checked = message.checked
+        if (progress.checked === items.length) resume(Effect.void)
+      })
+      worker.stdin.on("error", (error) => resume(Effect.die(error)))
+      worker.once("error", (error) => resume(Effect.die(error)))
+      worker.once("close", () => {
+        if (progress.checked < items.length)
+          resume(Effect.die(new Error(`Regex worker exited before completing: ${errors.join("").slice(0, 500)}`)))
+      })
+      worker.stdin.end(JSON.stringify({ query, texts: items.map(text) }))
+    }).pipe(Effect.timeoutOrElse({ duration: budget, orElse: () => Effect.void }))
+    return {
+      matched: items.filter((_, index) => progress.matched.has(index)),
+      unchecked: items.length - progress.checked,
+    }
+  }).pipe(Effect.scoped)
 }
