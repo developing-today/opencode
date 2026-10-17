@@ -415,6 +415,12 @@ const layer = Layer.effect(
         return yield* new MessagingTemplate.TemplateError({
           message: `{${input.name}} is computed and cannot be overridden`,
         })
+      // Topic names are classified from constants in config only, so a stored override would rename topics
+      // without changing their write rules.
+      if (input.name in MessagingTemplate.constants)
+        return yield* new MessagingTemplate.TemplateError({
+          message: `{${input.name}} is built in; change it under messaging.vars in the config instead`,
+        })
       if (input.value === undefined) {
         yield* db
           .delete(MessagingVarTable)

@@ -519,12 +519,12 @@ const layer = Layer.effect(
       const description = `✉ ${title}: ${firstLine(input.text)}`
       const attributes = [
         `to="user"`,
-        `from="${writer}"`,
+        `from="${escapeAttribute(writer)}"`,
         ...(session?.title ? [`from_title="${escapeAttribute(session.title)}"`] : []),
         `topic="${escapeAttribute(resolved.name)}"`,
         `seq="${message.seq}"`,
       ]
-      const text = `<message ${attributes.join(" ")}>\n${input.text}\n</message>`
+      const text = `<message ${attributes.join(" ")}>\n${escapeBody(input.text)}\n</message>`
       if (mode === "wake") {
         yield* sessions.synthetic({ sessionID: SessionSchema.ID.make(root.id), text, description, metadata }).pipe(
           Effect.catch((error) => Effect.logWarning("messaging user delivery failed", { error })),
@@ -2005,19 +2005,22 @@ function fuseRankings<A>(
     })
 }
 
-/** SQL that is 1 when the message is effectively hidden from the viewer. */
+/**
+ * SQL that is 1 when the message is effectively hidden from the viewer. Hidden kinds (delete and restore
+ * operations, settings changes) stay hidden unless a row targets that message itself: a topic default
+ * restore must not reveal them.
+ */
 function hiddenSql(viewer: string, hiddenKinds: ReadonlyArray<string>) {
   const m = MessagingMessageTable
   const state = (seq: SQL, who: SQL) =>
     sql`(SELECT v.hidden FROM messaging_visibility v WHERE v.topic_id = ${m.topic_id} AND v.seq = ${seq} AND v.viewer = ${who})`
-  const kindDefault =
-    hiddenKinds.length === 0
-      ? sql`0`
-      : sql`CASE WHEN ${m.kind} IN (${sql.join(
-          hiddenKinds.map((kind) => sql`${kind}`),
-          sql`, `,
-        )}) THEN 1 ELSE 0 END`
-  return sql<number>`coalesce(${state(sql`${m.seq}`, sql`${viewer}`)}, ${state(sql`${m.seq}`, sql`'*'`)}, ${state(sql`0`, sql`${viewer}`)}, ${state(sql`0`, sql`'*'`)}, ${kindDefault})`
+  const own = sql`${state(sql`${m.seq}`, sql`${viewer}`)}, ${state(sql`${m.seq}`, sql`'*'`)}`
+  const withDefault = sql`coalesce(${own}, ${state(sql`0`, sql`${viewer}`)}, ${state(sql`0`, sql`'*'`)}, 0)`
+  if (hiddenKinds.length === 0) return sql<number>`${withDefault}`
+  return sql<number>`CASE WHEN ${m.kind} IN (${sql.join(
+    hiddenKinds.map((kind) => sql`${kind}`),
+    sql`, `,
+  )}) THEN coalesce(${own}, 1) ELSE ${withDefault} END`
 }
 
 function opMeta(meta: Record<string, unknown> | null) {
@@ -2099,7 +2102,7 @@ function render(
   const attributes = [
     `topic="${escapeAttribute(topic)}"`,
     `seq="${message.seq}"`,
-    `from="${message.writer}"`,
+    `from="${escapeAttribute(message.writer)}"`,
     ...(message.title ? [`from_title="${escapeAttribute(message.title)}"`] : []),
     ...(message.type !== "message" ? [`type="${escapeAttribute(message.type)}"`] : []),
     `time="${MessagingTemplate.rfc3339(new Date(message.time))}"`,
@@ -2109,13 +2112,18 @@ function render(
       ? `${message.data.slice(0, DELIVERED_CHARS)}\n…[${message.data.length - DELIVERED_CHARS} more characters; read ${topic}#${message.seq} for the rest]`
       : message.data
   return {
-    text: `<message ${attributes.join(" ")}>\n${body}\n</message>`,
+    text: `<message ${attributes.join(" ")}>\n${escapeBody(body)}\n</message>`,
     description: `✉ ${message.title || message.writer} → ${topic}: ${firstLine(message.data)}`,
   }
 }
 
 function escapeAttribute(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;")
+}
+
+/** Keeps a body from closing its envelope or opening a forged one. */
+function escapeBody(value: string) {
+  return value.replace(/<(\/?)message\b/gi, "&lt;$1message")
 }
 
 /**

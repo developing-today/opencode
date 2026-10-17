@@ -247,6 +247,22 @@ describe("MessagingEmbedding.Service", () => {
     }),
   )
 
+  it.live("keeps other settings when a tier or source is selected at runtime", () =>
+    Effect.gen(function* () {
+      const embedding = yield* service()
+      yield* embedding.configure({ tier: "default", remote: { url: "http://127.0.0.1:9/v1", model: "text-small" } })
+      // A start-only request selects nothing and must not reset the configured settings.
+      yield* embedding.select({})
+      expect(yield* embedding.status()).toMatchObject({ tier: "default", remote: true })
+      yield* embedding.select({ tier: "tiny" })
+      expect(yield* embedding.status()).toMatchObject({ tier: "tiny", remote: true })
+      yield* embedding.select({ path: "/models/custom-embed.gguf" })
+      expect(yield* embedding.status()).toMatchObject({ tier: "custom", remote: true })
+      yield* embedding.select({ tier: "default" })
+      expect(yield* embedding.status()).toMatchObject({ tier: "default", remote: true })
+    }),
+  )
+
   it.live("embeds through a remote OpenAI-compatible endpoint", () =>
     Effect.gen(function* () {
       const fake = yield* Effect.acquireRelease(Effect.sync(fakeOpenAI), (fixture) =>

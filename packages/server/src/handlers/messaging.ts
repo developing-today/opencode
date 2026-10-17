@@ -1,6 +1,5 @@
 import { Messaging } from "@opencode/core/messaging"
 import { MessagingEmbedding } from "@opencode/core/messaging/embedding"
-import { ConfigMessaging } from "@opencode/schema/config/messaging"
 import { ConflictError, InvalidRequestError } from "@opencode/protocol/errors"
 import { MessagingNotFoundError } from "@opencode/protocol/groups/messaging"
 import { Effect } from "effect"
@@ -31,12 +30,7 @@ export const MessagingHandler = HttpApiBuilder.group(Api, "server.messaging", (h
       .handle("messaging.model.status", () => embedding.status().pipe(Effect.map((data) => ({ data }))))
       .handle("messaging.model.configure", (ctx) =>
         Effect.gen(function* () {
-          // A bare tier keeps the config shorthand; a URL or path needs the detailed form.
-          yield* embedding.configure(
-            ctx.payload.url || ctx.payload.path
-              ? new ConfigMessaging.Embedding({ tier: ctx.payload.tier, url: ctx.payload.url, path: ctx.payload.path })
-              : ctx.payload.tier,
-          )
+          yield* embedding.select(ctx.payload)
           if (ctx.payload.start) yield* embedding.start()
           return { data: yield* embedding.status() }
         }),

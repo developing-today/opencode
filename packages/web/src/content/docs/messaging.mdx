@@ -215,7 +215,7 @@ Set a variable with `set_var`. Its `scope` is `self` (default), a session ID, or
 await tools.comms.topics({ mode: "set_var", name: "ticket", value: "ENG-142" })
 ```
 
-A session's variables are inherited by its subsessions, so this is how a parent passes values down. Lookup checks the session, then each ancestor up to the root, then `global`. Values may themselves be templates. Omit `value` to remove a variable.
+A session's variables are inherited by its subsessions, so this is how a parent passes values down. Lookup checks the session, then each ancestor up to the root, then `global`. Values may themselves be templates. Omit `value` to remove a variable. Built-in names can't be set this way: computed variables never change, and constants such as `separator` are changed under `messaging.vars` in the config.
 
 ### Variables in instructions and skills
 
@@ -230,7 +230,7 @@ Write scratch files under {tmp}/{session_id}.
 Post progress to the {project}/{project_id} topic.
 ```
 
-In instruction files, `vars` can also list the variables to render, like `vars: [tmp, session_id]`; other placeholders are left as is. The frontmatter is stripped before the file reaches the model. Time variables resolve to the session's start time so the text stays stable.
+In instruction files, `vars` can also list the variables to render, as a YAML list such as `vars: [tmp, session_id]` or one name per line; other placeholders are left as is. The frontmatter is stripped before the file reaches the model. Time variables resolve to the session's start time so the text stays stable.
 
 In a [skill](/docs/skills), add `vars: true` to the `SKILL.md` frontmatter, or `opencode/vars: "true"` under `metadata`. The skill renders with the invoking session's variables. Unknown placeholders are left untouched.
 
@@ -386,18 +386,18 @@ Pick a tier by name:
 
 Or use an object for more control:
 
-| Option       | Description                                                                 |
-| ------------ | --------------------------------------------------------------------------- |
-| `tier`       | `tiny`, `default`, `step-up`, `top`, or `off`. Default `default`.           |
-| `url`        | GGUF download URL to use instead of the tier's model.                       |
-| `path`       | Existing local GGUF file to use instead of downloading.                     |
-| `pooling`    | `last`, `mean`, or `cls`, for a custom model.                               |
-| `query`      | Instruction prefix for search queries, for a custom model.                  |
-| `server`     | `llama-server` executable to use instead of the downloaded build.           |
-| `autostart`  | Download and start in the background at startup. Default `true`.            |
-| `gpu_layers` | Layers to offload to the GPU. Default all.                                  |
-| `threads`    | CPU threads.                                                                |
-| `remote`     | OpenAI-compatible embeddings endpoint: `url`, `model`, `key`, `dimensions`. |
+| Option       | Description                                                                                                                       |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `tier`       | `tiny`, `default`, `step-up`, `top`, or `off`. Default `default`.                                                                 |
+| `url`        | GGUF download URL to use instead of the tier's model.                                                                             |
+| `path`       | Existing local GGUF file to use instead of downloading.                                                                           |
+| `pooling`    | `last`, `mean`, or `cls`. Default: the tier's pooling; for a custom model, `last` for Qwen3 embedding files and `mean` otherwise. |
+| `query`      | Instruction prefix for search queries, replacing the tier's prefix. The remote endpoint uses it too.                              |
+| `server`     | `llama-server` executable to use instead of the downloaded build.                                                                 |
+| `autostart`  | Download and start in the background at startup. Default `true`.                                                                  |
+| `gpu_layers` | Layers to offload to the GPU. Default all.                                                                                        |
+| `threads`    | CPU threads.                                                                                                                      |
+| `remote`     | OpenAI-compatible embeddings endpoint: `url`, `model`, `key`, `dimensions`.                                                       |
 
 The `remote` endpoint is used when the local model is unavailable, or always when the tier is `off`:
 

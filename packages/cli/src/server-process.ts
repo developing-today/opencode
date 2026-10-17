@@ -122,8 +122,10 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
             file: process.env.OPENCODE_MODELS_PATH,
             fetch: !truthy(process.env.OPENCODE_DISABLE_MODELS_FETCH),
           },
-          // Only real CLI servers download and start the local embedding model in the background.
-          embedding: { autostart: !truthy(process.env.OPENCODE_DISABLE_EMBEDDING) },
+          // Only real CLI servers download and start the local embedding model in the background; test homes never do.
+          embedding: {
+            autostart: !truthy(process.env.OPENCODE_DISABLE_EMBEDDING) && !process.env.OPENCODE_TEST_HOME,
+          },
           config: {
             directory: process.env.OPENCODE_CONFIG_DIR,
             project: !truthy(

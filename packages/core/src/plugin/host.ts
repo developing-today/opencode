@@ -5,7 +5,6 @@ import type { IntegrationMethodRegistration } from "@opencode/plugin/effect/inte
 import { EventManifest } from "@opencode/schema/event-manifest"
 import type { Event } from "@opencode/schema/event"
 import { ServerConfig } from "@opencode/schema/mcp"
-import { ConfigMessaging } from "@opencode/schema/config/messaging"
 import { App } from "../app.js"
 import { Effect, Schema, Stream } from "effect"
 import { Agent } from "../agent.js"
@@ -434,12 +433,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
       model: {
         status: embedding.status,
         configure: Effect.fn(function* (input) {
-          // A bare tier keeps the config shorthand; a URL or path needs the detailed form.
-          yield* embedding.configure(
-            input?.url || input?.path
-              ? new ConfigMessaging.Embedding({ tier: input.tier, url: input.url, path: input.path })
-              : input?.tier,
-          )
+          if (input) yield* embedding.select(input)
           if (input?.start) yield* embedding.start()
           return yield* embedding.status()
         }),

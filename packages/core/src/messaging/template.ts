@@ -2,6 +2,7 @@ export * as MessagingTemplate from "./template.js"
 
 import { Effect, Schema } from "effect"
 import type { ConfigMessaging } from "@opencode/schema/config/messaging"
+import { ConfigMarkdown } from "../config/markdown.js"
 
 /**
  * Topic presets and template variables.
@@ -374,7 +375,8 @@ export interface Classification {
   readonly policy: Policy
 }
 
-const SESSION_PATTERN = "(ses_[A-Za-z0-9]+)"
+// Generated session IDs are `ses_` plus base62, but callers may supply their own IDs, which can contain underscores.
+const SESSION_PATTERN = "(ses_[A-Za-z0-9_-]+)"
 
 /**
  * Detects which standard preset produced a topic name by compiling each preset template into a
@@ -454,20 +456,17 @@ export interface Frontmatter {
  * list of variable names. Only frontmatter carrying `vars` is stripped; other files are left untouched.
  */
 export function frontmatter(content: string): Frontmatter | undefined {
-  const match = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(content)
-  if (!match) return undefined
-  const line = match[1].split(/\r?\n/).find((entry) => /^vars\s*:/.test(entry))
-  if (!line) return undefined
-  const raw = line.replace(/^vars\s*:\s*/, "").trim()
-  const body = content.slice(match[0].length)
-  if (/^(true|yes|on|1)$/i.test(raw)) return { vars: true, body }
-  if (/^(false|no|off|0)$/i.test(raw)) return undefined
-  const list = raw
-    .replace(/^\[|\]$/g, "")
-    .split(",")
-    .map((item) => item.trim().replace(/^["'{]|["'}]$/g, ""))
-    .filter(Boolean)
-  return list.length > 0 ? { vars: list, body } : undefined
+  if (!/^\uFEFF?---/.test(content)) return undefined
+  const parsed = ConfigMarkdown.parseOption(content)
+  const value: unknown = parsed?.data.vars
+  if (!parsed || value === undefined || value === null) return undefined
+  if (value === true || value === 1 || (typeof value === "string" && /^(true|yes|on|1)$/i.test(value.trim())))
+    return { vars: true, body: parsed.content }
+  const list = (Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [])
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim().replace(/^\{|\}$/g, ""))
+    .filter((item) => item !== "" && !/^(false|no|off|0)$/i.test(item))
+  return list.length > 0 ? { vars: list, body: parsed.content } : undefined
 }
 
 const pad = (value: number, width = 2) => String(value).padStart(width, "0")

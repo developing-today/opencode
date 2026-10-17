@@ -10,7 +10,7 @@ import { Context, Deferred, Duration, Effect, Fiber, Latch, Layer, Schedule, Sch
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { ChildProcess } from "effect/process"
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner"
-import type { ConfigMessaging } from "@opencode/schema/config/messaging"
+import { ConfigMessaging } from "@opencode/schema/config/messaging"
 import type { Messaging } from "@opencode/schema/messaging"
 import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
@@ -131,6 +131,8 @@ const LLAMA_ASSETS: Readonly<Record<string, { readonly name: string; readonly sh
 const GIB = 1024 ** 3
 const BATCH = 32
 const MAX_CHARS = 8000
+/** Upper bound for one embeddings request; a full batch of long documents on a slow CPU stays well under it. */
+const REQUEST_TIMEOUT = "60 seconds"
 
 // Hardware facts the tier gate depends on, kept separate from detection so the gate is testable.
 export interface Hardware {
@@ -388,6 +390,12 @@ export interface Options {
 export interface Interface {
   /** Applies config settings. Changing model/tier/url/path restarts the pipeline; "off" stops the local server. Idempotent for equal settings. If autostart is enabled for this node (Options.autostart) or start() was already called, (re)starts the background pipeline. */
   readonly configure: (settings: ConfigMessaging.Info["embedding"] | undefined) => Effect.Effect<void>
+  /** Overrides the configured model source: a tier replaces a configured URL or path, and a URL or path replaces the other. Other settings (remote endpoint, server, threads) are kept; an empty choice changes nothing. */
+  readonly select: (choice: {
+    readonly tier?: string
+    readonly url?: string
+    readonly path?: string
+  }) => Effect.Effect<void>
   /** Starts the background pipeline now (download llama.cpp + model, launch server) if not already running. Never blocks on the download. */
   readonly start: () => Effect.Effect<void>
   readonly status: () => Effect.Effect<Messaging.ModelStatus>
@@ -407,6 +415,8 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Me
 type Phase = "pending" | "downloading" | "starting" | "ready" | "error" | "unavailable"
 
 interface State {
+  /** The last configured value, so a runtime selection can keep the settings it does not change. */
+  input: ConfigMessaging.Info["embedding"] | undefined
   settings: Settings
   key: string
   started: boolean
@@ -454,6 +464,7 @@ const layer = (options: Options) =>
       const progress = new Map<string, Messaging.ModelProgress>()
       const initial = resolve(undefined)
       const state: State = {
+        input: undefined,
         settings: initial,
         key: JSON.stringify(initial),
         started: false,
@@ -602,23 +613,35 @@ const layer = (options: Options) =>
         })
       })
 
-      const request = Effect.fnUntraced(function* (target: Target, input: ReadonlyArray<string>) {
-        const body = target.remote
-          ? { model: target.model, input, ...(target.dimensions ? { dimensions: target.dimensions } : {}) }
-          : { model: target.model, input, encoding_format: "float" }
-        const base = HttpClientRequest.post(`${target.url}/embeddings`).pipe(HttpClientRequest.bodyJsonUnsafe(body))
-        const response = yield* http.execute(target.key ? HttpClientRequest.bearerToken(base, target.key) : base)
-        if (response.status !== 200) {
-          const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""))
-          return yield* Effect.fail(
-            new Error(`HTTP ${response.status} from ${target.url}/embeddings: ${text.slice(0, 500)}`),
-          )
-        }
-        const decoded = yield* HttpClientResponse.schemaBodyJson(EmbeddingResponse)(response)
-        if (decoded.data.length !== input.length)
-          return yield* Effect.fail(new Error(`expected ${input.length} embeddings, got ${decoded.data.length}`))
-        return decoded.data.toSorted((left, right) => left.index - right.index).map((item) => normalize(item.embedding))
-      })
+      const request = Effect.fnUntraced(
+        function* (target: Target, input: ReadonlyArray<string>) {
+          const body = target.remote
+            ? { model: target.model, input, ...(target.dimensions ? { dimensions: target.dimensions } : {}) }
+            : { model: target.model, input, encoding_format: "float" }
+          const base = HttpClientRequest.post(`${target.url}/embeddings`).pipe(HttpClientRequest.bodyJsonUnsafe(body))
+          const response = yield* http.execute(target.key ? HttpClientRequest.bearerToken(base, target.key) : base)
+          if (response.status !== 200) {
+            const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""))
+            return yield* Effect.fail(
+              new Error(`HTTP ${response.status} from ${target.url}/embeddings: ${text.slice(0, 500)}`),
+            )
+          }
+          const decoded = yield* HttpClientResponse.schemaBodyJson(EmbeddingResponse)(response)
+          if (decoded.data.length !== input.length)
+            return yield* Effect.fail(new Error(`expected ${input.length} embeddings, got ${decoded.data.length}`))
+          return decoded.data
+            .toSorted((left, right) => left.index - right.index)
+            .map((item) => normalize(item.embedding))
+        },
+        // A stalled endpoint must fail, so searches fall back to text matching instead of waiting forever.
+        (effect, target) =>
+          effect.pipe(
+            Effect.timeoutOrElse({
+              duration: REQUEST_TIMEOUT,
+              orElse: () => Effect.fail(new Error(`timed out waiting for ${target.url}/embeddings`)),
+            }),
+          ),
+      )
 
       const serve = Effect.fnUntraced(
         function* (local: Local, server: string, file: string) {
@@ -742,6 +765,7 @@ const layer = (options: Options) =>
       const configure = Effect.fn("MessagingEmbedding.configure")(function* (
         input: ConfigMessaging.Info["embedding"] | undefined,
       ) {
+        state.input = input
         const next = resolve(input)
         const key = JSON.stringify(next)
         yield* lock.withPermit(
@@ -764,6 +788,18 @@ const layer = (options: Options) =>
         )
         if (state.started || (options.autostart && state.booted && next.autostart)) yield* launch
         yield* Deferred.succeed(firstConfig, undefined)
+      })
+
+      const select: Interface["select"] = Effect.fn("MessagingEmbedding.select")(function* (choice) {
+        if (!choice.tier && !choice.url && !choice.path) return
+        const current = typeof state.input === "string" ? { tier: state.input } : (state.input ?? {})
+        yield* configure(
+          new ConfigMessaging.Embedding({
+            ...current,
+            ...(choice.tier ? { tier: choice.tier, url: undefined, path: undefined } : {}),
+            ...(choice.url || choice.path ? { url: choice.url, path: choice.path } : {}),
+          }),
+        )
       })
 
       const start = Effect.fn("MessagingEmbedding.start")(function* () {
@@ -879,7 +915,7 @@ const layer = (options: Options) =>
         )
 
       refresh()
-      return Service.of({ configure, start, status, model, ready, embed })
+      return Service.of({ configure, select, start, status, model, ready, embed })
     }),
   )
 

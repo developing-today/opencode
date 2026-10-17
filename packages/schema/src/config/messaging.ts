@@ -23,10 +23,11 @@ export class Embedding extends Schema.Class<Embedding>("Config.Messaging.Embeddi
   url: Schema.String.pipe(optional).annotate({ description: "GGUF download URL used instead of the tier's model" }),
   path: Schema.String.pipe(optional).annotate({ description: "Existing local GGUF file used instead of downloading" }),
   pooling: Schema.Literals(["last", "mean", "cls"]).pipe(optional).annotate({
-    description: "Pooling for a custom model (default: last)",
+    description:
+      "Pooling override (default: the tier's pooling; for a custom model, last for Qwen3 embedding files and mean otherwise)",
   }),
   query: Schema.String.pipe(optional).annotate({
-    description: "Instruction prefix for search queries with a custom model",
+    description: "Instruction prefix for search queries, replacing the tier's prefix; the remote endpoint uses it too",
   }),
   server: Schema.String.pipe(optional).annotate({
     description: "llama-server executable to use instead of the downloaded llama.cpp build",
