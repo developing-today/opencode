@@ -208,6 +208,7 @@ test.each([40, 120])("messaging notices show user messages and navigate to the s
     time: { created: 0, updated: 0 },
   }
   const sender = { ...parent, id: "ses_sender", title: "Worker <a>" }
+  const topic = `${parent.id}/bidi/${sender.id}`
   const messages = [
     { id: "user-0", type: "user", text: "Coordinate the workers", time: { created: 0 } },
     {
@@ -221,10 +222,10 @@ test.each([40, 120])("messaging notices show user messages and navigate to the s
     {
       id: "notice-1",
       type: "synthetic",
-      text: '<message topic="plan" seq="2" from="ses_sender" from_title="Worker &lt;a>" time="2026-01-01T00:00:00Z">\nStarting phase two\nDetails follow\n</message>',
-      description: "✉ Worker <a> → plan: Starting phase two",
+      text: `<message topic="${topic}" seq="2" from="ses_sender" from_title="A very long build coordinator title that needs truncation" time="2026-01-01T00:00:00Z">\nStarting phase two\nDetails follow\n</message>`,
+      description: `✉ Worker <a> → ${topic}: Starting phase two`,
       // A writer may label any message "user"; only an audience marks one sent to the person.
-      metadata: { source: "messaging", topic: "plan", seq: 2, from: sender.id, type: "user" },
+      metadata: { source: "messaging", topic, seq: 2, from: sender.id, type: "user" },
       time: { created: 2 },
     },
   ]
@@ -256,7 +257,7 @@ test.each([40, 120])("messaging notices show user messages and navigate to the s
     }).pipe(Effect.provide(Global.layerWith({ state: state.path })), Effect.provide(FileSystem.layerNoop({}))),
   )
   try {
-    await setup.waitForFrame((frame) => frame.includes("→ plan · Starting"))
+    await setup.waitForFrame((frame) => frame.includes("Starting"))
     await setup.waitForVisualIdle()
     const frame = setup.captureCharFrame()
     expect(frame).toContain("Message for you from Worker <a>")
@@ -268,9 +269,9 @@ test.each([40, 120])("messaging notices show user messages and navigate to the s
     expect(frame).not.toContain("</message>")
     expect(frame).not.toContain("Details follow")
     const lines = frame.split("\n")
-    const y = lines.findIndex((line) => line.includes("→ plan"))
+    const y = lines.findIndex((line) => line.includes("Starting"))
     expect(y).toBeGreaterThanOrEqual(0)
-    await setup.mockMouse.click(lines[y].indexOf("Worker") + 1, y)
+    await setup.mockMouse.click(lines[y].indexOf("✉") + 1, y)
     await setup.waitForFrame((frame) => frame.includes("Run phase two"))
   } finally {
     setup.renderer.destroy()

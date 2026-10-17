@@ -385,6 +385,11 @@ describe("Messaging delivery", () => {
       yield* messaging.send({ as: tree.child.id, to: "parent", text: "epsilon report", deliver: "none" })
       yield* messaging.query({ as: tree.root.id, topics: [`dm@${tree.child.id}`], limit: 1 })
       expect(yield* unread()).toEqual(["beta report", "delta report", "epsilon report"])
+      // A cursor can skip unread messages even in an ascending or otherwise complete page.
+      yield* messaging.query({ as: tree.root.id, topics: [`dm@${tree.child.id}`], after: 3, order: "asc" })
+      expect(yield* unread()).toEqual(["beta report", "delta report", "epsilon report"])
+      yield* messaging.query({ as: tree.root.id, topics: [`dm@${tree.child.id}`], after: 3, markRead: true })
+      expect(yield* unread()).toEqual(["beta report"])
       // Reading every topic at once follows none of them.
       yield* messaging.query({ as: tree.stranger.id })
       expect(

@@ -95,7 +95,7 @@ describe("MessagingLog.entries", () => {
         id: "msg_7",
         type: "synthetic",
         time: { created: 7_000 },
-        text: `<message topic="t" seq="1" from="ses_b">\n${MessagingLog.escapeBody(written)}\n</message>`,
+        text: `<message topic="t" seq="1" from="ses_b" from_title="Multiline\nsender > title">\n${MessagingLog.escapeBody(written)}\n</message>`,
         metadata: { source: "messaging", from: "ses_b", topic: "t" },
       },
     ])

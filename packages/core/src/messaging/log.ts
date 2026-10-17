@@ -127,7 +127,7 @@ function contentText(
  */
 function synthetic(message: SessionMessage.Synthetic) {
   const metadata = message.metadata
-  const envelope = /^<message\b[^\n]*>\n([\s\S]*?)\n<\/message>\s*$/.exec(message.text)?.[1]
+  const envelope = /^<message\b(?:[^>"]|"[^"]*")*>\n([\s\S]*?)\n<\/message>\s*$/.exec(message.text)?.[1]
   const body = envelope === undefined ? undefined : unescapeBody(envelope)
   if (metadata?.source === "messaging" && body !== undefined) {
     const from = typeof metadata.from === "string" ? metadata.from : "unknown"

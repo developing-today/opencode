@@ -12279,7 +12279,7 @@
             }
           }
         },
-        "description": "Write a message from the user to a session's user topic, optionally showing it to the root session.",
+        "description": "Send a message from the acting session to the person, optionally showing it to the root session.",
         "summary": "Send user message",
         "requestBody": {
           "content": {

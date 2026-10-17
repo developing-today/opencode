@@ -2049,11 +2049,10 @@ function SessionMessagingNotice(props: { message: Extract<SessionMessageInfo, { 
       .replace(/&amp;(?=(?:amp|lt);)/g, "&")
   const senderID = () => (from()?.startsWith("ses") ? from() : undefined)
   const heading = () => `✉ ${sender()} → ${stringValue(metadata()?.topic) ?? "message"}`
+  const label = () =>
+    Locale.truncateWidth(heading(), Math.max(0, ctx.width - 3 - Math.min(24, Math.floor((ctx.width - 3) / 2))))
   const suffix = () =>
-    Locale.truncateWidth(
-      ` · ${body().trim().split("\n")[0] ?? ""}`,
-      Math.max(0, ctx.width - 3 - stringWidth(heading())),
-    )
+    Locale.truncateWidth(` · ${body().trim().split("\n")[0] ?? ""}`, Math.max(0, ctx.width - 3 - stringWidth(label())))
   return (
     <Show
       // Only messages sent to the person carry an audience; the type is a free label any writer sets.
@@ -2079,7 +2078,7 @@ function SessionMessagingNotice(props: { message: Extract<SessionMessageInfo, { 
                   : theme.text.base,
               }}
             >
-              {heading()}
+              {label()}
             </span>
             <span style={{ fg: theme.text.muted }}>{suffix()}</span>
           </text>

@@ -1,6 +1,6 @@
 # Spec: Session Chain, Logs & Inter-Session Messaging
 
-Status: **Implemented; final review and merge in progress.** The original request is preserved verbatim below. The audit table at the end
+Status: **Complete.** The original request is preserved verbatim below. The audit table at the end
 tracks every item, where it is implemented, and how it was verified. Re-check this file until every
 row is done.
 
@@ -114,6 +114,9 @@ matches, attachment and retained-compaction text, and mixed-case delivered-body 
 grep run in a disposable subprocess with a 2-second deadline and disclose incomplete results; a pathological-regex
 test verifies that the caller's event loop stays responsive and the subprocess terminates. The deadline regression
 also passes on Bun 1.3.11, and a compiled executable smoke test verifies matching and forced timeout.
+The final review also verifies lower-bound read cursors, multiline sender titles, and readable direct-message
+previews at 40 and 120 columns. The session-to-user endpoint description is corrected and its derived OpenAPI
+document regenerated.
 
 | #   | Item                                                                                     | Status | Where                                                                                                                                                                                                                         | Verified by                                                                          |
 | --- | ---------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |

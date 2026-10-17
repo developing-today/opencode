@@ -39,8 +39,7 @@ export const MessagingGroup = HttpApiGroup.make("server.messaging")
       OpenApi.annotations({
         identifier: "messaging.user",
         summary: "Send user message",
-        description:
-          "Write a message from the user to a session's user topic, optionally showing it to the root session.",
+        description: "Send a message from the acting session to the person, optionally showing it to the root session.",
       }),
     ),
   )

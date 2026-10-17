@@ -731,7 +731,7 @@ const layer = Layer.effect(
       // an oldest-first read (unread reads are) or a page with nothing left over. A read across all topics
       // follows none of them.
       const ascending = input.order === "asc" || (input.order === undefined && input.unread === true)
-      const complete = topicIDs !== undefined && (ascending || !ranked.more)
+      const complete = topicIDs !== undefined && input.after === undefined && (ascending || !ranked.more)
       if ((input.markRead ?? (viewer !== "user" && !filtered && complete)) && messages.length > 0)
         yield* markRead(viewer, ranked.rows)
       return {
