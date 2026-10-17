@@ -56,10 +56,45 @@ const findDaemonSocket = (): string | undefined => {
   return undefined
 }
 
+/**
+ * The mcpx executable opencode talks to. `OPENCODE_MCPX_BIN` pins a stable
+ * binary (path or name); otherwise the first `mcpx` on `PATH` wins, which in
+ * a test or CI shell may be an unrelated build.
+ */
+export const mcpxBinary = (env: NodeJS.ProcessEnv = process.env): string => env.OPENCODE_MCPX_BIN || "mcpx"
+
+/**
+ * Whether opencode may spawn a detached mcpx daemon. Spawning is off when
+ * `OPENCODE_MCPX_DAEMON` is `0`/`false`/`off`, and in test processes
+ * (`OPENCODE_TEST_HOME` set, as every package test runner does): each test
+ * home would otherwise leak its own daemon, invisible to `mcpx daemons`
+ * once the temp home is deleted (#14). A daemon that is already running is
+ * still used; only spawning is gated. Tests that cover mcpx inject one via
+ * `McpxSubagent.setDaemonCaller` or `MCPX_DAEMON_ENDPOINT` instead.
+ */
+export const daemonAutostartEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => {
+  const flag = env.OPENCODE_MCPX_DAEMON?.trim().toLowerCase()
+  if (flag === "0" || flag === "false" || flag === "off") return false
+  if (env.OPENCODE_TEST_HOME) return false
+  return true
+}
+
+/**
+ * Arguments for a daemon opencode spawns. The daemon gets a bounded idle
+ * lifetime (`--daemon-idle-exit`, default 1h, `OPENCODE_MCPX_DAEMON_IDLE_EXIT`
+ * overrides; `0`/`0s` restores mcpx's never-exit default) so a daemon started
+ * by a short-lived process exits on its own instead of leaking forever (#14).
+ */
+export const daemonSpawnArgs = (env: NodeJS.ProcessEnv = process.env): string[] => {
+  const idle = env.OPENCODE_MCPX_DAEMON_IDLE_EXIT?.trim() || "1h"
+  if (idle === "0" || idle === "0s") return ["daemon"]
+  return ["daemon", "--daemon-idle-exit", idle]
+}
+
 export const runCli = (args: string[], env?: Record<string, string | undefined>): Promise<string> =>
   new Promise((resolve, reject) => {
     execFile(
-      "mcpx",
+      mcpxBinary(),
       args,
       { maxBuffer: 16 * 1024 * 1024, env: env ? { ...process.env, ...env } : process.env },
       (err, stdout, stderr) => {
@@ -118,6 +153,11 @@ export const callDaemon = async (
 
 let daemonEnsured = false
 
+/** Test-only: forget that the daemon was already ensured in this process. */
+export const resetDaemonEnsured = (): void => {
+  daemonEnsured = false
+}
+
 /**
  * Ensures mcpx daemon is standing and up-to-date.
  * Decoupled lifecycle:
@@ -125,7 +165,7 @@ let daemonEnsured = false
  *   OpenCode shutting down or reloading will not terminate the mcpx daemon.
  * - If daemon is already running, check if reload is needed or notify it.
  */
-const ensureDaemon = async (): Promise<void> => {
+export const ensureDaemon = async (): Promise<void> => {
   if (daemonEnsured) return
   try {
     const health = await callDaemon("/v1/health")
@@ -139,12 +179,22 @@ const ensureDaemon = async (): Promise<void> => {
     }
   } catch {}
 
-  // Daemon not reachable; spawn detached so it outlives opencode
+  // Daemon not reachable. Tests and opted-out processes must not spawn one:
+  // a detached daemon per test home leaks invisibly (#14). The tools degrade
+  // to their CLI fallback / unreachable errors, as when mcpx is not installed.
+  if (!daemonAutostartEnabled()) {
+    daemonEnsured = true
+    return
+  }
+
+  // Spawn detached so it outlives opencode, but with a bounded idle lifetime
+  // and an owner tag (`MCPX_OWNER=opencode:<pid>`) so `script/mcpx-cleanup.ts`
+  // can find daemons opencode started (#14).
   try {
-    const child = spawn("mcpx", ["daemon"], {
+    const child = spawn(mcpxBinary(), daemonSpawnArgs(), {
       detached: true,
       stdio: "ignore",
-      env: process.env,
+      env: { ...process.env, MCPX_OWNER: `opencode:${process.pid}` },
     })
     // A missing binary (ENOENT) is reported as an async 'error' event, not a thrown exception.
     // Without a listener it crashes OpenCode for everyone who has not installed mcpx.
