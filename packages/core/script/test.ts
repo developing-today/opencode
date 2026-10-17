@@ -23,6 +23,9 @@ const environment = {
   ),
   HOME: home,
   OPENCODE_TEST_HOME: home,
+  // Tests must never spawn a detached mcpx daemon per test home (#14); the
+  // plugin also refuses on OPENCODE_TEST_HOME, this keeps it explicit.
+  OPENCODE_MCPX_DAEMON: "0",
   XDG_CONFIG_HOME: path.join(home, ".config"),
   XDG_DATA_HOME: path.join(home, ".local", "share"),
   XDG_CACHE_HOME: path.join(home, ".cache"),
