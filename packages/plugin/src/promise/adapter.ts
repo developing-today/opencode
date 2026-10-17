@@ -1,8 +1,8 @@
 import { Tool } from "@opencode/schema/tool"
+import type { Messaging } from "@opencode/schema/messaging"
 import type { Rpc } from "@opencode/schema/rpc"
 import type { RpcCallOptions, RpcEventPayload } from "@opencode/client/promise/api"
-import { Effect, Schema, SchemaAST, Stream } from "effect"
-import type { Scope } from "effect"
+import { Effect, Exit, Schema, SchemaAST, Scope, Stream } from "effect"
 import { HttpApiEndpoint, HttpApiSchema } from "effect/http-api"
 import { define } from "../effect/plugin.js"
 import type { ToolFailures, ToolHooks } from "../effect/tool.js"
@@ -230,6 +230,7 @@ export function fromPromise(plugin: Plugin) {
         const GenerateEndpoints = ClientApi.groups["server.generate"].endpoints
         const IntegrationEndpoints = ClientApi.groups["server.integration"].endpoints
         const McpEndpoints = ClientApi.groups["server.mcp"].endpoints
+        const MessagingEndpoints = ClientApi.groups["server.messaging"].endpoints
         const ModelEndpoints = ClientApi.groups["server.model"].endpoints
         const PluginEndpoints = ClientApi.groups["server.plugin"].endpoints
         const PermissionEndpoints = ClientApi.groups["server.permission"].endpoints
@@ -444,6 +445,52 @@ export function fromPromise(plugin: Plugin) {
             list: adaptApiMethod(McpEndpoints["mcp.list"], host.mcp.list),
             transform: transform(host.mcp),
             reload: () => run(host.mcp.reload()),
+          },
+          messaging: {
+            send: adaptApiMethod(MessagingEndpoints["messaging.send"], host.messaging.send),
+            user: adaptApiMethod(MessagingEndpoints["messaging.user"], host.messaging.user),
+            query: adaptApiMethod(MessagingEndpoints["messaging.query"], host.messaging.query),
+            inspect: adaptApiMethod(MessagingEndpoints["messaging.inspect"], host.messaging.inspect),
+            visibility: adaptApiMethod(MessagingEndpoints["messaging.visibility"], host.messaging.visibility),
+            settings: adaptApiMethod(MessagingEndpoints["messaging.settings"], host.messaging.settings),
+            subscribe: adaptApiMethod(MessagingEndpoints["messaging.subscribe"], host.messaging.subscribe),
+            topic: adaptApiMethod(MessagingEndpoints["messaging.topic"], host.messaging.topic),
+            topics: adaptApiMethod(MessagingEndpoints["messaging.topics"], host.messaging.topics),
+            chain: adaptApiMethod(MessagingEndpoints["messaging.chain"], host.messaging.chain),
+            sessions: adaptApiMethod(MessagingEndpoints["messaging.sessions"], host.messaging.sessions),
+            log: adaptApiMethod(MessagingEndpoints["messaging.log"], host.messaging.log),
+            vars: adaptApiMethod(MessagingEndpoints["messaging.vars"], host.messaging.vars),
+            setVar: adaptApiMethod(MessagingEndpoints["messaging.setVar"], host.messaging.setVar),
+            model: {
+              status: adaptApiMethod(MessagingEndpoints["messaging.model.status"], host.messaging.model.status),
+              configure: adaptApiMethod(
+                MessagingEndpoints["messaging.model.configure"],
+                host.messaging.model.configure,
+              ),
+            },
+            kinds: {
+              // Each kind gets a child of the plugin scope so it can be disposed early or with the plugin.
+              register: (kind) =>
+                Effect.runPromiseWith(runtime)(
+                  Effect.gen(function* () {
+                    const pluginScope = yield* Scope.Scope
+                    const scope = yield* Scope.fork(pluginScope)
+                    yield* host.messaging.kinds.register(kind).pipe(
+                      Scope.provide(scope),
+                      Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))),
+                    )
+                    return { dispose: () => run(Scope.close(scope, Exit.void)) }
+                  }),
+                ),
+              list: () => run(host.messaging.kinds.list()),
+            },
+            // Decode through the send endpoint like the API methods, then restore the trusted kind.
+            write: (input) =>
+              adaptApiMethod<(input: object) => Promise<Messaging.SendResult>>(
+                MessagingEndpoints["messaging.send"],
+                (decoded: Parameters<typeof host.messaging.send>[0]) =>
+                  host.messaging.write({ ...decoded, kind: input.kind }),
+              )(input),
           },
           permission: {
             hook: (name, callback) =>

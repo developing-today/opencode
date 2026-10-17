@@ -15,6 +15,8 @@ import { PtyTicket } from "@opencode/core/pty/ticket"
 import { PersistentPty } from "@opencode/core/persistent-pty"
 import { Project } from "@opencode/core/project"
 import { Worktree } from "@opencode/core/worktree"
+import { Messaging } from "@opencode/core/messaging"
+import { MessagingEmbedding } from "@opencode/core/messaging/embedding"
 import { Session } from "@opencode/core/session"
 import { Instance } from "@opencode/core/instance/service"
 import { SessionTransfer } from "@opencode/core/session/transfer"
@@ -77,6 +79,8 @@ const applicationServiceNodes = [
   SessionExecution.node,
   SessionRestart.node,
   Workspace.node,
+  Messaging.node,
+  MessagingEmbedding.node,
 ] as const
 const applicationServices = LayerNode.group(applicationServiceNodes)
 
@@ -121,6 +125,7 @@ function makeRoutes<AuthError, AuthServices>(
     Bus.node.replace(Bus.configured({ persist: options.events?.persist })),
     App.node.replace(App.configured(options.app)),
     ModelsDev.node.replace(ModelsDev.configured(options.models)),
+    MessagingEmbedding.node.replace(MessagingEmbedding.configured({ autostart: options.embedding?.autostart })),
     Watcher.node.replace(Watcher.configured({ enabled: options.fs?.filewatcher })),
     FileSystemSearch.node.replace(FileSystemSearch.configured({ fff: options.fs?.fff })),
     Global.node.replace(Global.layerWith(options.config?.directory ? { config: options.config.directory } : {})),

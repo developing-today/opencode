@@ -23,6 +23,22 @@ const ServerParams = {
   ),
 }
 
+const TableFormat = Flag.Literals("format", ["table", "json"]).pipe(
+  Flag.withDescription("Output format"),
+  Flag.withDefault("table"),
+)
+
+const Limit = Flag.Int("limit").pipe(
+  Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+  Flag.withDescription("Maximum number of results"),
+  Flag.optional,
+)
+
+const Topics = Flag.String("topic").pipe(
+  Flag.withDescription("Topic to read (repeat or separate with commas)"),
+  Flag.atLeast(0),
+)
+
 const PermissionParams = {
   auto: Flag.Boolean("auto").pipe(
     Flag.withDescription("Auto-approve permissions that are not explicitly denied"),
@@ -464,6 +480,118 @@ const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME
               Flag.withDescription("Directory in which to import the session"),
               Flag.optional,
             ),
+          },
+        }),
+        Spec.make("chain", {
+          description: "Show a session and its parents up to the root session",
+          params: {
+            ...ServerParams,
+            sessionID: Argument.String("sessionID").pipe(Argument.withDescription("Session ID")),
+            all: Flag.Boolean("all").pipe(
+              Flag.withDescription("Show every ancestor instead of only the parent"),
+              Flag.withDefault(false),
+            ),
+            full: Flag.Boolean("full").pipe(Flag.withDescription("Show full session details"), Flag.withDefault(false)),
+            format: TableFormat,
+          },
+        }),
+        Spec.make("log", {
+          description: "Read, grep, or search a session transcript",
+          params: {
+            ...ServerParams,
+            sessionID: Argument.String("sessionID").pipe(Argument.withDescription("Session ID")),
+            op: Flag.Literals("op", ["head", "tail", "grep", "search", "pull"]).pipe(
+              Flag.withDescription("Log operation"),
+              Flag.optional,
+            ),
+            query: Flag.String("query").pipe(Flag.withDescription("Text to grep or search for"), Flag.optional),
+            include: Flag.String("include").pipe(
+              Flag.withDescription(
+                "Parts to include (repeat or separate with commas): user, output, thinking, tools, results, system, synthetic, shell, events, compaction",
+              ),
+              Flag.atLeast(0),
+            ),
+            limit: Limit,
+            format: TableFormat,
+          },
+        }),
+      ],
+    }),
+    Spec.make("msg", {
+      description: "Send, read and search inter-session messages",
+      commands: [
+        Spec.make("send", {
+          description: "Send a message to a topic or session",
+          params: {
+            ...ServerParams,
+            text: Argument.String("text").pipe(Argument.withDescription("Message text")),
+            to: Flag.String("to").pipe(Flag.withDescription("Session to message directly"), Flag.optional),
+            topic: Flag.String("topic").pipe(Flag.withDescription("Topic to write to"), Flag.optional),
+            type: Flag.String("type").pipe(Flag.withDescription("Message type"), Flag.optional),
+            deliver: Flag.Literals("deliver", ["none", "inbox", "wake"]).pipe(
+              Flag.withDescription("Delivery to recipient sessions"),
+              Flag.optional,
+            ),
+            force: Flag.Boolean("force").pipe(
+              Flag.withDescription("Write past the soft write limit"),
+              Flag.withDefault(false),
+            ),
+          },
+        }),
+        Spec.make("read", {
+          description: "Read messages",
+          params: {
+            ...ServerParams,
+            topic: Topics,
+            unread: Flag.Boolean("unread").pipe(Flag.withDescription("Only unread messages"), Flag.withDefault(false)),
+            as: Flag.String("as").pipe(Flag.withDescription("Read as this session"), Flag.optional),
+            limit: Limit,
+            format: TableFormat,
+          },
+        }),
+        Spec.make("search", {
+          description: "Search messages",
+          params: {
+            ...ServerParams,
+            query: Argument.String("query").pipe(Argument.withDescription("Search text")),
+            topic: Topics,
+            match: Flag.Literals("match", ["exact", "regex", "fuzzy", "semantic", "hybrid", "advanced"]).pipe(
+              Flag.withDescription("Match mode"),
+              Flag.optional,
+            ),
+            limit: Limit,
+            format: TableFormat,
+          },
+        }),
+        Spec.make("inbox", {
+          description: "Show messages sessions sent to you",
+          params: { ...ServerParams, limit: Limit, format: TableFormat },
+        }),
+        Spec.make("topics", {
+          description: "List topics",
+          params: {
+            ...ServerParams,
+            session: Flag.String("session").pipe(
+              Flag.withDescription("Only topics this session read or wrote"),
+              Flag.optional,
+            ),
+            limit: Limit,
+            format: TableFormat,
+          },
+        }),
+        Spec.make("model", {
+          description: "Show or configure the local embedding model",
+          params: {
+            ...ServerParams,
+            tier: Flag.Literals("tier", ["tiny", "default", "step-up", "top", "off"]).pipe(
+              Flag.withDescription("Embedding model tier"),
+              Flag.optional,
+            ),
+            start: Flag.Boolean("start").pipe(
+              Flag.withDescription("Start downloading and serving now"),
+              Flag.withDefault(false),
+            ),
+            format: TableFormat,
           },
         }),
       ],

@@ -59,6 +59,9 @@ import { Permission } from "../permission.js"
 import { Reference } from "../reference.js"
 import { WebSearch } from "../websearch.js"
 import { Ripgrep } from "../ripgrep.js"
+import { Messaging } from "../messaging.js"
+import { MessagingEmbedding } from "../messaging/embedding.js"
+import { MessagingVars } from "../messaging/vars.js"
 import { Session } from "../session.js"
 import { SessionCompaction } from "../session/compaction.js"
 import { SessionInstructions } from "../session/instructions.js"
@@ -74,6 +77,7 @@ import { EditTool } from "../tool/plugin/edit.js"
 import { GlobTool } from "../tool/plugin/glob.js"
 import { GrepTool } from "../tool/plugin/grep.js"
 import { McpResourceTools } from "../tool/plugin/mcp-resource.js"
+import { MessagingTools } from "../tool/plugin/messaging.js"
 import { OpenCodeTools } from "../tool/plugin/opencode.js"
 import { QuestionTool } from "../tool/plugin/question.js"
 import { ReadToolFileSystem } from "../tool/read-filesystem.js"
@@ -139,6 +143,9 @@ const services = [
   ManagedPolicy.Service,
   ModelsDev.Service,
   Mcp.Service,
+  Messaging.Service,
+  MessagingEmbedding.Service,
+  MessagingVars.Service,
   Npm.Service,
   Permission.Service,
   Form.Service,
@@ -194,6 +201,9 @@ export const requirements = LayerNode.group([
   ManagedPolicy.node,
   ModelsDev.node,
   Mcp.node,
+  Messaging.node,
+  MessagingEmbedding.node,
+  MessagingVars.node,
   Npm.node,
   Permission.node,
   Form.node,
@@ -247,6 +257,7 @@ const pre = [
   GrepTool.Plugin,
   OpenCodeTools.Plugin,
   McpResourceTools.Plugin,
+  MessagingTools.Plugin,
   QuestionTool.Plugin,
   ReadTool.Plugin,
   ShellTool.Plugin,

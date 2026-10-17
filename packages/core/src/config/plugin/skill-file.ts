@@ -10,6 +10,7 @@ const Frontmatter = Schema.Struct({
   name: Schema.String.pipe(Schema.optional),
   description: Schema.String.pipe(Schema.optional),
   metadata: Schema.Unknown.pipe(Schema.optional),
+  vars: Schema.Unknown.pipe(Schema.optional),
   "disable-model-invocation": Schema.Unknown.pipe(Schema.optional),
 })
 const decodeFrontmatter = SchemaParser.decodeUnknownResult(Frontmatter)
@@ -49,6 +50,7 @@ export function parse(directory: string, filepath: string, content: string): Par
   const opencodeAutoinvoke = metadataBoolean(frontmatter.metadata, "opencode/autoinvoke")
   const disableModelInvocation = booleanValue(frontmatter["disable-model-invocation"])
   const autoinvoke = opencodeAutoinvoke ?? (disableModelInvocation ? false : undefined)
+  const vars = booleanValue(frontmatter.vars) ?? metadataBoolean(frontmatter.metadata, "opencode/vars")
   return {
     _tag: "Parsed",
     skill: {
@@ -56,6 +58,7 @@ export function parse(directory: string, filepath: string, content: string): Par
       name: Skill.Name.make(frontmatter.name ?? id),
       ...(frontmatter.description === undefined ? {} : { description: frontmatter.description }),
       ...(autoinvoke === undefined ? {} : { autoinvoke }),
+      ...(vars ? { vars } : {}),
       path: AbsolutePath.make(filepath),
       content: markdown.content,
     },

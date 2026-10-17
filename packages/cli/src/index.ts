@@ -76,6 +76,16 @@ const Handlers = Runtime.handlers(Commands, {
     delete: () => import("./commands/handlers/session/delete"),
     export: () => import("./commands/handlers/session/export"),
     import: () => import("./commands/handlers/session/import"),
+    chain: () => import("./commands/handlers/session/chain"),
+    log: () => import("./commands/handlers/session/log"),
+  },
+  msg: {
+    send: () => import("./commands/handlers/msg/send"),
+    read: () => import("./commands/handlers/msg/read"),
+    search: () => import("./commands/handlers/msg/search"),
+    inbox: () => import("./commands/handlers/msg/inbox"),
+    topics: () => import("./commands/handlers/msg/topics"),
+    model: () => import("./commands/handlers/msg/model"),
   },
   service: {
     start: () => import("./commands/handlers/service/start"),

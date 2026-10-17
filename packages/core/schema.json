@@ -1,8 +1,8 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "101fea98-ccfb-45ab-9741-da703119fce2",
-  "prevIds": ["677883c4-8535-45d2-8dc1-757104d5be16"],
+  "id": "c9735d25-ef18-4dc1-ae6d-00504c68d035",
+  "prevIds": ["101fea98-ccfb-45ab-9741-da703119fce2"],
   "ddl": [
     {
       "name": "account_state",
@@ -30,6 +30,34 @@
     },
     {
       "name": "kv",
+      "entityType": "tables"
+    },
+    {
+      "name": "messaging_message",
+      "entityType": "tables"
+    },
+    {
+      "name": "messaging_participant",
+      "entityType": "tables"
+    },
+    {
+      "name": "messaging_subscription",
+      "entityType": "tables"
+    },
+    {
+      "name": "messaging_topic",
+      "entityType": "tables"
+    },
+    {
+      "name": "messaging_var",
+      "entityType": "tables"
+    },
+    {
+      "name": "messaging_vector",
+      "entityType": "tables"
+    },
+    {
+      "name": "messaging_visibility",
       "entityType": "tables"
     },
     {
@@ -505,6 +533,566 @@
       "name": "time_updated",
       "entityType": "columns",
       "table": "kv"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": true,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "messaging_message"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "topic_id",
+      "entityType": "columns",
+      "table": "messaging_message"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "seq",
+      "entityType": "columns",
+      "table": "messaging_message"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "kind",
+      "entityType": "columns",
+      "table": "messaging_message"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "type",
+      "entityType": "columns",
+      "table": "messaging_message"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "writer",
+      "entityType": "columns",
+      "table": "messaging_message"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "data",
+      "entityType": "columns",
+      "table": "messaging_message"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "meta",
+      "entityType": "columns",
+      "table": "messaging_message"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "reply",
+      "entityType": "columns",
+      "table": "messaging_message"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_created",
+      "entityType": "columns",
+      "table": "messaging_message"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "topic_id",
+      "entityType": "columns",
+      "table": "messaging_participant"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "session_id",
+      "entityType": "columns",
+      "table": "messaging_participant"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "reads",
+      "entityType": "columns",
+      "table": "messaging_participant"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "writes",
+      "entityType": "columns",
+      "table": "messaging_participant"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "last_read_seq",
+      "entityType": "columns",
+      "table": "messaging_participant"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_first_read",
+      "entityType": "columns",
+      "table": "messaging_participant"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_last_read",
+      "entityType": "columns",
+      "table": "messaging_participant"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_first_write",
+      "entityType": "columns",
+      "table": "messaging_participant"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_last_write",
+      "entityType": "columns",
+      "table": "messaging_participant"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "topic_id",
+      "entityType": "columns",
+      "table": "messaging_subscription"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "session_id",
+      "entityType": "columns",
+      "table": "messaging_subscription"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "delivery",
+      "entityType": "columns",
+      "table": "messaging_subscription"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "by",
+      "entityType": "columns",
+      "table": "messaging_subscription"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_created",
+      "entityType": "columns",
+      "table": "messaging_subscription"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": true,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "messaging_topic"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "messaging_topic"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "kind",
+      "entityType": "columns",
+      "table": "messaging_topic"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "preset",
+      "entityType": "columns",
+      "table": "messaging_topic"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "owner",
+      "entityType": "columns",
+      "table": "messaging_topic"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "creator",
+      "entityType": "columns",
+      "table": "messaging_topic"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "description",
+      "entityType": "columns",
+      "table": "messaging_topic"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "mode",
+      "entityType": "columns",
+      "table": "messaging_topic"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "writers",
+      "entityType": "columns",
+      "table": "messaging_topic"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "last_seq",
+      "entityType": "columns",
+      "table": "messaging_topic"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_created",
+      "entityType": "columns",
+      "table": "messaging_topic"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_updated",
+      "entityType": "columns",
+      "table": "messaging_topic"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_last",
+      "entityType": "columns",
+      "table": "messaging_topic"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "scope",
+      "entityType": "columns",
+      "table": "messaging_var"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "messaging_var"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "value",
+      "entityType": "columns",
+      "table": "messaging_var"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "by",
+      "entityType": "columns",
+      "table": "messaging_var"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_updated",
+      "entityType": "columns",
+      "table": "messaging_var"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "source",
+      "entityType": "columns",
+      "table": "messaging_vector"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "key",
+      "entityType": "columns",
+      "table": "messaging_vector"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "model",
+      "entityType": "columns",
+      "table": "messaging_vector"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "hash",
+      "entityType": "columns",
+      "table": "messaging_vector"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "dimensions",
+      "entityType": "columns",
+      "table": "messaging_vector"
+    },
+    {
+      "type": "blob",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "vector",
+      "entityType": "columns",
+      "table": "messaging_vector"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_created",
+      "entityType": "columns",
+      "table": "messaging_vector"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "topic_id",
+      "entityType": "columns",
+      "table": "messaging_visibility"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "seq",
+      "entityType": "columns",
+      "table": "messaging_visibility"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "viewer",
+      "entityType": "columns",
+      "table": "messaging_visibility"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "hidden",
+      "entityType": "columns",
+      "table": "messaging_visibility"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "by",
+      "entityType": "columns",
+      "table": "messaging_visibility"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "op_seq",
+      "entityType": "columns",
+      "table": "messaging_visibility"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_updated",
+      "entityType": "columns",
+      "table": "messaging_visibility"
     },
     {
       "type": "integer",
@@ -2099,6 +2687,50 @@
       "table": "event"
     },
     {
+      "columns": ["topic_id"],
+      "tableTo": "messaging_topic",
+      "columnsTo": ["id"],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_messaging_message_topic_id_messaging_topic_id_fk",
+      "entityType": "fks",
+      "table": "messaging_message"
+    },
+    {
+      "columns": ["topic_id"],
+      "tableTo": "messaging_topic",
+      "columnsTo": ["id"],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_messaging_participant_topic_id_messaging_topic_id_fk",
+      "entityType": "fks",
+      "table": "messaging_participant"
+    },
+    {
+      "columns": ["topic_id"],
+      "tableTo": "messaging_topic",
+      "columnsTo": ["id"],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_messaging_subscription_topic_id_messaging_topic_id_fk",
+      "entityType": "fks",
+      "table": "messaging_subscription"
+    },
+    {
+      "columns": ["topic_id"],
+      "tableTo": "messaging_topic",
+      "columnsTo": ["id"],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_messaging_visibility_topic_id_messaging_topic_id_fk",
+      "entityType": "fks",
+      "table": "messaging_visibility"
+    },
+    {
       "columns": ["project_id"],
       "tableTo": "project",
       "columnsTo": ["id"],
@@ -2205,6 +2837,41 @@
       "table": "control_account"
     },
     {
+      "columns": ["topic_id", "session_id"],
+      "nameExplicit": false,
+      "name": "messaging_participant_pk",
+      "entityType": "pks",
+      "table": "messaging_participant"
+    },
+    {
+      "columns": ["topic_id", "session_id"],
+      "nameExplicit": false,
+      "name": "messaging_subscription_pk",
+      "entityType": "pks",
+      "table": "messaging_subscription"
+    },
+    {
+      "columns": ["scope", "name"],
+      "nameExplicit": false,
+      "name": "messaging_var_pk",
+      "entityType": "pks",
+      "table": "messaging_var"
+    },
+    {
+      "columns": ["source", "key", "model"],
+      "nameExplicit": false,
+      "name": "messaging_vector_pk",
+      "entityType": "pks",
+      "table": "messaging_vector"
+    },
+    {
+      "columns": ["topic_id", "seq", "viewer"],
+      "nameExplicit": false,
+      "name": "messaging_visibility_pk",
+      "entityType": "pks",
+      "table": "messaging_visibility"
+    },
+    {
       "columns": ["project_id", "directory"],
       "nameExplicit": false,
       "name": "project_directory_pk",
@@ -2265,6 +2932,20 @@
       "nameExplicit": false,
       "name": "kv_pk",
       "table": "kv",
+      "entityType": "pks"
+    },
+    {
+      "columns": ["id"],
+      "nameExplicit": false,
+      "name": "messaging_message_pk",
+      "table": "messaging_message",
+      "entityType": "pks"
+    },
+    {
+      "columns": ["id"],
+      "nameExplicit": false,
+      "name": "messaging_topic_pk",
+      "table": "messaging_topic",
       "entityType": "pks"
     },
     {
@@ -2397,6 +3078,248 @@
       "name": "event_aggregate_type_seq_idx",
       "entityType": "indexes",
       "table": "event"
+    },
+    {
+      "columns": [
+        {
+          "value": "topic_id",
+          "isExpression": false
+        },
+        {
+          "value": "seq",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_message_topic_seq_idx",
+      "entityType": "indexes",
+      "table": "messaging_message"
+    },
+    {
+      "columns": [
+        {
+          "value": "topic_id",
+          "isExpression": false
+        },
+        {
+          "value": "kind",
+          "isExpression": false
+        },
+        {
+          "value": "seq",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_message_topic_kind_seq_idx",
+      "entityType": "indexes",
+      "table": "messaging_message"
+    },
+    {
+      "columns": [
+        {
+          "value": "writer",
+          "isExpression": false
+        },
+        {
+          "value": "time_created",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_message_writer_time_idx",
+      "entityType": "indexes",
+      "table": "messaging_message"
+    },
+    {
+      "columns": [
+        {
+          "value": "time_created",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_message_time_created_idx",
+      "entityType": "indexes",
+      "table": "messaging_message"
+    },
+    {
+      "columns": [
+        {
+          "value": "session_id",
+          "isExpression": false
+        },
+        {
+          "value": "time_last_write",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_participant_session_write_idx",
+      "entityType": "indexes",
+      "table": "messaging_participant"
+    },
+    {
+      "columns": [
+        {
+          "value": "session_id",
+          "isExpression": false
+        },
+        {
+          "value": "time_last_read",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_participant_session_read_idx",
+      "entityType": "indexes",
+      "table": "messaging_participant"
+    },
+    {
+      "columns": [
+        {
+          "value": "session_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_subscription_session_idx",
+      "entityType": "indexes",
+      "table": "messaging_subscription"
+    },
+    {
+      "columns": [
+        {
+          "value": "name",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_topic_name_idx",
+      "entityType": "indexes",
+      "table": "messaging_topic"
+    },
+    {
+      "columns": [
+        {
+          "value": "kind",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_topic_kind_idx",
+      "entityType": "indexes",
+      "table": "messaging_topic"
+    },
+    {
+      "columns": [
+        {
+          "value": "owner",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_topic_owner_idx",
+      "entityType": "indexes",
+      "table": "messaging_topic"
+    },
+    {
+      "columns": [
+        {
+          "value": "time_created",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_topic_time_created_idx",
+      "entityType": "indexes",
+      "table": "messaging_topic"
+    },
+    {
+      "columns": [
+        {
+          "value": "time_last",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_topic_time_last_idx",
+      "entityType": "indexes",
+      "table": "messaging_topic"
+    },
+    {
+      "columns": [
+        {
+          "value": "model",
+          "isExpression": false
+        },
+        {
+          "value": "source",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_vector_model_source_idx",
+      "entityType": "indexes",
+      "table": "messaging_vector"
+    },
+    {
+      "columns": [
+        {
+          "value": "viewer",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_visibility_viewer_idx",
+      "entityType": "indexes",
+      "table": "messaging_visibility"
+    },
+    {
+      "columns": [
+        {
+          "value": "by",
+          "isExpression": false
+        },
+        {
+          "value": "time_updated",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messaging_visibility_by_idx",
+      "entityType": "indexes",
+      "table": "messaging_visibility"
     },
     {
       "columns": [

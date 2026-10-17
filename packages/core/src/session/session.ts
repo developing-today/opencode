@@ -1,6 +1,6 @@
 export * as Session from "./session.js"
 
-import { DateTime, Effect, Fiber, Scope } from "effect"
+import { DateTime, Effect, Fiber, Option, Scope } from "effect"
 import type { Agent } from "@opencode/schema/agent"
 import type { Model } from "@opencode/schema/model"
 import type { Permission } from "@opencode/schema/permission"
@@ -9,6 +9,7 @@ import { FSUtil } from "@opencode/util/fs-util"
 import { Bus } from "../bus.js"
 import { Database } from "../database/database.js"
 import { Instance } from "../instance/service.js"
+import { MessagingVars } from "../messaging/vars.js"
 import { ShellResult } from "../shell/result.js"
 import type { Skill } from "../skill.js"
 import {
@@ -48,6 +49,9 @@ export const make = Effect.fn("Session.make")(function* () {
   const admission = yield* SessionInbox.Service
   const fs = yield* FSUtil.Service
   const scope = yield* Scope.Scope
+  // Optional: hosts with messaging render template variables in skills that opt in.
+  const vars = Option.getOrUndefined(yield* Effect.serviceOption(MessagingVars.Service))
+  const render = (sessionID: SessionSchema.ID) => (vars ? (text: string) => vars.expand(text, sessionID) : undefined)
 
   const get = Effect.fn("Session.get")(function* (sessionID: SessionSchema.ID) {
     const session = yield* store.get(sessionID)
@@ -155,8 +159,9 @@ export const make = Effect.fn("Session.make")(function* () {
             delivery: input.delivery ?? "steer",
           })
           if (existing) return existing
+          const renderer = render(session.id)
           const item = yield* restore(
-            SessionPrompt.prepare({ session, messageID, input }).pipe(
+            SessionPrompt.prepare({ session, messageID, input, ...(renderer ? { render: renderer } : {}) }).pipe(
               Effect.provideService(Instance.Service, instances),
               Effect.provideService(FSUtil.Service, fs),
             ),
@@ -228,13 +233,14 @@ export const make = Effect.fn("Session.make")(function* () {
     const skill = yield* SessionSkill.get({ session, skill: input.skill }).pipe(
       Effect.provideService(Instance.Service, instances),
     )
+    const renderer = skill.vars ? render(sessionID) : undefined
     yield* bus.publish(
       SessionEvent.Skill.Activated,
       {
         sessionID,
         id: skill.id,
         name: skill.name,
-        text: skill.content,
+        text: renderer ? yield* renderer(skill.content) : skill.content,
       },
       { id: input.messageID ? Event.ID.make(input.messageID.replace(/^msg_/, "evt_")) : undefined },
     )

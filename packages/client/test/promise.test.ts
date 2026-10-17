@@ -30,6 +30,7 @@ test("exposes every standard HTTP API group", () => {
     "shell",
     "reference",
     "worktree",
+    "messaging",
     "vcs",
     "debug",
     "migration",
