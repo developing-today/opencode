@@ -36,6 +36,10 @@ async function renderComposer(
   defaultTab: "subagents" | "shell",
   keybinds: Partial<TuiKeybind.Keybinds>,
   focusedTextarea = false,
+  family: { sessions: Record<string, ReturnType<typeof session>>; running: string[] } = {
+    sessions,
+    running: ["child-a", "child-b"],
+  },
 ) {
   const events = createEventStream()
   const interrupted: string[] = []
@@ -47,9 +51,9 @@ async function renderComposer(
   let route!: ReturnType<typeof useRoute>
   const calls = createFetch((url, request) => {
     if (url.pathname === "/api/session/active")
-      return json({ data: { "child-a": { type: "running" }, "child-b": { type: "running" } } })
+      return json({ data: Object.fromEntries(family.running.map((id) => [id, { type: "running" }])) })
     const sessionID = url.pathname.match(/^\/api\/session\/([^/]+)$/)?.[1]
-    if (sessionID && sessionID in sessions) return json({ data: sessions[sessionID as keyof typeof sessions] })
+    if (sessionID && sessionID in family.sessions) return json({ data: family.sessions[sessionID] })
     const interruptID = url.pathname.match(/^\/api\/session\/([^/]+)\/interrupt$/)?.[1]
     if (interruptID && request.method === "POST") {
       interrupted.push(interruptID)
@@ -81,14 +85,8 @@ async function renderComposer(
     route = useRoute()
     dispatch = Keymap.use().dispatch
     onMount(() => {
-      void Promise.all([
-        data.session.sync("parent"),
-        data.session.sync("child-a"),
-        data.session.sync("child-b"),
-        data.session.sync("child-c"),
-        data.shell.sync(),
-      ])
-        .then(() => wait(() => data.session.status("child-a") === "running"))
+      void Promise.all([...Object.keys(family.sessions).map((id) => data.session.sync(id)), data.shell.sync()])
+        .then(() => wait(() => family.running.every((id) => data.session.status(id) === "running")))
         .then(() => ready.resolve(), ready.reject)
     })
     return (
@@ -204,6 +202,38 @@ test("the inactive subagent filter only changes with its toggle", async () => {
     await composer.app.renderOnce()
     expect(composer.app.captureCharFrame()).toContain("First")
     expect(composer.app.captureCharFrame()).not.toContain("Third")
+  } finally {
+    composer.app.renderer.destroy()
+  }
+})
+
+test("the subagent filter keeps nested matches under their own parent", async () => {
+  const composer = await renderComposer("subagents", {}, false, {
+    sessions: {
+      parent: session("parent", "Parent"),
+      planner: { ...session("planner", "Planner", "parent"), time: { created: 0, updated: 2 } },
+      worker: { ...session("worker", "Worker", "planner"), time: { created: 0, updated: 2 } },
+      reviewer: { ...session("reviewer", "Reviewer", "planner"), time: { created: 0, updated: 1 } },
+      archivist: { ...session("archivist", "Archivist", "parent"), time: { created: 0, updated: 1 } },
+    },
+    running: ["worker"],
+  })
+  const row = (text: string) => {
+    const lines = composer.app.captureCharFrame().split("\n")
+    return lines.findIndex((line) => line.includes(text))
+  }
+  try {
+    // The idle planner stays as context, so its running worker is not drawn as an orphan.
+    expect(row("Build: Planner")).toBeGreaterThan(-1)
+    expect(row("└─ Build: Worker")).toBe(row("Build: Planner") + 1)
+    expect(row("Reviewer")).toBe(-1)
+    expect(row("Archivist")).toBe(-1)
+
+    composer.app.mockInput.pressKey("a", { ctrl: true })
+    await composer.app.renderOnce()
+    expect(row("└─ Build: Reviewer")).toBe(row("Build: Planner") + 1)
+    expect(row("Build: Archivist")).toBeGreaterThan(-1)
+    expect(row("Worker")).toBe(-1)
   } finally {
     composer.app.renderer.destroy()
   }
