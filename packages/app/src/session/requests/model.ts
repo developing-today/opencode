@@ -20,19 +20,19 @@ export function createSessionRequestModel() {
   const language = useLanguage()
   const settings = useSettings()
   createEffect(() => {
-    const id = params.id
-
-    if (!id || serverSDK.connection.status() !== "connected") return
-    void Promise.all([data.shell.sync({ directory: sdk().directory }), data.session.permission.sync(id)]).catch(
-      () => undefined,
-    )
+    if (!params.id || serverSDK.connection.status() !== "connected") return
+    void data.shell.sync({ directory: sdk().directory }).catch(() => undefined)
   })
+  // Asks from subagents at any depth surface here, including ones raised before this client saw them.
   createEffect(() => {
     const id = params.id
 
     if (!id || serverSDK.connection.status() !== "connected") return
     void Promise.all(
-      sessionTreeIDs(data.session.list(), id).map((sessionID) => data.session.form.sync(sessionID)),
+      sessionTreeIDs(data.session.list(), id).flatMap((sessionID) => [
+        data.session.permission.sync(sessionID),
+        data.session.form.sync(sessionID),
+      ]),
     ).catch(() => undefined)
   })
 

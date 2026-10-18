@@ -209,6 +209,36 @@ test("shows a pending permission dock", async ({ page }) => {
   await expect(page.locator('[data-component="composer"]')).toBeVisible()
 })
 
+test("answers a subagent's permission from the root session after a fresh load", async ({ page }) => {
+  const childID = "ses_request_docks_child"
+  const replies: { sessionID: string; permissionID: string; body: unknown }[] = []
+  // Only the root has a tab: an inactive child tab would load the child's requests on its own.
+  await mockServer(page, {
+    sessions: [
+      { id: sessionID, title },
+      { id: childID, title: "Inspect the history", parentID: sessionID },
+    ],
+    seed: { tabs: [sessionID] },
+    onPermissionReply: (reply) => replies.push(reply),
+    sessionPermissions: {
+      [childID]: [
+        { id: "permission-child", sessionID: childID, action: "shell", resources: ["git log"], metadata: {}, save: [] },
+      ],
+    },
+  })
+
+  await page.goto(sessionHref(sessionID))
+  await expectSessionTitle(page, title)
+
+  const permission = page.locator('[data-component="dock-prompt"][data-kind="permission"]')
+  await expect(permission.getByText("git log")).toBeVisible()
+  await permission.getByRole("button", { name: "Allow once" }).click()
+  await expect
+    .poll(() => replies)
+    .toEqual([{ sessionID: childID, permissionID: "permission-child", body: { decision: "once" } }])
+  await expect(permission).toHaveCount(0)
+})
+
 test("restores the draft caret before typing after a request dock closes", async ({ page }) => {
   const transport = await installSseTransport(page, { server: SERVER, retry: 20 })
   await mockServer(page, { forms: [] })
@@ -280,6 +310,9 @@ test("restores the draft caret before typing after a request dock closes", async
   await expect(editor).toHaveText(`${draft.slice(0, cursor)}x${draft.slice(cursor)}`)
 })
 
-function mockServer(page: Page, requests: Pick<WorkspaceInput, "sessionPermissions" | "onPermissionReply" | "forms">) {
+function mockServer(
+  page: Page,
+  requests: Pick<WorkspaceInput, "sessionPermissions" | "onPermissionReply" | "forms" | "sessions" | "seed">,
+) {
   return mockWorkspace(page, { name: "RequestDocks", directory, sessions: [{ id: sessionID, title }], ...requests })
 }
