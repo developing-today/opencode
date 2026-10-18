@@ -16,7 +16,6 @@ import {
   reasoningPart,
   renderedPartID,
   session,
-  sessionCreated,
   sessionID,
   setupTimeline,
   shell,
@@ -27,6 +26,7 @@ import {
   userMessage,
   userText,
 } from "../utils/timeline"
+import { sessionCreated } from "../utils/session-events"
 
 const detailed = timelinePresets[2].value
 

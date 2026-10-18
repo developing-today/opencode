@@ -124,6 +124,7 @@ test("groups and filters workspace inventory by project", () => {
 })
 
 test("reports every workspace deletion condition", () => {
+  // SAFETY: inspectWorkspaceDeletion reads only each session's location and archive time.
   const session = (directory: string) => ({ location: { directory }, time: { created: 1, updated: 1 } }) as SessionInfo
   expect(
     inspectWorkspaceDeletion({
@@ -154,6 +155,7 @@ test("reports every workspace deletion condition", () => {
     inspectWorkspaceDeletion({
       workspace: "/workspace",
       sessions: [
+        // SAFETY: inspectWorkspaceDeletion reads only each session's location and archive time.
         { location: { directory: "/workspace" }, time: { created: 1, updated: 1, archived: 2 } } as SessionInfo,
       ],
       status: "clean",
@@ -162,6 +164,7 @@ test("reports every workspace deletion condition", () => {
 })
 
 test("groups nested non-archived workspace sessions by latest activity", () => {
+  // SAFETY: sessionsForWorkspace reads only each session's location, archive and update times; the test reads ids.
   const session = (id: string, directory: string, updated: number, archived?: number) =>
     ({ id, location: { directory }, time: { created: 1, updated, archived } }) as SessionInfo
 
@@ -209,6 +212,7 @@ test("nests subagent sessions under the session that started them at any depth",
 })
 
 test("merges workspace placement by freshness with authoritative server ties", () => {
+  // SAFETY: mergeWorkspaceSessionInventory reads only each session's id and update time; the test reads locations.
   const session = (directory: string, updated: number) =>
     ({ id: "session", location: { directory }, time: { created: 1, updated } }) as SessionInfo
 

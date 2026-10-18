@@ -608,20 +608,6 @@ export function status(type: SessionStatus["type"], attempt = 1, id = sessionID)
   })
 }
 
-// Announces a session the mock server already serves, as when a subagent starts another subagent.
-export function sessionCreated(info: Session) {
-  return makeEvent("session.created", {
-    sessionID: info.id,
-    projectID: info.projectID,
-    location: info.location,
-    parentID: info.parentID,
-    slug: info.id,
-    title: info.title,
-    agent: info.agent,
-    version: "dev",
-  })
-}
-
 export function stepStarted(message: SessionMessageAssistant) {
   return makeEvent("session.step.started", {
     sessionID,

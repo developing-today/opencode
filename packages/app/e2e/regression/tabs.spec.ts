@@ -145,17 +145,20 @@ test("a background tab waiting on a subagent's ask lights up and reopens at its 
       ],
     },
     onPermissionReply: (reply) => replies.push(reply),
-    // Tab B last showed another subagent, whose view cannot show this ask.
-    seed: { tabs: [a.id, { session: b.id, route: viewed.id }] },
+    seed: { tabs: [a.id, b.id] },
   })
 
-  await page.goto(sessionHref(a.id))
+  // Tab B shows another subagent, whose view cannot show this ask, before the tab moves to the background.
+  await page.goto(sessionHref(viewed.id))
 
   const tabB = page.locator("[data-titlebar-tab-slot]", {
     has: page.locator('[data-slot="tab-title"]', { hasText: b.title }),
   })
 
   const link = tabB.locator("[data-titlebar-tab-link]")
+  await expect(link).toHaveAttribute("href", sessionHref(viewed.id))
+  await page.locator(`[data-titlebar-tab-link][href="${sessionHref(a.id)}"]`).click()
+  await expectPath(page, sessionHref(a.id))
   await page.mouse.move(0, 0)
   await expect(tabB.locator('[data-slot="tab-unread-dot"]')).toBeVisible()
   await expect(link).toHaveAttribute("href", sessionHref(b.id))

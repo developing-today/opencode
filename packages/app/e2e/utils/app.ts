@@ -35,8 +35,7 @@ export async function expectPath(page: Page, href: string) {
 
 export type TabSeed =
   | string
-  // `route` is a subagent session the tab last showed instead of its root.
-  | { session: string; server?: string; route?: string }
+  | { session: string; server?: string }
   | { draft: string; directory: string; server?: string }
 
 export type SeedInput = {
@@ -129,8 +128,7 @@ function storageEntries(input: SeedInput): [string, string, boolean][] {
 function tabEntry(tab: TabSeed) {
   if (typeof tab === "string") return { type: "session", server: SERVER, sessionId: tab }
 
-  if ("session" in tab)
-    return { type: "session", server: tab.server ?? SERVER, sessionId: tab.session, routeSessionId: tab.route }
+  if ("session" in tab) return { type: "session", server: tab.server ?? SERVER, sessionId: tab.session }
 
   return { type: "draft", draftID: tab.draft, server: tab.server ?? SERVER, directory: tab.directory }
 }
