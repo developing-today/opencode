@@ -545,16 +545,18 @@ This setting applies across all interfaces: TUI, CLI (`opencode run`), desktop a
 
 ### Subagent depth
 
-You can control how deeply subagents can invoke other subagents using the `subagent_depth` option.
+You can control how deeply subagents can invoke other subagents using the `subagent_depth` option under `experimental`.
 
 ```json title="opencode.json"
 {
   "$schema": "https://opencode.ai/config.json",
-  "subagent_depth": 2
+  "experimental": {
+    "subagent_depth": 2
+  }
 }
 ```
 
-The default is `1`, which allows primary agents to launch subagents but prevents those subagents from launching additional subagents. Set it to `2` to allow one additional level of nested subagents, or `0` to prevent all subagent launches.
+The default is `5`, which lets subagents launch their own subagents up to five levels below the top-level session. Set it to `1` to prevent subagents from launching additional subagents, or `0` to prevent all subagent launches.
 
 ---
 

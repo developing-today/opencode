@@ -318,13 +318,94 @@ describe("SubagentTool", () => {
     ),
   )
 
-  it.live("prevents subagents from launching subagents by default", () =>
+  it.live("lets a subagent launch its own subagent in the foreground by default", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),
       (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
     ).pipe(
       Effect.flatMap((dir) =>
         Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const root = yield* sessions.create({ location })
+          const parent = yield* sessions.create({ parentID: root.id, title: "parent", model: parentModel })
+          yield* withSubagent(parent.location)
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(parent.location)))
+
+          const settled = yield* executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call",
+              id: "call-nested-subagent",
+              name: SubagentTool.name,
+              // A nested launch blocks even when asked to background, so the parent's answer includes it.
+              input: { agent: "reviewer", description: "nested", prompt: "should run", background: true },
+            },
+          })
+
+          expect(settled).toMatchObject({
+            status: "completed",
+            metadata: { status: "completed" },
+            content: [{ type: "text", text: expect.stringContaining(childText) }],
+          })
+          expect((yield* sessions.get(outputSessionID(settled.metadata))).parentID).toBe(parent.id)
+        }),
+      ),
+    ),
+  )
+
+  it.live("stops nested subagents at the default depth", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          let deepest = yield* sessions.create({ location })
+          for (const level of [1, 2, 3, 4, 5])
+            deepest = yield* sessions.create({ parentID: deepest.id, title: `level ${level}` })
+          yield* withSubagent(deepest.location)
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(deepest.location)))
+
+          expect(
+            yield* executeTool(registry, {
+              sessionID: deepest.id,
+              ...toolIdentity,
+              call: {
+                type: "tool-call",
+                id: "call-too-deep-subagent",
+                name: SubagentTool.name,
+                input: { agent: "reviewer", description: "too deep", prompt: "should fail" },
+              },
+            }),
+          ).toEqual({
+            status: "error",
+            error: {
+              type: "tool.execution",
+              message: expect.stringContaining("Subagent depth limit reached (5)"),
+            },
+          })
+          expect((yield* sessions.list({ parentID: deepest.id })).data).toHaveLength(0)
+        }),
+      ),
+    ),
+  )
+
+  it.live("honors a configured depth limit", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Bun.write(path.join(dir.path, "opencode.json"), JSON.stringify({ experimental: { subagent_depth: 1 } })),
+          )
           const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
           const sessions = yield* Session.Service
           const root = yield* sessions.create({ location })
@@ -339,7 +420,7 @@ describe("SubagentTool", () => {
               ...toolIdentity,
               call: {
                 type: "tool-call",
-                id: "call-nested-subagent",
+                id: "call-configured-limit",
                 name: SubagentTool.name,
                 input: { agent: "reviewer", description: "nested", prompt: "should fail" },
               },
@@ -352,50 +433,6 @@ describe("SubagentTool", () => {
             },
           })
           expect((yield* sessions.list({ parentID: parent.id })).data).toHaveLength(0)
-        }),
-      ),
-    ),
-  )
-
-  it.live("allows nested subagents up to the configured depth", () =>
-    Effect.acquireRelease(
-      Effect.promise(() => tmpdir()),
-      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
-    ).pipe(
-      Effect.flatMap((dir) =>
-        Effect.gen(function* () {
-          yield* Effect.promise(() =>
-            Bun.write(path.join(dir.path, "opencode.json"), JSON.stringify({ experimental: { subagent_depth: 2 } })),
-          )
-          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
-          const sessions = yield* Session.Service
-          const root = yield* sessions.create({ location })
-          const parent = yield* sessions.create({ parentID: root.id, title: "parent", model: parentModel })
-          yield* withSubagent(parent.location)
-          const locations = yield* LocationServiceMap.Service
-          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(parent.location)))
-
-          const settled = yield* executeTool(registry, {
-            sessionID: parent.id,
-            ...toolIdentity,
-            call: {
-              type: "tool-call",
-              id: "call-configured-nested-subagent",
-              name: SubagentTool.name,
-              input: { agent: "reviewer", description: "nested", prompt: "should run" },
-            },
-          })
-
-          expect(settled).toMatchObject({
-            status: "completed",
-            metadata: { status: "completed" },
-            content: [{ type: "text", text: expect.stringContaining(childText) }],
-          })
-          expect(settled.metadata).toEqual({
-            sessionID: outputSessionID(settled.metadata),
-            status: "completed",
-          })
-          expect((yield* sessions.get(outputSessionID(settled.metadata))).parentID).toBe(parent.id)
         }),
       ),
     ),
