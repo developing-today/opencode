@@ -41,6 +41,21 @@ export function sessionsForWorkspace(sessions: readonly SessionInfo[], workspace
     .toSorted((a, b) => b.time.updated - a.time.updated)
 }
 
+// Each session followed by its subagent sessions at any depth, siblings in list order. A subagent whose parent is not
+// listed starts its own branch.
+export function nestWorkspaceSessions(sessions: readonly SessionInfo[]) {
+  const listed = new Set(sessions.map((session) => session.id))
+
+  const children = Map.groupBy(sessions, (session) =>
+    session.parentID && listed.has(session.parentID) ? session.parentID : undefined,
+  )
+
+  const walk = (parentID: string | undefined, depth: number): { session: SessionInfo; depth: number }[] =>
+    (children.get(parentID) ?? []).flatMap((session) => [{ session, depth }, ...walk(session.id, depth + 1)])
+
+  return walk(undefined, 0)
+}
+
 export function mergeWorkspaceSessionInventory(server: readonly SessionInfo[], cached: readonly SessionInfo[]) {
   const sessions = new Map(server.map((session) => [session.id, session]))
   cached.forEach((session) => {
