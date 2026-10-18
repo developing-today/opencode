@@ -153,6 +153,44 @@ test("discovers nested subagents at any depth, publishing each level as it arriv
   }
 })
 
+test("keeps the rest of the tree when a nested listing fails, and lists a few sessions at a time", async () => {
+  const children = Array.from({ length: 20 }, (_, index) => `ses_c${index}`)
+  const flight = { now: 0, most: 0 }
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      if (url.pathname === "/api/session/ses_root") return Response.json({ data: { ...session(0), id: "ses_root" } })
+      const parentID = url.searchParams.get("parentID")
+      if (parentID === "ses_root")
+        return Response.json({ data: children.map((id) => ({ ...session(0), id, parentID })), cursor: {} })
+      flight.now++
+      flight.most = Math.max(flight.most, flight.now)
+      await Bun.sleep(1)
+      flight.now--
+      if (parentID === "ses_c0") return new Response(null, { status: 500 })
+      return Response.json({
+        data: parentID === "ses_c1" ? [{ ...session(0), id: "ses_c1_child", parentID }] : [],
+        cursor: {},
+      })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    await setup.data.session.sync("ses_root", { children: true })
+
+    expect(setup.data.session.get("ses_c1_child")?.parentID).toBe("ses_c1")
+    expect(setup.data.session.family("ses_root")).toHaveLength(22)
+    expect(flight.most).toBeLessThanOrEqual(8)
+  } finally {
+    setup.dispose()
+  }
+})
+
 test("lists each session once when parent links form a cycle", async () => {
   const requests: string[] = []
   const api = OpenCode.make({

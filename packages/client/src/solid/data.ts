@@ -227,6 +227,9 @@ function createSync() {
 }
 
 const CHILD_PAGE = 200
+// Listings in flight while walking below a session's direct children, so a wide tree does not queue the
+// client's other requests behind it.
+const DESCENDANT_LISTINGS = 8
 
 export function createData(config: CreateDataInput) {
   const api = config.api
@@ -535,7 +538,9 @@ export function createData(config: CreateDataInput) {
 
   // Subagents can launch their own, so walk the rest of the tree one level per round of requests,
   // publishing each level as it arrives. `seen` holds the sessions whose children were already
-  // listed, so every session is listed once and a parent cycle still ends the walk.
+  // listed, so every session is listed once and a parent cycle still ends the walk. Below the
+  // direct children the walk is best effort: a branch whose listing fails is left to live events
+  // rather than failing the sync and closing the view.
   async function syncDescendants(parents: SessionInfo[], seen: Set<string>): Promise<void> {
     const expand = parents.filter((parent) => {
       if (seen.has(parent.id)) return false
@@ -543,11 +548,19 @@ export function createData(config: CreateDataInput) {
       return true
     })
     if (expand.length === 0) return
-    const children = (
-      await Promise.all(expand.map((parent) => listChildren({ parentID: parent.id, order: "desc", limit: CHILD_PAGE })))
+    const groups = Array.from({ length: Math.ceil(expand.length / DESCENDANT_LISTINGS) }, (_, index) =>
+      expand.slice(index * DESCENDANT_LISTINGS, (index + 1) * DESCENDANT_LISTINGS),
     )
-      .flat()
-      .filter((child) => !seen.has(child.id))
+    const listed: SessionInfo[] = []
+    for (const group of groups) {
+      const pages = await Promise.all(
+        group.map((parent) =>
+          listChildren({ parentID: parent.id, order: "desc", limit: CHILD_PAGE }).catch((): SessionInfo[] => []),
+        ),
+      )
+      listed.push(...pages.flat())
+    }
+    const children = listed.filter((child) => !seen.has(child.id))
     publishSessions(children)
     return syncDescendants(children, seen)
   }
