@@ -575,10 +575,16 @@ export function createData(config: CreateDataInput) {
               listChildren({ parentID: parent.id, order: "desc", limit: CHILD_PAGE }),
             ).catch((): SessionInfo[] => [])
           ).filter((child) => !seen.has(child.id))
-          publishSessions(children)
+          publishSessions(children.filter(unread))
           return syncDescendants(children, seen)
         }),
     )
+  }
+
+  // A listing fills in sessions this client has not read. A session whose own read is settled or in flight is
+  // kept current by that read and by live events such as a rename, so an older listed snapshot must not replace it.
+  function unread(session: SessionInfo) {
+    return !sync.has(`session:${session.id}`)
   }
 
   function publishSessions(sessions: SessionInfo[]) {
@@ -1726,7 +1732,7 @@ export function createData(config: CreateDataInput) {
             api().session.get({ sessionID }),
             options?.children ? listChildren({ parentID: sessionID, order: "desc", limit: CHILD_PAGE }) : [],
           ])
-          publishSessions([info, ...children])
+          publishSessions([info, ...children.filter(unread)])
           if (options?.children) await syncDescendants(children, new Set([sessionID]))
         })
       },

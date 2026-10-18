@@ -218,6 +218,66 @@ test("shares one listing limit across concurrent walks and keeps a tree whose ne
   }
 })
 
+test("keeps a live rename that lands while discovery lists the renamed subagent", async () => {
+  const listed = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
+  const info = (id: string, parentID?: string): SessionInfo => ({ ...session(0), id, parentID, title: "Old title" })
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      if (url.pathname === "/api/session/ses_root") return Response.json({ data: info("ses_root") })
+      if (url.pathname === "/api/session/ses_grandchild")
+        return Response.json({ data: info("ses_grandchild", "ses_child") })
+      const parentID = url.searchParams.get("parentID")
+      if (parentID === "ses_root") return Response.json({ data: [info("ses_child", "ses_root")], cursor: {} })
+      if (parentID !== "ses_child") return Response.json({ data: [], cursor: {} })
+      // The listing reads the grandchild before the rename, and its response lands after it.
+      listed.resolve()
+      await release.promise
+      return Response.json({ data: [info("ses_grandchild", "ses_child")], cursor: {} })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({
+      api: () => api,
+      directory: "/project",
+      event: {
+        on: () => () => {},
+        listen(handler) {
+          listeners.add(handler)
+          return () => listeners.delete(handler)
+        },
+      },
+    }),
+    dispose,
+  }))
+
+  try {
+    await setup.data.session.sync("ses_grandchild")
+    const synced = setup.data.session.sync("ses_root", { children: true })
+    await listed.promise
+    const renamed: OpenCodeEvent = {
+      id: "evt_renamed",
+      created: 1,
+      type: "session.renamed",
+      durable: { aggregateID: "ses_grandchild", seq: 1, version: 1 },
+      data: { sessionID: "ses_grandchild", title: "New title" },
+    }
+    listeners.forEach((listener) => listener({ name: renamed.type, details: renamed }))
+    await wait(() => setup.data.session.get("ses_grandchild")?.title === "New title")
+    release.resolve()
+    await synced
+
+    expect(setup.data.session.get("ses_grandchild")?.title).toBe("New title")
+    expect(setup.data.session.family("ses_root").toSorted()).toEqual(["ses_child", "ses_grandchild", "ses_root"])
+  } finally {
+    release.resolve()
+    setup.dispose()
+  }
+})
+
 test("lists each session once when parent links form a cycle", async () => {
   const requests: string[] = []
   const api = OpenCode.make({
