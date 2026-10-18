@@ -1873,3 +1873,83 @@ describe("ShellTool", () => {
     ),
   )
 })
+
+const withShellTimeout = <A, E, R>(shellTimeout: number, body: (registry: Tool.Interface) => Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.promise(() => tmpdir()),
+    (tmp) =>
+      Effect.promise(() =>
+        Bun.write(
+          path.join(tmp.path, "opencode.json"),
+          JSON.stringify({ experimental: { shell_timeout: shellTimeout } }),
+        ),
+      ).pipe(Effect.andThen(withSession(tmp.path, body))),
+    (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]().then(() => undefined)),
+  )
+
+const contentText = (settled: { content?: ReadonlyArray<{ type: string; text?: string }> }) =>
+  (settled.content ?? []).map((item) => (item.type === "text" ? (item.text ?? "") : "")).join("\n")
+
+describe("ShellTool configured default timeout", () => {
+  it.live("times out a foreground command at the configured default and renders it in the timeout description", () =>
+    withShellTimeout(100, (registry) =>
+      Effect.gen(function* () {
+        reset()
+        const definitions = yield* toolDefinitions(registry)
+        const definition = definitions.find((tool) => tool.name === "shell")
+        expect(definition?.inputSchema).toMatchObject({
+          properties: { timeout: { description: expect.stringContaining("Defaults to 100 for foreground commands") } },
+        })
+        const settled = yield* executeTool(registry, call({ command: idleCommand }))
+        expect(settled.status).toBe("completed")
+        expect(settled.metadata).toMatchObject({ timeout: true })
+        expect(contentText(settled)).toContain("Command exceeded timeout of 100 ms")
+      }),
+    ),
+  )
+
+  it.live("an explicit timeout overrides the configured default", () =>
+    withShellTimeout(60_000, (registry) =>
+      Effect.gen(function* () {
+        reset()
+        const settled = yield* executeTool(registry, call({ command: idleCommand, timeout: 100 }))
+        expect(settled.status).toBe("completed")
+        expect(settled.metadata).toMatchObject({ timeout: true })
+        expect(contentText(settled)).toContain("Command exceeded timeout of 100 ms")
+      }),
+    ),
+  )
+
+  it.live("a configured timeout of 0 disables the foreground timeout", () =>
+    withShellTimeout(0, (registry) =>
+      Effect.gen(function* () {
+        reset()
+        const command = isWindows
+          ? "Start-Sleep -Milliseconds 300; [Console]::Out.Write('hello')"
+          : "sleep 0.3; printf hello"
+        const settled = yield* executeTool(registry, call({ command }))
+        expect(settled.status).toBe("completed")
+        expect(settled.metadata).toMatchObject({ exit: 0, truncated: false })
+        expect(settled.content).toEqual([{ type: "text", text: "hello" }])
+      }),
+    ),
+  )
+
+  it.live("background commands keep no timeout when a default is configured", () =>
+    withShellTimeout(100, (registry) =>
+      Effect.gen(function* () {
+        reset()
+        const settled = yield* executeTool(registry, call({ command: idleCommand, background: true }))
+        const shellID = typeof settled.metadata?.shellID === "string" ? settled.metadata.shellID : undefined
+        expect(settled.metadata).toMatchObject({ truncated: false })
+        expect(shellID).toStartWith("sh_")
+        const shell = yield* Shell.Service
+        if (!shellID) return
+        const id = ID.make(shellID)
+        yield* Effect.sleep(Duration.millis(300))
+        expect((yield* shell.get(id)).status).toBe("running")
+        yield* shell.remove(id)
+      }),
+    ),
+  )
+})

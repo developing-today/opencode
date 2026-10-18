@@ -558,6 +558,23 @@ The default is `1`, which allows primary agents to launch subagents but prevents
 
 ---
 
+### Shell timeout
+
+You can change the default timeout for foreground shell commands using the `shell_timeout` option under `experimental`. The value is in milliseconds.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "shell_timeout": 300000
+  }
+}
+```
+
+The default is `120000` (2 minutes). Set it to `0` to disable the timeout for foreground commands. A timeout passed explicitly for a single command still takes precedence, and background commands have no timeout by default.
+
+---
+
 ### Commands
 
 You can configure custom commands for repetitive tasks through the `command` option.

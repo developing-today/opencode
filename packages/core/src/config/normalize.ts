@@ -478,6 +478,15 @@ function normalizeExperimental(
         )
         if (value !== undefined) result.subagent_depth = value
       }
+      if (own(experimental, "shell_timeout")) {
+        const value = decodeEncoded(
+          ConfigExperimental.Info.fields.shell_timeout,
+          experimental.shell_timeout,
+          ["experimental", "shell_timeout"],
+          diagnostics,
+        )
+        if (value !== undefined) result.shell_timeout = value
+      }
       if (own(experimental, "model_route_tuning")) {
         unknownKeys(
           experimental.model_route_tuning,

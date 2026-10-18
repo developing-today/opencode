@@ -550,6 +550,17 @@ describe("ConfigNormalize", () => {
     })
   })
 
+  test("passes through the experimental shell timeout and drops invalid values", () => {
+    expect(normalized({ experimental: { shell_timeout: 300000 } }).encoded).toMatchObject({
+      experimental: { shell_timeout: 300000 },
+    })
+    expect(normalized({ experimental: { shell_timeout: 0 } }).encoded).toMatchObject({
+      experimental: { shell_timeout: 0 },
+    })
+    expect(normalized({ experimental: { shell_timeout: -1 } }).encoded.experimental).toBeUndefined()
+    expect(decoded({ experimental: { shell_timeout: 300000 } }).experimental?.shell_timeout).toBe(300000)
+  })
+
   test("never emits experimental policies", () => {
     expect(
       normalized({ experimental: { policies: [{ action: "provider.use", resource: "*", effect: "deny" }] } }).encoded,
