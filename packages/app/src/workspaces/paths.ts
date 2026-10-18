@@ -56,7 +56,9 @@ export function nestWorkspaceSessions(sessions: readonly SessionInfo[]) {
   const walk = (parentID: string | undefined, depth: number): { session: SessionInfo; depth: number }[] =>
     (children.get(parentID) ?? []).flatMap((session) => {
       if (seen.has(session.id)) return []
+
       seen.add(session.id)
+
       return [{ session, depth }, ...walk(session.id, depth + 1)]
     })
 
@@ -64,7 +66,9 @@ export function nestWorkspaceSessions(sessions: readonly SessionInfo[]) {
     ...walk(undefined, 0),
     ...sessions.flatMap((session) => {
       if (seen.has(session.id)) return []
+
       seen.add(session.id)
+
       return [{ session, depth: 0 }, ...walk(session.id, 1)]
     }),
   ]
