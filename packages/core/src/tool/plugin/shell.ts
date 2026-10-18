@@ -45,20 +45,23 @@ const description = (shell?: string) =>
     "Background commands return immediately, and you will be notified when they complete.",
   ].join(" ")
 
-export const Input = Schema.Struct({
-  command: Schema.String.annotate({ description: "Shell command string to execute" }),
-  workdir: Schema.optionalKey(Schema.String).annotate({
-    description:
-      "Working directory to execute the command in. Defaults to the current working directory. When possible, avoid changing directories in the command and set the working directory here instead.",
-  }),
-  timeout: Schema.optionalKey(NonNegativeInt).annotate({
-    description: `Timeout in milliseconds. Set to 0 to disable the timeout. Defaults to ${DEFAULT_TIMEOUT_MS} for foreground commands. Background commands have no timeout by default.`,
-  }),
-  background: Schema.optionalKey(Schema.Boolean).annotate({
-    description:
-      "Run the command in the background and return immediately (useful for dev servers and long-running builds). You do not need to use '&' at the end of the command when using this parameter. You will be notified when it completes. DO NOT poll for completion.",
-  }),
-})
+const inputSchema = (defaultTimeout: number) =>
+  Schema.Struct({
+    command: Schema.String.annotate({ description: "Shell command string to execute" }),
+    workdir: Schema.optionalKey(Schema.String).annotate({
+      description:
+        "Working directory to execute the command in. Defaults to the current working directory. When possible, avoid changing directories in the command and set the working directory here instead.",
+    }),
+    timeout: Schema.optionalKey(NonNegativeInt).annotate({
+      description: `Timeout in milliseconds. Set to 0 to disable the timeout. Defaults to ${defaultTimeout} for foreground commands. Background commands have no timeout by default.`,
+    }),
+    background: Schema.optionalKey(Schema.Boolean).annotate({
+      description:
+        "Run the command in the background and return immediately (useful for dev servers and long-running builds). You do not need to use '&' at the end of the command when using this parameter. You will be notified when it completes. DO NOT poll for completion.",
+    }),
+  })
+
+export const Input = inputSchema(DEFAULT_TIMEOUT_MS)
 
 const StructuredOutput = Schema.Struct({
   exit: Schema.optionalKey(Schema.Number),
@@ -113,6 +116,7 @@ export const Plugin = {
     const compatibleShell = shellSelect.resolve({ priority: "compat" })
     const permission = yield* Permission.Service
     const config = yield* Config.Service
+    const defaultTimeout = Config.latest(yield* config.entries(), "experimental")?.shell_timeout ?? DEFAULT_TIMEOUT_MS
 
     const prepare = Effect.fn("ShellTool.prepare")(function* (invocation: ShellCreateBefore, context: Tool.Context) {
       const source = {
@@ -194,11 +198,13 @@ export const Plugin = {
           name,
           options: { codemode: false },
           description: description(),
-          input: Input,
+          input: inputSchema(defaultTimeout),
           output: Output,
           execute: (input, context) =>
             Effect.gen(function* () {
-              const timeout = input.background === true ? (input.timeout ?? 0) : (input.timeout ?? DEFAULT_TIMEOUT_MS)
+              const configured =
+                Config.latest(yield* config.entries(), "experimental")?.shell_timeout ?? DEFAULT_TIMEOUT_MS
+              const timeout = input.background === true ? (input.timeout ?? 0) : (input.timeout ?? configured)
               let finalTimeout = timeout
               const info = yield* shell.create(
                 {
