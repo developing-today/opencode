@@ -318,7 +318,7 @@ describe("SubagentTool", () => {
     ),
   )
 
-  it.live("lets a subagent launch its own subagent by default", () =>
+  it.live("lets a subagent launch its own subagent in the foreground by default", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),
       (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
@@ -340,7 +340,8 @@ describe("SubagentTool", () => {
               type: "tool-call",
               id: "call-nested-subagent",
               name: SubagentTool.name,
-              input: { agent: "reviewer", description: "nested", prompt: "should run" },
+              // A nested launch blocks even when asked to background, so the parent's answer includes it.
+              input: { agent: "reviewer", description: "nested", prompt: "should run", background: true },
             },
           })
 

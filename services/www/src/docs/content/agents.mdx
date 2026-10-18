@@ -130,7 +130,7 @@ Subagents run with fresh context in foreground or background child sessions. The
 
 ### Nested subagents
 
-A subagent can launch its own subagents. Nesting stops five levels below the top-level session; the next launch fails and the agent does that work itself. Set `experimental.subagent_depth` to change the limit:
+A subagent can launch its own subagents. Those launches always run in the foreground, so the subagent's final answer includes their results. Nesting stops five levels below the top-level session; the next launch fails and the agent does that work itself. Set `experimental.subagent_depth` to change the limit:
 
 ```jsonc
 {

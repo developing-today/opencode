@@ -60,6 +60,7 @@ export const description = [
   "Foreground (default) runs the subagent to completion and returns its final response.",
   "Background mode (background=true) launches it asynchronously and returns immediately; you are notified when it finishes.",
   "Use background only for independent work that can run while you continue elsewhere.",
+  "When you are a subagent yourself, launches always run in the foreground, so your final answer includes their results.",
 ].join("\n")
 
 export const Plugin = {
@@ -203,7 +204,9 @@ export const Plugin = {
                 childID: child.id,
               }).pipe(Effect.catch(() => Effect.void))
 
-              const background = input.background === true
+              // A nested background child would end its job before its own subagent reports back,
+              // and that later answer would reach only the child, so nested launches block.
+              const background = input.background === true && depth === 0
               yield* context.progress({ sessionID: child.id, status: "running" })
 
               // Standard prompt admission outside the job: Job.start joining a running child skips
