@@ -581,11 +581,12 @@ export function createData(config: CreateDataInput) {
     )
   }
 
-  // A listing fills in sessions this client holds no info for, even while their own read is in flight: if that read
-  // fails, the listed snapshot is all there is. Info already held is kept current by its read and by live events such
-  // as a rename, so an older listed snapshot must not replace it.
+  // A listing fills in a session this client holds no info for, even while that session's own read is in flight: if
+  // the read fails, the listed snapshot is all there is. It also refreshes info that no read has covered since the
+  // last invalidation, such as after a reconnect. Info read since then is kept current by that read and by live events
+  // such as a rename, so an older listed snapshot must not replace it.
   function unread(session: SessionInfo) {
-    return !store.session.info[session.id]
+    return !store.session.info[session.id] || !sync.has(`session:${session.id}`)
   }
 
   function publishSessions(sessions: SessionInfo[]) {

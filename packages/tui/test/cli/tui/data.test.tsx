@@ -3242,6 +3242,67 @@ test("syncs every descendant session info with a navigated root", async () => {
   }
 })
 
+test("refreshes cached descendants from discovery after a reconnect", async () => {
+  const events = createEventStream()
+  const parents: Record<string, string> = { child: "root", grandchild: "child" }
+  const titles: Record<string, string> = { child: "Before", grandchild: "Before" }
+  const info = (id: string) => ({ ...sessionInfo(id, parents[id]), title: titles[id] ?? id })
+  const calls = createFetch((url) => {
+    if (url.pathname === "/api/event") return events.v2()
+    if (url.pathname === "/api/session") {
+      const parentID = url.searchParams.get("parentID")
+      return json({
+        data: Object.keys(parents)
+          .filter((id) => parents[id] === parentID)
+          .map(info),
+        cursor: {},
+      })
+    }
+    const match = url.pathname.match(/^\/api\/session\/([^/]+)$/)
+    if (match && match[1] !== "active") return json({ data: info(match[1]) })
+  }, events)
+  let data!: ReturnType<typeof useData>
+  let client!: ReturnType<typeof useClient>
+
+  function Probe() {
+    data = useData()
+    client = useClient()
+    return <box />
+  }
+
+  const app = await testRender(() => (
+    <TestTuiContexts>
+      <ClientProvider api={createApi(calls.fetch)}>
+        <ProjectProvider>
+          <DataProvider>
+            <Probe />
+          </DataProvider>
+        </ProjectProvider>
+      </ClientProvider>
+    </TestTuiContexts>
+  ))
+
+  try {
+    await wait(() => client.connection.status() === "connected")
+    await data.session.sync("root", { children: true })
+    expect(data.session.get("grandchild")?.title).toBe("Before")
+
+    // Renamed while the client is offline, so it never sees the events.
+    events.disconnect()
+    await wait(() => client.connection.status() === "reconnecting")
+    titles.child = "After"
+    titles.grandchild = "After"
+    // The client waits a second before it reconnects.
+    await wait(() => client.connection.status() === "connected", 4000)
+    await data.session.sync("root", { children: true })
+
+    expect(data.session.get("child")?.title).toBe("After")
+    expect(data.session.get("grandchild")?.title).toBe("After")
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
 test("groups an orphan child under its missing parent until the root arrives", async () => {
   const { data, app } = await mountData({ child: "root" })
   try {
