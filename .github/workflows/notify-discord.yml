@@ -1,5 +1,9 @@
 name: notify-discord
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   release:
     types: [released] # fires when a draft release is published

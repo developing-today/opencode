@@ -1,5 +1,9 @@
 name: close-prs
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   schedule:
     - cron: "0 22 * * *" # Daily at 10:00 PM UTC
