@@ -323,7 +323,7 @@ export const Plugin = {
             // Auto-project tools used in script with a 3-turn TTL for subsequent review
             const projected = yield* Effect.tryPromise(() =>
               autoProjectFromScript({ source: input.source, callDaemon, defaultTtl: 3 }),
-            ).pipe(Effect.catch(() => Effect.succeed([] as string[])))
+            ).pipe(Effect.orElseSucceed(() => [] as string[]))
             if (projected.length > 0) yield* ctx.tool.reload()
             return { output: { output } }
           }),

@@ -636,7 +636,7 @@ export const make = Effect.gen(function* () {
                 }),
               ),
         ),
-        Effect.catch(() => Effect.succeed(Option.none())),
+        Effect.orElseSucceed(() => Option.none()),
       ),
     })
     if (raced.hedgeStarted) {
