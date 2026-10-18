@@ -112,6 +112,50 @@ describe("mcpx daemon autostart policy", () => {
     ])
   })
 
+  test("spawn args treat every Go spelling of zero as never idle-exit, without warning", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      for (const value of ["-0", "+0", "-0s", "0.0s", "0h0m"]) {
+        expect(McpxTool.daemonSpawnArgs({ OPENCODE_MCPX_DAEMON_IDLE_EXIT: value })).toEqual(["daemon"])
+      }
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test("spawn args fall back with a warning for durations Go rejects as int64-nanosecond overflow", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      for (const value of ["2562048h", "10000000000h", "-2562048h", "9223372036854775808ns", "-9223372036854775809ns"]) {
+        expect(McpxTool.daemonSpawnArgs({ OPENCODE_MCPX_DAEMON_IDLE_EXIT: value })).toEqual([
+          "daemon",
+          "--daemon-idle-exit",
+          "1h",
+        ])
+      }
+      expect(warn).toHaveBeenCalledTimes(5)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test("spawn args pass through the exact int64-nanosecond maximum", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      for (const value of ["2562047h47m16.854775807s", "9223372036854775807ns", "-9223372036854775808ns"]) {
+        expect(McpxTool.daemonSpawnArgs({ OPENCODE_MCPX_DAEMON_IDLE_EXIT: value })).toEqual([
+          "daemon",
+          "--daemon-idle-exit",
+          value,
+        ])
+      }
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   test("spawn args fall back to the default with a warning for an invalid idle exit", () => {
     const warn = spyOn(console, "warn").mockImplementation(() => {})
     try {

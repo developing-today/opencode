@@ -87,8 +87,9 @@ export const daemonAutostartEnabled = (env: NodeJS.ProcessEnv = process.env): bo
  */
 export const daemonSpawnArgs = (env: NodeJS.ProcessEnv = process.env): string[] => {
   const idle = env.OPENCODE_MCPX_DAEMON_IDLE_EXIT?.trim() || "1h"
-  if (idle === "0" || idle === "0s") return ["daemon"]
-  if (!isMcpxDuration(idle)) {
+  const total = mcpxDurationNs(idle)
+  if (total === 0n) return ["daemon"]
+  if (total === undefined) {
     console.warn(
       `Invalid OPENCODE_MCPX_DAEMON_IDLE_EXIT value ${JSON.stringify(idle)}: expected a duration like "1h" or "15m"; falling back to "1h".`,
     )
@@ -102,11 +103,42 @@ export const daemonSpawnArgs = (env: NodeJS.ProcessEnv = process.env): string[] 
 // the daemon's stderr, so a rejected value used to fail silently): an optional
 // sign, then one or more <number><unit> components ("1h", "15m", "1h30m",
 // "1.5h"), where the number may be fractional and the unit is ns, us, µs, μs,
-// ms, s, m, or h. A bare "0" is also valid in Go; it is handled above.
-const isMcpxDuration = (value: string): boolean =>
-  /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h)(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))*$/.test(
-    value,
+// ms, s, m, or h. Go also accepts a bare signed "0" with no unit, and rejects
+// any total whose magnitude overflows int64 nanoseconds (~2562047h47m) — a
+// shape-only check passes those through to a daemon that cannot start (#79).
+// Returns the total in nanoseconds (sign aside: Go applies it to the whole
+// value, and mcpx treats any idle exit <= 0 as "never"), or undefined when
+// Go's parser would reject the value.
+const mcpxDurationNs = (value: string): bigint | undefined => {
+  if (/^[+-]?0$/.test(value)) return 0n
+  if (
+    !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h)(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))*$/.test(
+      value,
+    )
   )
+    return undefined
+  const units: Record<string, bigint> = {
+    ns: 1n,
+    us: 1_000n,
+    µs: 1_000n,
+    μs: 1_000n,
+    ms: 1_000_000n,
+    s: 1_000_000_000n,
+    m: 60_000_000_000n,
+    h: 3_600_000_000_000n,
+  }
+  let total = 0n
+  for (const match of value.matchAll(/(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h)/g)) {
+    const unit = units[match[2] ?? ""]
+    if (unit === undefined) return undefined
+    const [whole = "0", fraction = ""] = (match[1] ?? "").split(".")
+    total += BigInt(whole || "0") * unit
+    if (fraction) total += (BigInt(fraction) * unit) / 10n ** BigInt(fraction.length)
+  }
+  // Go's int64 range is asymmetric: a negative value may reach 2^63 ns.
+  const limit = value.startsWith("-") ? 9_223_372_036_854_775_808n : 9_223_372_036_854_775_807n
+  return total > limit ? undefined : total
+}
 
 export const runCli = (args: string[], env?: Record<string, string | undefined>): Promise<string> =>
   new Promise((resolve, reject) => {
