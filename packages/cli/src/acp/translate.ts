@@ -54,6 +54,8 @@ export type TurnState = {
   readonly compactions: ACPCompaction.Tracked
   readonly children: ReadonlyMap<string, ACPChild.Session>
   readonly asks: ReadonlySet<string>
+  /** Every ask this subscription saw settled, so a list read before the settlement cannot ask it again. */
+  readonly settled: ReadonlySet<string>
   readonly finish?: SessionMessage.Assistant["finish"]
   readonly usage?: { readonly turn: TokenUsage.Info; readonly last: TokenUsage.Info }
   readonly stepError?: SessionError.Error
@@ -87,6 +89,7 @@ export const initial: TurnState = {
   compactions: new Map(),
   children: new Map(),
   asks: new Set(),
+  settled: new Set(),
 }
 
 export function fold(state: TurnState, event: OpenCodeEvent, ctx: TurnContext): Folded {
@@ -102,10 +105,12 @@ export function fold(state: TurnState, event: OpenCodeEvent, ctx: TurnContext): 
       : event.type === "form.replied" || event.type === "form.cancelled"
         ? event.data.id
         : undefined
-  if (settledID && state.asks.has(settledID)) {
+  if (settledID) {
+    const settled = new Set(state.settled).add(settledID)
+    if (!state.asks.has(settledID)) return { state: { ...state, settled }, outputs: [] }
     const asks = new Set(state.asks)
     asks.delete(settledID)
-    return { state: { ...state, asks }, outputs: [{ _tag: "AskSettled", id: settledID }] }
+    return { state: { ...state, asks, settled }, outputs: [{ _tag: "AskSettled", id: settledID }] }
   }
   if (!sessionID || (sessionID !== ctx.sessionID && !child)) return { state, outputs: [] }
   if (event.type === "session.inbox.delivered" && event.data.inboxID === ctx.start?.id)
@@ -229,7 +234,8 @@ function childCreated(state: TurnState, event: CreatedEvent, ctx: TurnContext): 
 // An ask can arrive twice, once listed as pending and once as its event, so each is asked once.
 function permissionAsk(state: TurnState, ctx: TurnContext, request: Permission.Request): Folded {
   const child = state.children.get(request.sessionID)
-  if (state.asks.has(request.id) || (request.sessionID !== ctx.sessionID && !child)) return { state, outputs: [] }
+  if (state.asks.has(request.id) || state.settled.has(request.id) || (request.sessionID !== ctx.sessionID && !child))
+    return { state, outputs: [] }
   const tool = request.source ? state.tools.get(toolKey(request.sessionID, request.source.id)) : undefined
   return {
     state: { ...state, asks: new Set(state.asks).add(request.id) },
@@ -239,7 +245,8 @@ function permissionAsk(state: TurnState, ctx: TurnContext, request: Permission.R
 
 function formAsk(state: TurnState, ctx: TurnContext, form: Form.Info): Folded {
   const child = state.children.get(form.sessionID)
-  if (state.asks.has(form.id) || (form.sessionID !== ctx.sessionID && !child)) return { state, outputs: [] }
+  if (state.asks.has(form.id) || state.settled.has(form.id) || (form.sessionID !== ctx.sessionID && !child))
+    return { state, outputs: [] }
   return {
     state: { ...state, asks: new Set(state.asks).add(form.id) },
     outputs: [{ _tag: "FormAsk", form, child }],

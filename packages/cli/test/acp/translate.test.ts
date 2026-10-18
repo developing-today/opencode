@@ -626,6 +626,23 @@ describe("acp ask tracking", () => {
     expect(replied.outputs).toEqual([{ _tag: "AskSettled", id: "perm_listed" }])
   })
 
+  test("does not ask a listed ask whose settlement arrived before the list was merged", () => {
+    const replied = ACPTranslate.fold(
+      ACPTranslate.initial,
+      event(ephemeralEvent("permission.replied", { sessionID: root, requestID: "perm_stale", reply: "once" })),
+      ctx,
+    )
+    const request = Schema.decodeUnknownSync(Permission.Request)({
+      id: "perm_stale",
+      sessionID: root,
+      action: "read",
+      resources: ["*"],
+    })
+
+    expect(replied.outputs).toEqual([])
+    expect(ACPTranslate.pending(replied.state, ctx, { permissions: [request], forms: [] }).outputs).toEqual([])
+  })
+
   test("routes an adopted descendant's asks and events by its place in the tree", () => {
     const state = ACPTranslate.adopt(ACPTranslate.initial, [
       { id: "ses_child", parentID: root, depth: 1, title: "Explore" },

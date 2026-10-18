@@ -221,11 +221,7 @@ export const make = Effect.fnUntraced(function* (input: {
       ...listed.forms.map((form) => form.sessionID),
     ]
     yield* Effect.forEach(sessions, (sessionID) => adopt(turn, sessionID), { discard: true })
-    const folded = yield* Ref.modify(turn.state, (current) => {
-      const next = ACPTranslate.pending(current, turn.ctx, listed)
-      return [next, next.state]
-    })
-    yield* Effect.forEach(folded.outputs, (output) => interpret(turn, output), { discard: true })
+    yield* apply(turn, (current) => ACPTranslate.pending(current, turn.ctx, listed))
     const children = (yield* Ref.get(turn.state)).children
     yield* Ref.set(
       turn.subscription.placed,
@@ -365,14 +361,32 @@ export const make = Effect.fnUntraced(function* (input: {
   const advance = Effect.fnUntraced(function* (turn: Turn) {
     const event = yield* take(turn.subscription)
     yield* adopt(turn, ACPTranslate.placedBy(event))
-    const folded = yield* Ref.modify(turn.state, (current) => {
-      const next =
-        turn.background && !ACPTranslate.inTree(current, event, turn.ctx)
-          ? { state: current, outputs: [] }
-          : ACPTranslate.fold(current, event, turn.ctx)
-      return [next, next.state]
-    })
-    yield* Effect.forEach(folded.outputs, (output) => interpret(turn, output), { discard: true })
+    return yield* apply(turn, (current) =>
+      turn.background && !ACPTranslate.inTree(current, event, turn.ctx)
+        ? { state: current, outputs: [] }
+        : ACPTranslate.fold(current, event, turn.ctx),
+    )
+  })
+
+  // Recording asks in the state and queuing them is one step. An interruption between the two, such as a prompt ending
+  // mid-rescan, would leave an ask recorded as asked that never reaches the client, and the follower copies that state.
+  // Updates go out afterwards, still interruptible, since a slow client can hold a write.
+  const apply = Effect.fnUntraced(function* (turn: Turn, fold: (state: ACPTranslate.TurnState) => ACPTranslate.Folded) {
+    const folded = yield* Effect.uninterruptible(
+      Ref.modify(turn.state, (current) => {
+        const next = fold(current)
+        return [next, next.state]
+      }).pipe(
+        Effect.tap((next) =>
+          Effect.forEach(next.outputs.filter(isAsk), (output) => interpret(turn, output), { discard: true }),
+        ),
+      ),
+    )
+    yield* Effect.forEach(
+      folded.outputs.filter((output) => !isAsk(output)),
+      (output) => interpret(turn, output),
+      { discard: true },
+    )
     return folded
   })
 
@@ -634,6 +648,10 @@ export const make = Effect.fnUntraced(function* (input: {
     }),
   } satisfies Interface
 })
+
+function isAsk(output: ACPTranslate.Output) {
+  return output._tag === "PermissionAsk" || output._tag === "FormAsk" || output._tag === "AskSettled"
+}
 
 function aborted(signal: AbortSignal) {
   return Effect.callback<void>((resume) => {
