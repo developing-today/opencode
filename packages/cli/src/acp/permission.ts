@@ -30,8 +30,8 @@ type Input = {
   readonly clientSessionID: string
   readonly cwd: string
   readonly tool?: Tool
-  /** The request's source tool call, when the client received it but this subscription has not tracked it. */
-  readonly sourceToolCall?: string
+  /** The tool call this request came from, when the client received it. */
+  readonly toolCall?: string
   readonly child?: ACPChild.Session
 }
 
@@ -51,7 +51,7 @@ export const ask = Effect.fnUntraced(function* (input: Input) {
   )
   const title = permissionTitle(toolName, toolInput, previews)
   const toolCall = pendingToolCall({
-    toolCallId: ACPChild.toolCallID(input.child, input.tool?.id ?? input.sourceToolCall ?? input.request.id),
+    toolCallId: ACPChild.toolCallID(input.child, input.toolCall ?? input.request.id),
     toolName,
     state: { input: toolInput, title: title ? ACPChild.prefixTitle(input.child, title) : input.child?.title },
     cwd: input.cwd,

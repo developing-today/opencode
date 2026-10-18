@@ -419,6 +419,65 @@ describe("acp turn events over the wire", () => {
     expect(acp.server.repliedForms).toEqual([{ sessionID: acp.sessionId, formID: "frm_root", answer: { pm: "bun" } }])
   })
 
+  test("keeps scanning in the background for a pending ask it could not place", async () => {
+    const failures = { left: 3 }
+    await using acp = await startSession({
+      // Every immediate retry fails; a later scan succeeds.
+      fetch: (request) => {
+        if (request.method !== "GET" || request.path !== "/api/session/ses_child" || failures.left === 0)
+          return undefined
+        failures.left--
+        return new Response(null, { status: 503 })
+      },
+      permission: () => ({ outcome: { outcome: "selected", optionId: "once" } }),
+    })
+    acp.server.sessions.set("ses_child", {
+      ...makeSession("ses_child"),
+      parentID: acp.sessionId,
+      title: "Explore code",
+    })
+    acp.server.pending.permissions.push({ id: "perm_child", sessionID: "ses_child", action: "read", resources: ["*"] })
+
+    expect((await acp.prompt(acp.sessionId, "hello")).stopReason).toBe("end_turn")
+    await acp.until(() => acp.server.replies.length === 1, "the rescanned permission reply")
+
+    expect(acp.server.replies).toEqual([{ sessionID: "ses_child", requestID: "perm_child", decision: "once" }])
+  })
+
+  test("keeps following after a load replaces the attachment mid-prompt", async () => {
+    await using acp = await startSession({
+      // The prompt stays open until the test finishes it.
+      onPrompt: ({ sessionID, id }) => [delivered(sessionID, id)],
+      permission: () => ({ outcome: { outcome: "selected", optionId: "once" } }),
+    })
+
+    const prompted = acp.prompt(acp.sessionId, "hello")
+    await acp.until(() => acp.server.prompts.length === 1, "the prompt")
+    await acp.request("session/load", { sessionId: acp.sessionId, cwd: "/workspace", mcpServers: [] })
+    acp.server.send(succeeded(acp.sessionId))
+    expect((await prompted).stopReason).toBe("end_turn")
+    acp.server.send(permissionAsked(acp.sessionId, "perm_after_load", { action: "read" }))
+    await acp.until(() => acp.server.replies.length === 1, "the permission reply after the load")
+
+    expect(acp.server.replies).toEqual([{ sessionID: acp.sessionId, requestID: "perm_after_load", decision: "once" }])
+  })
+
+  test("does not name a tool call the follower tracked but never sent", async () => {
+    await using acp = await startSession({ permission: () => ({ outcome: { outcome: "selected", optionId: "once" } }) })
+
+    expect((await acp.prompt(acp.sessionId, "hello")).stopReason).toBe("end_turn")
+    acp.server.send(
+      durableEvent("session.execution.started", { sessionID: acp.sessionId }),
+      toolStarted(acp.sessionId, "call_between", "shell"),
+      permissionAsked(acp.sessionId, "perm_between", {
+        source: { type: "tool", messageID: "msg_tools", id: "call_between" },
+      }),
+    )
+    await acp.until(() => acp.server.replies.length === 1, "the permission reply between prompts")
+
+    expect(acp.permissions).toMatchObject([{ toolCall: { toolCallId: "perm_between" } }])
+  })
+
   test("asks the pending asks one list found when the other list fails", async () => {
     await using acp = await startSession({
       fetch: (request) => (request.path === "/api/form" ? new Response(null, { status: 500 }) : undefined),
