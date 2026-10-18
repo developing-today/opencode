@@ -1,4 +1,9 @@
 name: test
+# RUNNER-SWITCH (2026-10-18): runners in this workflow were switched from Blacksmith to
+# GitHub-hosted at Drew's direction. To switch back, grep the repo for RUNNER-SWITCH and
+# swap each commented Blacksmith line back in for the active line under it. To choose per
+# run instead, use an expression on runs-on, e.g. ${{ vars.RUNNER_UBUNTU || 'ubuntu-24.04' }},
+# or gate individual steps with if: on the runner.
 
 on:
   push:
@@ -23,7 +28,8 @@ env:
 jobs:
   affected:
     name: affected packages
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     outputs:
       e2e: ${{ steps.packages.outputs.app == 'true' && github.ref_name != 'main' && github.head_ref != 'main' }}
     steps:
@@ -60,9 +66,11 @@ jobs:
       matrix:
         settings:
           - name: linux
-            host: blacksmith-4vcpu-ubuntu-2404
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-ubuntu-2404
+            host: ubuntu-24.04
           - name: windows
-            host: blacksmith-4vcpu-windows-2025
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-windows-2025
+            host: windows-2025
     runs-on: ${{ matrix.settings.host }}
     defaults:
       run:
@@ -145,9 +153,11 @@ jobs:
       matrix:
         settings:
           - name: linux
-            host: blacksmith-4vcpu-ubuntu-2404
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-ubuntu-2404
+            host: ubuntu-24.04
           - name: windows
-            host: blacksmith-4vcpu-windows-2025
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-windows-2025
+            host: windows-2025
     runs-on: ${{ matrix.settings.host }}
     defaults:
       run:
@@ -213,9 +223,11 @@ jobs:
       matrix:
         settings:
           - name: linux
-            host: blacksmith-4vcpu-ubuntu-2404
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-ubuntu-2404
+            host: ubuntu-24.04
           - name: windows
-            host: blacksmith-4vcpu-windows-2025
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-windows-2025
+            host: windows-2025
         # Playwright splits whole spec files across shards by test count, not duration. Every app-N
         # entry must use the same total, and the entries must cover 1..total. The service worker suite
         # reuses shard 2's production build. Each component suite runs once per OS in its own leg, so the
@@ -323,7 +335,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [linux, windows]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - name: Check browser test results
         env:

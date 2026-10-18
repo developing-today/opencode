@@ -1,4 +1,9 @@
 name: storybook
+# RUNNER-SWITCH (2026-10-18): runners in this workflow were switched from Blacksmith to
+# GitHub-hosted at Drew's direction. To switch back, grep the repo for RUNNER-SWITCH and
+# swap each commented Blacksmith line back in for the active line under it. To choose per
+# run instead, use an expression on runs-on, e.g. ${{ vars.RUNNER_UBUNTU || 'ubuntu-24.04' }},
+# or gate individual steps with if: on the runner.
 
 on:
   push:
@@ -28,7 +33,8 @@ concurrency:
 jobs:
   build:
     name: storybook build
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
