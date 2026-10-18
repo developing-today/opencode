@@ -211,6 +211,34 @@ test("nests subagent sessions under the session that started them at any depth",
   ])
 })
 
+test("nests every session exactly once when parent links form a cycle or point at the session itself", () => {
+  const session = (id: string, parentID?: string): SessionInfo => ({
+    id,
+    parentID,
+    projectID: "project",
+    location: { directory: "/workspace" },
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: { created: 1, updated: 1 },
+  })
+
+  const rows = nestWorkspaceSessions([
+    session("root"),
+    session("a", "b"),
+    session("b", "a"),
+    session("child", "root"),
+    session("self", "self"),
+  ])
+
+  expect(rows.map((row) => [row.session.id, row.depth])).toEqual([
+    ["root", 0],
+    ["child", 1],
+    ["a", 0],
+    ["b", 1],
+    ["self", 0],
+  ])
+})
+
 test("merges workspace placement by freshness with authoritative server ties", () => {
   // SAFETY: mergeWorkspaceSessionInventory reads only each session's id and update time; the test reads locations.
   const session = (directory: string, updated: number) =>
