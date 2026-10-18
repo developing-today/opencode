@@ -195,9 +195,11 @@ export function Session(props: {
     setEpilogue(sessionEpilogue({ title, sessionID: session()?.id }))
   })
   onCleanup(() => setEpilogue())
+  // The viewed family at every depth. Its root may be several subagent levels above a viewed subagent.
+  const familySessionIDs = createMemo(() => [...data.session.family(route.sessionID)])
   const descendantSessionIDs = createMemo(() => {
     if (session()?.parentID) return []
-    return data.session.family(route.sessionID).filter((id) => id !== route.sessionID)
+    return familySessionIDs().filter((id) => id !== route.sessionID)
   })
   const permissions = createMemo(() => {
     if (session()?.parentID) return []
@@ -318,14 +320,24 @@ export function Session(props: {
     ),
   )
 
+  // Asks from every family member: the root view prompts for them, and every view of the family marks its tab.
   createEffect(
-    on([descendantSessionIDs, () => client.connection.status()], ([sessionIDs, status]) => {
+    on([familySessionIDs, () => client.connection.status()], ([sessionIDs, status]) => {
       if (status !== "connected") return
       void Promise.allSettled(
         sessionIDs.flatMap((sessionID) => [data.session.permission.sync(sessionID), data.session.form.sync(sessionID)]),
       )
     }),
   )
+
+  // A subagent view opened before its ancestors walks up to the root, whose tree holds the whole family.
+  createEffect(() => {
+    if (client.connection.status() !== "connected" || !session()?.parentID) return
+    const root = data.session.root(route.sessionID)
+    void (data.session.get(root) ? data.session.sync(root, { children: true }) : data.session.sync(root)).catch(
+      () => undefined,
+    )
+  })
 
   createEffect(() => {
     if (client.connection.status() !== "connected") return

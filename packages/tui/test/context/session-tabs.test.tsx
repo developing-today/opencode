@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test"
-import type { OpenCodeEvent } from "@opencode/client"
+import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
 import { testRender } from "@opentui/solid"
 import { mkdirSync, watch } from "fs"
 import path from "path"
@@ -36,6 +36,8 @@ async function renderSessionTabs(
     sessionGate?: Promise<void>
     sessionDirectories?: Record<string, string>
     sessionParents?: Record<string, string>
+    sessionPermissions?: Record<string, PermissionRequest[]>
+    sessionForms?: Record<string, FormInfo[]>
     sessionTimes?: Record<string, { idle?: number; viewed?: number }>
     sessionOutcomes?: Record<string, "succeeded" | "failed" | "interrupted">
     newLocation?: "launch" | "inherit"
@@ -96,6 +98,11 @@ async function renderSessionTabs(
         .map(([sessionID]) => sessionInfo(sessionID))
       return json({ data: children, cursor: {} })
     }
+    const asks = url.pathname.match(/^\/api\/session\/([^/]+)\/(permission|form)$/)
+    if (asks && request.method === "GET")
+      return json({
+        data: (asks[2] === "permission" ? options?.sessionPermissions : options?.sessionForms)?.[asks[1]] ?? [],
+      })
     const viewed = url.pathname.match(/^\/api\/session\/([^/]+)\/view$/)?.[1]
     if (viewed && request.method === "POST") {
       views.push(viewed)
@@ -659,6 +666,40 @@ test("distinguishes family questions and permissions without clearing them on se
       data: { sessionID: "child", id: "frm_question", answer: {} },
     })
     await wait(() => setup.tabs.status("root").attention === false)
+  } finally {
+    await setup.destroy()
+  }
+})
+
+test("marks a background tab with asks its nested subagents left pending before startup", async () => {
+  const setup = await renderSessionTabs("other", {
+    persisted: ["root"],
+    sessionParents: { child: "root", grandchild: "child", great: "grandchild" },
+    sessionPermissions: {
+      grandchild: [{ id: "per_nested", sessionID: "grandchild", action: "shell", resources: ["bun run test"] }],
+    },
+    sessionForms: {
+      great: [
+        {
+          id: "frm_nested",
+          sessionID: "great",
+          title: "Choose an approach",
+          fields: [{ key: "approach", type: "string", title: "Approach" }],
+        },
+      ],
+    },
+  })
+  try {
+    await wait(() => setup.tabs.status("root").attention === "permission", 5_000, "nested permission")
+    expect(setup.tabs.current()).toBe("other")
+
+    setup.emit({
+      id: "evt_permission_reply",
+      created: 1,
+      type: "permission.replied",
+      data: { sessionID: "grandchild", requestID: "per_nested", reply: "once" },
+    })
+    await wait(() => setup.tabs.status("root").attention === "question", 2_000, "nested question")
   } finally {
     await setup.destroy()
   }
