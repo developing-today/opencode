@@ -6,6 +6,7 @@ import {
   isWorkspaceDirectory,
   isWorkspaceSelection,
   mergeWorkspaceSessionInventory,
+  nestWorkspaceSessions,
   sessionsForWorkspace,
   workspaceInventory,
   workspaceSelectionDestination,
@@ -123,6 +124,7 @@ test("groups and filters workspace inventory by project", () => {
 })
 
 test("reports every workspace deletion condition", () => {
+  // SAFETY: inspectWorkspaceDeletion reads only each session's location and archive time.
   const session = (directory: string) => ({ location: { directory }, time: { created: 1, updated: 1 } }) as SessionInfo
   expect(
     inspectWorkspaceDeletion({
@@ -153,6 +155,7 @@ test("reports every workspace deletion condition", () => {
     inspectWorkspaceDeletion({
       workspace: "/workspace",
       sessions: [
+        // SAFETY: inspectWorkspaceDeletion reads only each session's location and archive time.
         { location: { directory: "/workspace" }, time: { created: 1, updated: 1, archived: 2 } } as SessionInfo,
       ],
       status: "clean",
@@ -161,6 +164,7 @@ test("reports every workspace deletion condition", () => {
 })
 
 test("groups nested non-archived workspace sessions by latest activity", () => {
+  // SAFETY: sessionsForWorkspace reads only each session's location, archive and update times; the test reads ids.
   const session = (id: string, directory: string, updated: number, archived?: number) =>
     ({ id, location: { directory }, time: { created: 1, updated, archived } }) as SessionInfo
 
@@ -177,7 +181,38 @@ test("groups nested non-archived workspace sessions by latest activity", () => {
   expect(sessions.map((item) => item.id)).toEqual(["nested", "old"])
 })
 
+test("nests subagent sessions under the session that started them at any depth", () => {
+  const session = (id: string, parentID?: string): SessionInfo => ({
+    id,
+    parentID,
+    projectID: "project",
+    location: { directory: "/workspace" },
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: { created: 1, updated: 1 },
+  })
+
+  const rows = nestWorkspaceSessions([
+    session("grandchild", "child"),
+    session("root"),
+    session("stray", "elsewhere"),
+    session("child", "root"),
+    session("sibling", "root"),
+    session("other"),
+  ])
+
+  expect(rows.map((row) => [row.session.id, row.depth])).toEqual([
+    ["root", 0],
+    ["child", 1],
+    ["grandchild", 2],
+    ["sibling", 1],
+    ["stray", 0],
+    ["other", 0],
+  ])
+})
+
 test("merges workspace placement by freshness with authoritative server ties", () => {
+  // SAFETY: mergeWorkspaceSessionInventory reads only each session's id and update time; the test reads locations.
   const session = (directory: string, updated: number) =>
     ({ id: "session", location: { directory }, time: { created: 1, updated } }) as SessionInfo
 
