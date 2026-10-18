@@ -121,6 +121,7 @@ import { createDelayedPresence } from "../../util/delayed-presence"
 import { SessionLocationMissing } from "./location-missing"
 import { isRecord } from "../../util/record"
 import { createHistoryPrepend } from "./history"
+import { createFamilyDiscovery } from "./family"
 import { context, use, type PendingAction } from "./render-context"
 import { INLINE_TOOL_ICON_WIDTH, InlineToolRow, ReasoningPart, TextPart, toolDisplay } from "./message-parts"
 import { defaultVerbosity, type GroupKind, type SessionEntry } from "./grouping/session"
@@ -195,9 +196,11 @@ export function Session(props: {
     setEpilogue(sessionEpilogue({ title, sessionID: session()?.id }))
   })
   onCleanup(() => setEpilogue())
+  // The viewed family at every depth. Its root may be several subagent levels above a viewed subagent.
+  const familySessionIDs = createMemo(() => [...data.session.family(route.sessionID)])
   const descendantSessionIDs = createMemo(() => {
     if (session()?.parentID) return []
-    return data.session.family(route.sessionID).filter((id) => id !== route.sessionID)
+    return familySessionIDs().filter((id) => id !== route.sessionID)
   })
   const permissions = createMemo(() => {
     if (session()?.parentID) return []
@@ -318,14 +321,21 @@ export function Session(props: {
     ),
   )
 
+  // Asks from every family member: the root view prompts for them, and every view of the family marks its tab.
   createEffect(
-    on([descendantSessionIDs, () => client.connection.status()], ([sessionIDs, status]) => {
+    on([familySessionIDs, () => client.connection.status()], ([sessionIDs, status]) => {
       if (status !== "connected") return
       void Promise.allSettled(
         sessionIDs.flatMap((sessionID) => [data.session.permission.sync(sessionID), data.session.form.sync(sessionID)]),
       )
     }),
   )
+
+  createFamilyDiscovery({
+    session: data.session,
+    sessionID: () => route.sessionID,
+    connected: () => client.connection.status() === "connected",
+  })
 
   createEffect(() => {
     if (client.connection.status() !== "connected") return
