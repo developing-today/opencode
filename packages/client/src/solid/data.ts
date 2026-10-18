@@ -176,6 +176,9 @@ function createSync() {
   // that window are already covered, since the reload has not read anything yet.
   type Pending = { promise: Promise<void>; invalidated: boolean; started: boolean }
   const state = new Map<string, true | Pending>()
+  // Counts full invalidations, such as a disconnect. A read requested before the latest one may be older than what
+  // the reload brings.
+  let generation = 0
   const start = (key: string, load: () => Promise<void>, wait?: Promise<void>) => {
     const entry: Pending = { promise: Promise.resolve(), invalidated: false, started: !wait }
     state.set(key, entry)
@@ -207,10 +210,16 @@ function createSync() {
     has(key: string) {
       return state.has(key)
     },
+    /** Whether a settled read, or one in flight that no invalidation has overtaken, covers the key. */
+    current(key: string) {
+      const active = state.get(key)
+      return active === true || (active !== undefined && !active.invalidated)
+    },
     pending(key: string) {
       const active = state.get(key)
       return active !== undefined && active !== true
     },
+    generation: () => generation,
     invalidate(key?: string) {
       if (key) {
         const active = state.get(key)
@@ -218,6 +227,7 @@ function createSync() {
         if (active !== undefined && active !== true && active.started) active.invalidated = true
         return
       }
+      generation++
       state.forEach((active, current) => {
         if (active === true) state.delete(current)
         if (active !== true && active.started) active.invalidated = true
@@ -570,36 +580,43 @@ export function createData(config: CreateDataInput) {
           return true
         })
         .map(async (parent) => {
+          const generation = sync.generation()
           const children = (
             await descendantListing(() =>
               listChildren({ parentID: parent.id, order: "desc", limit: CHILD_PAGE }),
             ).catch((): SessionInfo[] => [])
           ).filter((child) => !seen.has(child.id))
-          publishSessions(children.filter(unread))
+          publishSessions(children.filter(unread), generation)
           return syncDescendants(children, seen)
         }),
     )
   }
 
   // A listing fills in a session this client holds no info for, even while that session's own read is in flight: if
-  // the read fails, the listed snapshot is all there is. It also refreshes info that no read has covered since the
-  // last invalidation, such as after a reconnect. Info read since then is kept current by that read and by live events
-  // such as a rename, so an older listed snapshot must not replace it.
+  // the read fails, the listed snapshot is all there is. It also refreshes info that no current read covers, such as
+  // after a reconnect, including info whose read was still in flight when the reconnect overtook it. Info a current
+  // read covers is kept current by that read and by live events such as a rename, so an older listed snapshot must not
+  // replace it.
   function unread(session: SessionInfo) {
-    return !store.session.info[session.id] || !sync.has(`session:${session.id}`)
+    return !store.session.info[session.id] || !sync.current(`session:${session.id}`)
   }
 
-  function publishSessions(sessions: SessionInfo[]) {
+  // `generation` is the sync generation when the snapshot was requested. One requested before the latest full
+  // invalidation, such as a disconnect, may be older than what the reload brings: it only fills in sessions with no
+  // info, and leaves them unconfirmed so the reload still replaces them.
+  function publishSessions(sessions: SessionInfo[], generation: number) {
+    const stale = generation !== sync.generation()
+    const published = stale ? sessions.filter((session) => !store.session.info[session.id]) : sessions
     batch(() => {
       setStore(
         "session",
         "info",
         produce((draft) => {
-          for (const session of sessions) draft[session.id] = session
+          for (const session of published) draft[session.id] = session
         }),
       )
-      for (const session of sessions) {
-        sync.complete(`session:${session.id}`)
+      for (const session of published) {
+        if (!stale) sync.complete(`session:${session.id}`)
         registerSession(session.id)
       }
     })
@@ -1730,11 +1747,12 @@ export function createData(config: CreateDataInput) {
       /** With `children`, also loads every descendant session at any depth, so the family index is complete. */
       sync(sessionID: string, options?: { children?: boolean }) {
         return sync.run(options?.children ? `session.family:${sessionID}` : `session:${sessionID}`, async () => {
+          const generation = sync.generation()
           const [info, children] = await Promise.all([
             api().session.get({ sessionID }),
             options?.children ? listChildren({ parentID: sessionID, order: "desc", limit: CHILD_PAGE }) : [],
           ])
-          publishSessions([info, ...children.filter(unread)])
+          publishSessions([info, ...children.filter(unread)], generation)
           if (options?.children) await syncDescendants(children, new Set([sessionID]))
         })
       },

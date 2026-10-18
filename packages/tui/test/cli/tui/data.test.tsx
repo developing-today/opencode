@@ -21,7 +21,15 @@ import { ToastProvider } from "../../../src/ui/toast"
 import { createSessionRows, type SessionRow } from "../../../src/routes/session/rows"
 import { groupRefs } from "../../../src/routes/session/grouping/session"
 import { unwrap } from "solid-js/store"
-import { createApi, createEventStream, createFetch, directory, json, worktree } from "../../fixture/tui-client"
+import {
+  createApi,
+  createEventStream,
+  createFetch,
+  directory,
+  json,
+  worktree,
+  type FetchHandler,
+} from "../../fixture/tui-client"
 import { emptyThemeSource, tmpdir } from "../../fixture/fixture"
 import { TestTuiContexts } from "../../fixture/tui-environment"
 import { createTuiResolvedConfig } from "../../fixture/tui-runtime"
@@ -3242,13 +3250,10 @@ test("syncs every descendant session info with a navigated root", async () => {
   }
 })
 
-test("refreshes cached descendants from discovery after a reconnect", async () => {
-  const events = createEventStream()
-  const parents: Record<string, string> = { child: "root", grandchild: "child" }
-  const titles: Record<string, string> = { child: "Before", grandchild: "Before" }
+// Answers session reads and child listings from `parents` and `titles` as they stand when the request arrives.
+function sessionRoutes(parents: Record<string, string>, titles: Record<string, string>) {
   const info = (id: string) => ({ ...sessionInfo(id, parents[id]), title: titles[id] ?? id })
-  const calls = createFetch((url) => {
-    if (url.pathname === "/api/event") return events.v2()
+  return (url: URL) => {
     if (url.pathname === "/api/session") {
       const parentID = url.searchParams.get("parentID")
       return json({
@@ -3260,7 +3265,13 @@ test("refreshes cached descendants from discovery after a reconnect", async () =
     }
     const match = url.pathname.match(/^\/api\/session\/([^/]+)$/)
     if (match && match[1] !== "active") return json({ data: info(match[1]) })
-  }, events)
+  }
+}
+
+// Mounts a DataProvider over an event stream the test can drop and restore.
+async function mountReconnectable(respond: FetchHandler) {
+  const events = createEventStream()
+  const calls = createFetch(respond, events)
   let data!: ReturnType<typeof useData>
   let client!: ReturnType<typeof useClient>
 
@@ -3281,25 +3292,102 @@ test("refreshes cached descendants from discovery after a reconnect", async () =
       </ClientProvider>
     </TestTuiContexts>
   ))
+  await wait(() => client.connection.status() === "connected")
+  return {
+    data,
+    app,
+    // Drops the event stream and applies `offline` while the client is disconnected, so it never sees those changes.
+    async reconnect(offline: () => void) {
+      events.disconnect()
+      await wait(() => client.connection.status() === "reconnecting")
+      offline()
+      // The client waits a second before it reconnects.
+      await wait(() => client.connection.status() === "connected", 4000)
+    },
+  }
+}
+
+test("refreshes cached descendants from discovery after a reconnect", async () => {
+  const titles: Record<string, string> = { child: "Before", grandchild: "Before" }
+  const setup = await mountReconnectable(sessionRoutes({ child: "root", grandchild: "child" }, titles))
 
   try {
-    await wait(() => client.connection.status() === "connected")
-    await data.session.sync("root", { children: true })
-    expect(data.session.get("grandchild")?.title).toBe("Before")
+    await setup.data.session.sync("root", { children: true })
+    expect(setup.data.session.get("grandchild")?.title).toBe("Before")
 
-    // Renamed while the client is offline, so it never sees the events.
-    events.disconnect()
-    await wait(() => client.connection.status() === "reconnecting")
-    titles.child = "After"
-    titles.grandchild = "After"
-    // The client waits a second before it reconnects.
-    await wait(() => client.connection.status() === "connected", 4000)
-    await data.session.sync("root", { children: true })
+    await setup.reconnect(() => Object.assign(titles, { child: "After", grandchild: "After" }))
+    await setup.data.session.sync("root", { children: true })
 
-    expect(data.session.get("child")?.title).toBe("After")
-    expect(data.session.get("grandchild")?.title).toBe("After")
+    expect(setup.data.session.get("child")?.title).toBe("After")
+    expect(setup.data.session.get("grandchild")?.title).toBe("After")
   } finally {
-    app.renderer.destroy()
+    setup.app.renderer.destroy()
+  }
+})
+
+test("refreshes a descendant whose listing was answered before a reconnect but arrived after it", async () => {
+  const titles: Record<string, string> = { child: "Before", grandchild: "Before" }
+  const routes = sessionRoutes({ child: "root", grandchild: "child" }, titles)
+  const holding = Promise.withResolvers<void>()
+  const held = Promise.withResolvers<void>()
+  const listings = { child: 0 }
+  const setup = await mountReconnectable(async (url) => {
+    const reply = routes(url)
+    // The first walk lists the grandchild before the rename, and its reply is held across the reconnect.
+    if (url.searchParams.get("parentID") === "child" && ++listings.child === 1) {
+      holding.resolve()
+      await held.promise
+    }
+    return reply
+  })
+
+  try {
+    const first = setup.data.session.sync("root", { children: true })
+    await holding.promise
+    await setup.reconnect(() => Object.assign(titles, { child: "After", grandchild: "After" }))
+    const reload = setup.data.session.sync("root", { children: true })
+    held.resolve()
+    await Promise.all([first, reload])
+
+    expect(setup.data.session.get("child")?.title).toBe("After")
+    expect(setup.data.session.get("grandchild")?.title).toBe("After")
+  } finally {
+    held.resolve()
+    setup.app.renderer.destroy()
+  }
+})
+
+test("keeps a reconnect's fresh listing over the reads that reconnect overtook", async () => {
+  const titles: Record<string, string> = { failing: "Before", late: "Before" }
+  const routes = sessionRoutes({ failing: "root", late: "root" }, titles)
+  const holding = { failing: Promise.withResolvers<void>(), late: Promise.withResolvers<void>() }
+  const held = Promise.withResolvers<void>()
+  const setup = await mountReconnectable(async (url) => {
+    const reply = routes(url)
+    const id = url.pathname.split("/").at(-1)
+    if (id !== "failing" && id !== "late") return reply
+    // Each subagent's own read is held across the reconnect. One then fails; the other answers with what it read.
+    holding[id].resolve()
+    await held.promise
+    return id === "failing" ? new Response(null, { status: 503 }) : reply
+  })
+
+  try {
+    await setup.data.session.sync("root", { children: true })
+    setup.data.session.invalidate("failing")
+    setup.data.session.invalidate("late")
+    const reads = Promise.allSettled([setup.data.session.sync("failing"), setup.data.session.sync("late")])
+    await Promise.all([holding.failing.promise, holding.late.promise])
+    await setup.reconnect(() => Object.assign(titles, { failing: "After", late: "After" }))
+    await setup.data.session.sync("root", { children: true })
+    held.resolve()
+    await reads
+
+    expect(setup.data.session.get("failing")?.title).toBe("After")
+    expect(setup.data.session.get("late")?.title).toBe("After")
+  } finally {
+    held.resolve()
+    setup.app.renderer.destroy()
   }
 })
 
