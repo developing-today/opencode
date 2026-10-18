@@ -127,10 +127,10 @@ export const Plugin = {
                     ),
                   )
               }
-              const limit = Config.latest(yield* config.entries(), "experimental")?.subagent_depth ?? 1
+              const limit = Config.latest(yield* config.entries(), "experimental")?.subagent_depth ?? 5
               if (depth >= limit)
                 return yield* new ToolFailure({
-                  message: `Subagent depth limit reached (${limit}). Increase "experimental.subagent_depth" to allow nested subagents.`,
+                  message: `Subagent depth limit reached (${limit}). Do this work in the current session; "experimental.subagent_depth" sets the limit.`,
                 })
               const agent = yield* agents.resolve(input.agent)
               if (agent === undefined) return yield* new ToolFailure({ message: `Unknown agent: ${input.agent}` })
