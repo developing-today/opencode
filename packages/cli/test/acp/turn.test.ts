@@ -218,6 +218,29 @@ describe("acp turn events over the wire", () => {
     expect(acp.server.replies).toEqual([{ sessionID: acp.sessionId, requestID: "perm_woken", decision: "once" }])
   })
 
+  test("asks an ask still open between prompts again when the next prompt starts, without answering it", async () => {
+    await using acp = await startSession({
+      // The first request stays open until OpenCode cancels it; the second is answered.
+      permission: (_request, signal) =>
+        acp.permissions.length > 1
+          ? { outcome: { outcome: "selected", optionId: "once" } }
+          : new Promise((resolve) =>
+              signal.addEventListener("abort", () => resolve({ outcome: { outcome: "cancelled" } }), { once: true }),
+            ),
+    })
+
+    expect((await acp.prompt(acp.sessionId, "hello")).stopReason).toBe("end_turn")
+    acp.server.send(permissionAsked(acp.sessionId, "perm_held", { action: "read" }))
+    await acp.until(() => acp.permissions.length === 1, "the request between prompts")
+    // Still pending on the server, so the next prompt lists it.
+    acp.server.pending.permissions.push({ id: "perm_held", sessionID: acp.sessionId, action: "read", resources: ["*"] })
+
+    expect((await acp.prompt(acp.sessionId, "again")).stopReason).toBe("end_turn")
+
+    expect(acp.permissions.map((request) => request.toolCall.toolCallId)).toEqual(["perm_held", "perm_held"])
+    expect(acp.server.replies).toEqual([{ sessionID: acp.sessionId, requestID: "perm_held", decision: "once" }])
+  })
+
   test("asks pending permissions and questions from the tree when a prompt starts, and none from other trees", async () => {
     await using acp = await startSession({
       capabilities: { elicitation: true },
@@ -276,8 +299,11 @@ describe("acp turn events over the wire", () => {
   })
 
   test("asks a loaded session's pending asks once its response is out", async () => {
-    await using acp = await startWire({ permission: () => ({ outcome: { outcome: "selected", optionId: "once" } }) })
-    await acp.initialize()
+    await using acp = await startWire({
+      permission: () => ({ outcome: { outcome: "selected", optionId: "once" } }),
+      elicitation: () => ({ action: "accept", content: { pm: "bun" } }),
+    })
+    await acp.initialize({ elicitation: true })
     acp.server.sessions.set("ses_loaded", makeSession("ses_loaded"))
     acp.server.sessions.set("ses_child", { ...makeSession("ses_child"), parentID: "ses_loaded", title: "Explore code" })
     acp.server.pending.permissions.push({
@@ -287,9 +313,19 @@ describe("acp turn events over the wire", () => {
       resources: ["*"],
       metadata: { path: "/workspace/waiting.md" },
     })
+    acp.server.pending.forms.push({
+      id: "frm_loaded",
+      sessionID: "ses_loaded",
+      title: "Which package manager?",
+      metadata: { kind: "question", tool: { id: "call_question" } },
+      fields: [{ key: "pm", title: "Package manager", type: "string", options: [{ value: "bun", label: "Bun" }] }],
+    })
 
     await acp.request("session/load", { sessionId: "ses_loaded", cwd: "/workspace", mcpServers: [] })
-    await acp.until(() => acp.server.replies.length === 1, "the pending permission reply")
+    await acp.until(
+      () => acp.server.replies.length === 1 && acp.server.repliedForms.length === 1,
+      "the pending permission and question replies",
+    )
 
     expect(acp.permissions).toMatchObject([
       {
@@ -297,6 +333,25 @@ describe("acp turn events over the wire", () => {
         toolCall: { toolCallId: "ses_child:perm_waiting", title: "Explore code: /workspace/waiting.md" },
       },
     ])
+    // The load replayed the session's own question tool call, so the question still points at it.
+    expect(acp.elicitations).toMatchObject([{ sessionId: "ses_loaded", toolCallId: "call_question" }])
+  })
+
+  test("asks the pending asks one list found when the other list fails", async () => {
+    await using acp = await startSession({
+      fetch: (request) => (request.path === "/api/form" ? new Response(null, { status: 500 }) : undefined),
+      permission: () => ({ outcome: { outcome: "selected", optionId: "once" } }),
+    })
+    acp.server.pending.permissions.push({
+      id: "perm_listed",
+      sessionID: acp.sessionId,
+      action: "read",
+      resources: ["*"],
+    })
+
+    expect((await acp.prompt(acp.sessionId, "hello")).stopReason).toBe("end_turn")
+
+    expect(acp.server.replies).toEqual([{ sessionID: acp.sessionId, requestID: "perm_listed", decision: "once" }])
   })
 
   test("cancels unsupported session forms so execution can continue", async () => {

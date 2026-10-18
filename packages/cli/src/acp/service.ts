@@ -151,7 +151,7 @@ export function make(input: {
       const session = yield* getSession(params.sessionId, params.cwd)
       yield* ACPDirectories.activate(input.client, session, directories)
       const attachment = yield* input.sessions.attach(session, session.location.directory, mcpServers)
-      yield* input.turn.follow(attachment.attached)
+      yield* input.turn.follow(attachment.attached, true)
       return yield* ACPReplay.history(
         input.client,
         input.connection,
@@ -207,7 +207,7 @@ export function make(input: {
       const session = yield* getSession(params.sessionId, params.cwd)
       yield* ACPDirectories.activate(input.client, session, directories)
       const attachment = yield* input.sessions.attach(session, session.location.directory, mcpServers)
-      yield* input.turn.follow(attachment.attached)
+      yield* input.turn.follow(attachment.attached, false)
       return { configOptions: attachment.configOptions }
     }),
     closeSession: Effect.fnUntraced(function* (params) {
