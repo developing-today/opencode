@@ -345,4 +345,43 @@ describe("internal notifications TUI plugin", () => {
       },
     ])
   })
+
+  test("drops an announcement settled by another client while its session loads", async () => {
+    const harness = await setup()
+
+    harness.emit({ id: "event-1", created: 0, type: "permission.asked", data: permission("permission-1", "nested") })
+    harness.emit({
+      id: "event-2",
+      created: 0,
+      type: "permission.replied",
+      data: { sessionID: "nested", requestID: "permission-1", reply: "once" },
+    })
+    harness.emit({ id: "event-3", created: 0, type: "form.created", data: { form: form("form-1", "nested") } })
+    harness.emit({ id: "event-4", created: 0, type: "form.cancelled", data: { sessionID: "nested", id: "form-1" } })
+    harness.emit(executionStarted("event-5", "nested"))
+    harness.emit(executionFailed("event-6", "nested"))
+    harness.emit(executionStarted("event-7", "nested"))
+    await harness.settled()
+
+    expect(harness.notifications).toEqual([])
+  })
+
+  test("announces only the latest completion deferred while its session loads", async () => {
+    const harness = await setup()
+
+    harness.emit(executionStarted("event-1", "nested"))
+    harness.emit(executionSucceeded("event-2", "nested"))
+    harness.emit(executionStarted("event-3", "nested"))
+    harness.emit(executionSucceeded("event-4", "nested"))
+    await harness.settled()
+
+    expect(harness.notifications).toEqual([
+      {
+        title: "Nested subagent session",
+        message: "Session done",
+        notification: false,
+        sound: { name: "subagent_done", when: "always" },
+      },
+    ])
+  })
 })
