@@ -12,8 +12,10 @@ import { PluginHost } from "@opencode/core/plugin/host"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import {
   copilotBaseURL,
+  copilotEndpointDiscoveryNeeded,
   copilotEntitlementError,
   copilotFetch,
+  discoverCopilotApiEndpoint,
   GithubCopilotPlugin,
   utilityTitle,
 } from "@opencode/core/plugin/provider/github-copilot"
@@ -66,6 +68,68 @@ describe("GithubCopilotPlugin", () => {
       }),
     ).toBe("https://api.business.githubcopilot.com")
   })
+
+  test("only discovers a plan endpoint when the credential stored neither endpoint nor enterprise URL", () => {
+    expect(copilotEndpointDiscoveryNeeded(undefined)).toBe(true)
+    expect(copilotEndpointDiscoveryNeeded({})).toBe(true)
+    // A v1-migrated credential carries only account identity metadata.
+    expect(copilotEndpointDiscoveryNeeded({ accountID: "123" })).toBe(true)
+    expect(copilotEndpointDiscoveryNeeded({ apiEndpoint: "https://api.business.githubcopilot.com" })).toBe(false)
+    expect(copilotEndpointDiscoveryNeeded({ enterpriseUrl: "company.ghe.com" })).toBe(false)
+    expect(copilotEndpointDiscoveryNeeded({ apiEndpoint: "" })).toBe(true)
+  })
+
+  it.live("discovers the plan endpoint a migrated credential never stored", () =>
+    Effect.gen(function* () {
+      const seen: Array<{ url?: string; init?: RequestInit }> = []
+      const endpoint = yield* discoverCopilotApiEndpoint({
+        token: "token",
+        app: App.make({ name: "test", version: "1.2.3", channel: "beta" }),
+        fetch: async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+          seen.push({ url: String(input), init })
+          return Response.json({
+            copilot_plan: "business",
+            endpoints: { api: "https://api.business.githubcopilot.com/" },
+          })
+        },
+      })
+      expect(endpoint).toBe("https://api.business.githubcopilot.com")
+      expect(seen[0]?.url).toBe("https://api.github.com/copilot_internal/user")
+      const headers = new Headers(seen[0]?.init?.headers)
+      expect(headers.get("authorization")).toBe("Bearer token")
+      expect(headers.get("x-github-api-version")).toBe("2025-04-01")
+      expect(headers.get("user-agent")).toBe("opencode/beta/1.2.3/test")
+    }),
+  )
+
+  it.live("returns no plan endpoint when the lookup reports none", () =>
+    Effect.gen(function* () {
+      const app = App.make({ name: "test", version: "1.2.3", channel: "beta" })
+      const missing = yield* discoverCopilotApiEndpoint({
+        token: "token",
+        app,
+        fetch: async () => Response.json({ copilot_plan: "individual" }),
+      })
+      expect(missing).toBeUndefined()
+      const malformed = yield* discoverCopilotApiEndpoint({
+        token: "token",
+        app,
+        fetch: async () => Response.json({ endpoints: { api: 42 } }),
+      })
+      expect(malformed).toBeUndefined()
+    }),
+  )
+
+  it.live("fails plan endpoint discovery on a non-200 lookup so load can fall back", () =>
+    Effect.gen(function* () {
+      const error = yield* discoverCopilotApiEndpoint({
+        token: "token",
+        app: App.make({ name: "test", version: "1.2.3", channel: "beta" }),
+        fetch: async () => new Response("nope", { status: 500 }),
+      }).pipe(Effect.flip)
+      expect(String(error)).toContain("500")
+    }),
+  )
 
   test("rejects accounts without Copilot chat access", () => {
     expect(copilotEntitlementError({ chat_enabled: false, can_signup_for_limited: true })).toContain("Copilot Free")
