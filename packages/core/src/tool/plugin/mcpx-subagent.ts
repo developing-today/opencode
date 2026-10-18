@@ -88,11 +88,13 @@ export const initializeSubagentSession = Effect.fnUntraced(function* (input: {
   environments?: Pick<SessionEnvironment.Interface, "get" | "set">
 }) {
   const childSessionID = generateSubagentSessionID(input.parentSessionID, input.childID)
+  // A parent that is itself a subagent is known to mcpx by its lease ID, not its session ID.
+  const parentSessionID = getLease(input.parentSessionID)?.childSessionID ?? input.parentSessionID
   const lease: SubagentSessionLease = {
     leaseID: childSessionID,
     childSessionID,
     childID: input.childID,
-    parentSessionID: input.parentSessionID,
+    parentSessionID,
     released: false,
   }
   registerLease(lease)
@@ -108,7 +110,7 @@ export const initializeSubagentSession = Effect.fnUntraced(function* (input: {
     yield* envService.set(input.childID as SessionSchema.ID, {
       ...existing,
       MCPX_SESSION_ID: childSessionID,
-      MCPX_PARENT_SESSION_ID: input.parentSessionID,
+      MCPX_PARENT_SESSION_ID: parentSessionID,
     })
   }
 

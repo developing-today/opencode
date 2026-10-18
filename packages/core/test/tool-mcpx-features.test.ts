@@ -1,6 +1,14 @@
 import { describe, expect, it } from "bun:test"
+import { Effect } from "effect"
 import { findClosestTool, levenshteinDistance, analyzeArgumentMismatch, attemptParameterRepair } from "../src/tool/plugin/mcpx-diagnose.js"
-import { generateSubagentSessionID, registerLease, getLease, removeLease, clearLeases } from "../src/tool/plugin/mcpx-subagent.js"
+import {
+  generateSubagentSessionID,
+  registerLease,
+  getLease,
+  removeLease,
+  clearLeases,
+  initializeSubagentSession,
+} from "../src/tool/plugin/mcpx-subagent.js"
 import {
   projectTools,
   retractTools,
@@ -97,6 +105,19 @@ describe("Feature 3: Ephemeral Subagent Session Leasing", () => {
 
     removeLease(childID)
     expect(getLease(childID)).toBeUndefined()
+  })
+
+  it("links a nested subagent to its parent's lease", async () => {
+    clearLeases()
+    const child = await Effect.runPromise(initializeSubagentSession({ parentSessionID: "ses_root", childID: "ses_child" }))
+    const grandchild = await Effect.runPromise(
+      initializeSubagentSession({ parentSessionID: "ses_child", childID: "ses_grandchild" }),
+    )
+
+    expect(child.parentSessionID).toBe("ses_root")
+    expect(grandchild.childSessionID).toBe("mcpx-sub-ses_child-ses_grandchild")
+    expect(grandchild.parentSessionID).toBe(child.childSessionID)
+    clearLeases()
   })
 })
 
