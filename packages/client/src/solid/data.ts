@@ -226,9 +226,28 @@ function createSync() {
   }
 }
 
+// Runs at most `limit` tasks at once and starts queued tasks in order as running ones settle.
+function createLimiter(limit: number) {
+  const queue: (() => void)[] = []
+  let running = 0
+  const next = () => {
+    running--
+    queue.shift()?.()
+  }
+  return <Value>(task: () => Promise<Value>) =>
+    new Promise<Value>((resolve, reject) => {
+      const start = () => {
+        running++
+        void Promise.resolve().then(task).then(resolve, reject).finally(next)
+      }
+      if (running < limit) return start()
+      queue.push(start)
+    })
+}
+
 const CHILD_PAGE = 200
-// Listings in flight while walking below a session's direct children, so a wide tree does not queue the
-// client's other requests behind it.
+// Listings in flight across every walk below direct children in one client, so wide trees and several open
+// tabs do not queue the client's other requests behind discovery.
 const DESCENDANT_LISTINGS = 8
 
 export function createData(config: CreateDataInput) {
@@ -284,6 +303,7 @@ export function createData(config: CreateDataInput) {
   )
   const messageIndex = new Map<string, Map<string, number>>()
   const sync = createSync()
+  const descendantListing = createLimiter(DESCENDANT_LISTINGS)
   let activeUpdates: Map<string, DataSessionStatus | undefined> | undefined
   const pendingUpdates = new Map<string, Map<string, SessionInboxInfo | SessionInbox.Delivery | undefined>>()
 
@@ -536,33 +556,29 @@ export function createData(config: CreateDataInput) {
     return [...page.data, ...(await listChildren({ cursor: page.cursor.next, limit: CHILD_PAGE }))]
   }
 
-  // Subagents can launch their own, so walk the rest of the tree one level per round of requests,
-  // publishing each level as it arrives. `seen` holds the sessions whose children were already
-  // listed, so every session is listed once and a parent cycle still ends the walk. Below the
-  // direct children the walk is best effort: a branch whose listing fails is left to live events
-  // rather than failing the sync and closing the view.
+  // Subagents can launch their own, so the walk continues below every listed session. Each listing publishes
+  // its children as soon as it resolves, and every walk shares one listing limit. `seen` holds the sessions
+  // already listed, so every session is listed once and a parent cycle still ends the walk. Below the direct
+  // children the walk is best effort: a branch whose listing fails is left to live events rather than failing
+  // the sync and closing the view.
   async function syncDescendants(parents: SessionInfo[], seen: Set<string>): Promise<void> {
-    const expand = parents.filter((parent) => {
-      if (seen.has(parent.id)) return false
-      seen.add(parent.id)
-      return true
-    })
-    if (expand.length === 0) return
-    const groups = Array.from({ length: Math.ceil(expand.length / DESCENDANT_LISTINGS) }, (_, index) =>
-      expand.slice(index * DESCENDANT_LISTINGS, (index + 1) * DESCENDANT_LISTINGS),
+    await Promise.all(
+      parents
+        .filter((parent) => {
+          if (seen.has(parent.id)) return false
+          seen.add(parent.id)
+          return true
+        })
+        .map(async (parent) => {
+          const children = (
+            await descendantListing(() =>
+              listChildren({ parentID: parent.id, order: "desc", limit: CHILD_PAGE }),
+            ).catch((): SessionInfo[] => [])
+          ).filter((child) => !seen.has(child.id))
+          publishSessions(children)
+          return syncDescendants(children, seen)
+        }),
     )
-    const listed: SessionInfo[] = []
-    for (const group of groups) {
-      const pages = await Promise.all(
-        group.map((parent) =>
-          listChildren({ parentID: parent.id, order: "desc", limit: CHILD_PAGE }).catch((): SessionInfo[] => []),
-        ),
-      )
-      listed.push(...pages.flat())
-    }
-    const children = listed.filter((child) => !seen.has(child.id))
-    publishSessions(children)
-    return syncDescendants(children, seen)
   }
 
   function publishSessions(sessions: SessionInfo[]) {

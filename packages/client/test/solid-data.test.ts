@@ -99,13 +99,14 @@ test("counts every subagent page in a root session's cost", async () => {
   }
 })
 
-test("discovers nested subagents at any depth, publishing each level as it arrives", async () => {
+test("discovers nested subagents at any depth, publishing each listing as it resolves", async () => {
   const parents: Record<string, string> = {
     ses_a: "ses_root",
     ses_b: "ses_root",
     ses_a1: "ses_a",
     ses_a2: "ses_a",
     ses_a1x: "ses_a1",
+    ses_a2x: "ses_a2",
   }
   const deepest = Promise.withResolvers<void>()
   const requests: string[] = []
@@ -132,17 +133,26 @@ test("discovers nested subagents at any depth, publishing each level as it arriv
 
   try {
     const synced = setup.data.session.sync("ses_root", { children: true })
-    await wait(() => setup.data.session.get("ses_a2") !== undefined)
+    // a2's listing publishes its child while a1's listing on the same level is still pending.
+    await wait(() => setup.data.session.get("ses_a2x") !== undefined)
     expect(setup.data.session.get("ses_a1x")).toBeUndefined()
     deepest.resolve()
     await synced
 
-    expect(setup.data.session.family("ses_root")).toEqual(["ses_root", "ses_a", "ses_b", "ses_a1", "ses_a2", "ses_a1x"])
+    expect(setup.data.session.family("ses_root")).toEqual([
+      "ses_root",
+      "ses_a",
+      "ses_b",
+      "ses_a1",
+      "ses_a2",
+      "ses_a2x",
+      "ses_a1x",
+    ])
     expect(setup.data.session.root("ses_a1x")).toBe("ses_root")
     expect(requests.toSorted()).toEqual(
       [
         "/api/session/ses_root?",
-        ...["ses_root", "ses_a", "ses_b", "ses_a1", "ses_a2", "ses_a1x"].map(
+        ...["ses_root", "ses_a", "ses_b", "ses_a1", "ses_a2", "ses_a1x", "ses_a2x"].map(
           (id) => `/api/session?limit=200&order=desc&parentID=${id}`,
         ),
       ].toSorted(),
@@ -153,24 +163,28 @@ test("discovers nested subagents at any depth, publishing each level as it arriv
   }
 })
 
-test("keeps the rest of the tree when a nested listing fails, and lists a few sessions at a time", async () => {
-  const children = Array.from({ length: 20 }, (_, index) => `ses_c${index}`)
+test("shares one listing limit across concurrent walks and keeps a tree whose nested listing fails", async () => {
+  const children: Record<string, string[]> = Object.fromEntries(
+    ["ses_one", "ses_two"].map((root) => [root, Array.from({ length: 10 }, (_, index) => `${root}_c${index}`)]),
+  )
+  const gate = Promise.withResolvers<void>()
   const flight = { now: 0, most: 0 }
   const api = OpenCode.make({
     baseUrl: "http://opencode.local",
     fetch: async (input, init) => {
       const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
-      if (url.pathname === "/api/session/ses_root") return Response.json({ data: { ...session(0), id: "ses_root" } })
-      const parentID = url.searchParams.get("parentID")
-      if (parentID === "ses_root")
-        return Response.json({ data: children.map((id) => ({ ...session(0), id, parentID })), cursor: {} })
+      const root = url.pathname.match(/^\/api\/session\/(ses_one|ses_two)$/)?.[1]
+      if (root) return Response.json({ data: { ...session(0), id: root } })
+      const parentID = url.searchParams.get("parentID") ?? ""
+      const direct = children[parentID]
+      if (direct) return Response.json({ data: direct.map((id) => ({ ...session(0), id, parentID })), cursor: {} })
       flight.now++
       flight.most = Math.max(flight.most, flight.now)
-      await Bun.sleep(1)
+      await gate.promise
       flight.now--
-      if (parentID === "ses_c0") return new Response(null, { status: 500 })
+      if (parentID === "ses_one_c0") return new Response(null, { status: 500 })
       return Response.json({
-        data: parentID === "ses_c1" ? [{ ...session(0), id: "ses_c1_child", parentID }] : [],
+        data: parentID === "ses_two_c1" ? [{ ...session(0), id: "ses_two_c1_child", parentID }] : [],
         cursor: {},
       })
     },
@@ -181,12 +195,25 @@ test("keeps the rest of the tree when a nested listing fails, and lists a few se
   }))
 
   try {
-    await setup.data.session.sync("ses_root", { children: true })
+    const synced = Promise.all(["ses_one", "ses_two"].map((root) => setup.data.session.sync(root, { children: true })))
+    // All twenty direct children wait for a listing, but both walks together start only eight.
+    await wait(
+      () =>
+        flight.now === 8 &&
+        Object.values(children)
+          .flat()
+          .every((id) => setup.data.session.get(id)),
+    )
+    expect(flight.most).toBe(8)
+    gate.resolve()
+    await synced
 
-    expect(setup.data.session.get("ses_c1_child")?.parentID).toBe("ses_c1")
-    expect(setup.data.session.family("ses_root")).toHaveLength(22)
-    expect(flight.most).toBeLessThanOrEqual(8)
+    expect(flight.most).toBe(8)
+    expect(setup.data.session.get("ses_two_c1_child")?.parentID).toBe("ses_two_c1")
+    expect(setup.data.session.family("ses_one")).toHaveLength(11)
+    expect(setup.data.session.family("ses_two")).toHaveLength(12)
   } finally {
+    gate.resolve()
     setup.dispose()
   }
 })
