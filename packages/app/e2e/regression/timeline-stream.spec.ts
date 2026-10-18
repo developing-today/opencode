@@ -1404,6 +1404,8 @@ test.describe("background shortcut", () => {
 
   test("nests running subagents at any depth under the subagent that started them", async ({ page }) => {
     const childID = "ses_nested_child"
+    const backgroundID = "ses_nested_background"
+    const summaryID = "ses_nested_summary"
     const finishedID = "ses_nested_finished"
     const grandchildID = "ses_nested_grandchild"
 
@@ -1411,6 +1413,7 @@ test.describe("background shortcut", () => {
     const started = [
       session({ id: grandchildID, parentID: childID, title: "Search callers", agent: "general" }),
       session({ id: "ses_nested_deepest", parentID: grandchildID, title: "Read call sites", agent: "explore" }),
+      session({ id: "ses_nested_notes", parentID: backgroundID, title: "Collect references", agent: "explore" }),
       session({ id: "ses_nested_stray", parentID: finishedID, title: "Index the docs", agent: "explore" }),
     ]
 
@@ -1435,6 +1438,32 @@ test.describe("background shortcut", () => {
               },
               time: { created: 2, completed: 3 },
             },
+            // Listed as background work until its completion notice arrives.
+            {
+              type: "tool",
+              id: "call_background",
+              name: "subagent",
+              state: {
+                status: "completed",
+                input: { description: "Draft the notes", agent: "build" },
+                content: [{ type: "text", text: "working" }],
+                metadata: { sessionID: backgroundID, status: "running" },
+              },
+              time: { created: 3, completed: 4 },
+            },
+            // Idle with nothing running below it, so only its pending notice keeps it counted.
+            {
+              type: "tool",
+              id: "call_summary",
+              name: "subagent",
+              state: {
+                status: "completed",
+                input: { description: "Summarize findings", agent: "explore" },
+                content: [{ type: "text", text: "working" }],
+                metadata: { sessionID: summaryID, status: "running" },
+              },
+              time: { created: 3, completed: 4 },
+            },
             {
               type: "tool",
               id: "call_child",
@@ -1444,7 +1473,7 @@ test.describe("background shortcut", () => {
                 input: { description: "Plan the migration", agent: "explore" },
                 metadata: { sessionID: childID },
               },
-              time: { created: 4 },
+              time: { created: 5 },
             },
           ],
           time: { created: 2 },
@@ -1453,10 +1482,12 @@ test.describe("background shortcut", () => {
       sessions: [
         session(),
         session({ id: finishedID, parentID: sessionID, title: "Review earlier work", agent: "explore" }),
+        session({ id: backgroundID, parentID: sessionID, title: "Draft the notes", agent: "build" }),
+        session({ id: summaryID, parentID: sessionID, title: "Summarize findings", agent: "explore" }),
         session({ id: childID, parentID: sessionID, title: "Plan the migration", agent: "explore" }),
         ...started,
       ],
-      // The finished subagent is idle while the subagent it started still runs.
+      // The finished subagents are idle while the subagents they started still run.
       sessionStatus: Object.fromEntries(
         [sessionID, childID, ...started.map((item) => item.id)].map((id) => [id, { type: "busy" }]),
       ),
@@ -1465,13 +1496,16 @@ test.describe("background shortcut", () => {
     for (const item of started) await timeline.send(sessionCreated(item))
 
     const trigger = page.locator("[data-session-title]").getByRole("button", { name: /^\d+ working$/ })
-    await expect(trigger).toHaveAccessibleName("4 working")
+    await expect(trigger).toHaveAccessibleName("6 working")
     await trigger.click()
-    const rows = page.getByRole("menu", { name: "4 working", exact: true }).getByRole("menuitem")
+    const rows = page.getByRole("menu", { name: "6 working", exact: true }).getByRole("menuitem")
     await expect(rows).toHaveText([
       /^Explore\s*Plan the migration$/,
       /^General\s*Search callers$/,
       /^Explore\s*Read call sites$/,
+      /^Build\s*Draft the notes$/,
+      /^Explore\s*Collect references$/,
+      /^Explore\s*Summarize findings$/,
       /^Explore\s*Review earlier work$/,
       /^Explore\s*Index the docs$/,
     ])
@@ -1483,11 +1517,14 @@ test.describe("background shortcut", () => {
 
     expect(starts[1]).toBeGreaterThan(starts[0]!)
     expect(starts[2]).toBeGreaterThan(starts[1]!)
-    expect(starts.slice(3)).toEqual(starts.slice(0, 2))
+    expect(starts.slice(3)).toEqual([starts[0], starts[1], starts[0], starts[0], starts[1]])
 
-    // A finished subagent stays only as the parent of the work it started, so it has nothing to interrupt.
-    await rows.nth(3).hover()
-    await expect(rows.nth(3).getByRole("button")).toHaveCount(0)
+    // A finished subagent, still listed as background work or not, only keeps the work it started in place.
+    for (const finished of [rows.nth(3), rows.nth(6)]) {
+      await finished.hover()
+      await expect(finished.locator('[data-component="session-progress-indicator-v2"]')).toHaveCount(0)
+      await expect(finished.getByRole("button")).toHaveCount(0)
+    }
 
     const interrupt = page.waitForRequest(
       (request) =>

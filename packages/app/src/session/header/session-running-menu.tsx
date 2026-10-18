@@ -85,14 +85,16 @@ export function SessionRunningMenu(props: {
         })
       : []
 
-    const below = new Map(tree.map((node) => [node.session.id, node.children]))
+    const nodes = new Map(tree.map((node) => [node.session.id, node]))
     const listed = new Set(subagents.map((item) => item.sessionID))
 
     return [
-      ...subagents.flatMap((item) => [
-        { ...item, depth: 0, running: true },
-        ...nestedItems(item.sessionID ? (below.get(item.sessionID) ?? []) : [], 1),
-      ]),
+      ...subagents.flatMap((item) => {
+        const node = item.sessionID ? nodes.get(item.sessionID) : undefined
+
+        // A listed subagent absent from the tree still counts as running until its completion notice arrives.
+        return [{ ...item, depth: 0, running: node?.running ?? true }, ...nestedItems(node?.children ?? [], 1)]
+      }),
       // Finished subagents no longer listed above stay as the parents of work they started that still runs.
       ...nestedItems(
         tree.filter((node) => !node.running && !listed.has(node.session.id)),
