@@ -83,9 +83,15 @@ function answer(form: AskedForm, response: CreateElicitationResponse): Form.Answ
   )
 }
 
+/** The tool call a form came from, when its metadata names one. */
+export function sourceToolCall(form: Form.Info) {
+  return Option.getOrUndefined(
+    Option.map(Schema.decodeUnknownOption(ToolSource)(form.metadata), (metadata) => metadata.tool.id),
+  )
+}
+
 export const ask = Effect.fnUntraced(function* (input: Input) {
-  const source = input.toolCallSent ? Schema.decodeUnknownOption(ToolSource)(input.form.metadata) : Option.none()
-  const toolCallID = Option.getOrUndefined(Option.map(source, (metadata) => metadata.tool.id))
+  const toolCallID = input.toolCallSent ? sourceToolCall(input.form) : undefined
   const response = yield* input.connection.createElicitation({
     mode: "form",
     sessionId: input.clientSessionID,

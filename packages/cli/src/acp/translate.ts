@@ -71,16 +71,7 @@ export type Output =
       readonly tool?: Tool
       readonly child?: ACPChild.Session
     }
-  | {
-      readonly _tag: "FormAsk"
-      readonly form: Form.Info
-      readonly child?: ACPChild.Session
-      /**
-       * How the client got the form's tool call: from this subscription's events, never (the form was raised before
-       * the subscription), or from the history replay that loading the session sent.
-       */
-      readonly toolCall: "live" | "unsent" | "replayed"
-    }
+  | { readonly _tag: "FormAsk"; readonly form: Form.Info; readonly child?: ACPChild.Session }
   | { readonly _tag: "AskSettled"; readonly id: string }
 
 export type Folded = {
@@ -101,7 +92,7 @@ export const initial: TurnState = {
 export function fold(state: TurnState, event: OpenCodeEvent, ctx: TurnContext): Folded {
   if (event.type === "session.created") return childCreated(state, event, ctx)
   if (event.type === "permission.asked") return permissionAsk(state, ctx, event.data)
-  if (event.type === "form.created") return formAsk(state, ctx, event.data.form, "live")
+  if (event.type === "form.created") return formAsk(state, ctx, event.data.form)
 
   const sessionID = sessionIDFromEvent(event)
   const child = sessionID ? state.children.get(sessionID) : undefined
@@ -123,15 +114,11 @@ export function fold(state: TurnState, event: OpenCodeEvent, ctx: TurnContext): 
   return child ? childEvent(state, event, ctx, child) : rootEvent(state, event, ctx)
 }
 
-/**
- * Asks already pending when the subscription started, asked as if their events had just arrived. `replayed` says the
- * session's history was just replayed to the client, which sent the tool calls of the session's own questions.
- */
+/** Asks already pending when the subscription started, asked as if their events had just arrived. */
 export function pending(
   state: TurnState,
   ctx: TurnContext,
   input: { readonly permissions: ReadonlyArray<Permission.Request>; readonly forms: ReadonlyArray<Form.Info> },
-  replayed: boolean,
 ): Folded {
   return [
     ...input.permissions.map((request) => ({ request })),
@@ -139,14 +126,7 @@ export function pending(
   ].reduce<Folded>(
     (folded, item) => {
       const next =
-        "request" in item
-          ? permissionAsk(folded.state, ctx, item.request)
-          : formAsk(
-              folded.state,
-              ctx,
-              item.form,
-              replayed && item.form.sessionID === ctx.sessionID ? "replayed" : "unsent",
-            )
+        "request" in item ? permissionAsk(folded.state, ctx, item.request) : formAsk(folded.state, ctx, item.form)
       return { state: next.state, outputs: [...folded.outputs, ...next.outputs] }
     },
     { state, outputs: [] },
@@ -257,17 +237,12 @@ function permissionAsk(state: TurnState, ctx: TurnContext, request: Permission.R
   }
 }
 
-function formAsk(
-  state: TurnState,
-  ctx: TurnContext,
-  form: Form.Info,
-  toolCall: Extract<Output, { _tag: "FormAsk" }>["toolCall"],
-): Folded {
+function formAsk(state: TurnState, ctx: TurnContext, form: Form.Info): Folded {
   const child = state.children.get(form.sessionID)
   if (state.asks.has(form.id) || (form.sessionID !== ctx.sessionID && !child)) return { state, outputs: [] }
   return {
     state: { ...state, asks: new Set(state.asks).add(form.id) },
-    outputs: [{ _tag: "FormAsk", form, child, toolCall }],
+    outputs: [{ _tag: "FormAsk", form, child }],
   }
 }
 

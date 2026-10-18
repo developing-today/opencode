@@ -14,6 +14,7 @@ import {
   Option,
   Queue,
   Ref,
+  Schedule,
   Scope,
   Stream,
 } from "effect"
@@ -37,10 +38,9 @@ export interface Interface {
   readonly close: (sessionID: string) => Effect.Effect<void, ACPError.Error | RequestError>
   /**
    * Follows a session attached with its history before any prompt: once the attach response is out, asks already
-   * pending in its tree reach the client, and later ones keep coming until its next prompt or detach. `replayed` says
-   * the attach replayed the session's history, which sent the tool calls of its own questions.
+   * pending in its tree reach the client, and later ones keep coming until its next prompt or detach.
    */
-  readonly follow: (attached: Attached, replayed: boolean) => Effect.Effect<void>
+  readonly follow: (attached: Attached) => Effect.Effect<void>
 }
 
 /** Core acknowledges an interrupt before its cleanup settles, and its shell tool waits 3s before SIGKILL. */
@@ -50,6 +50,10 @@ export const CancelDrainTimeout = Context.Reference<Duration.Input>("@opencode/c
 
 // Deeper than any subagent nesting, so only a broken parent chain reaches it.
 const LineageLimit = 64
+
+// The reads asks depend on get a short retry: a blip in the private server must not drop an ask whose creation event
+// cannot be seen again.
+const AskReadRetry = { times: 2, schedule: Schedule.exponential("100 millis") }
 
 type Ancestor = { readonly id: string; readonly parentID: string; readonly title?: string }
 
@@ -68,6 +72,8 @@ type Turn = {
   readonly subscription: Subscription
   readonly cancelled: Deferred.Deferred<void>
   readonly background: boolean
+  /** The attached session's record of tool calls the client received. */
+  readonly sent: Set<string>
 }
 
 export const make = Effect.fnUntraced(function* (input: {
@@ -83,7 +89,11 @@ export const make = Effect.fnUntraced(function* (input: {
   /** The fiber following each session between its prompts; the next prompt stops it. */
   const followers = new Map<string, Fiber.Fiber<void>>()
 
-  const open = Effect.fnUntraced(function* (ctx: ACPTranslate.TurnContext, state: Ref.Ref<ACPTranslate.TurnState>) {
+  const open = Effect.fnUntraced(function* (
+    ctx: ACPTranslate.TurnContext,
+    state: Ref.Ref<ACPTranslate.TurnState>,
+    sent: Set<string>,
+  ) {
     // Parented to the service scope; the session scope may already be closed.
     const subscriptionScope = yield* Scope.fork(scope)
     const subscription: Subscription = {
@@ -103,7 +113,7 @@ export const make = Effect.fnUntraced(function* (input: {
       Effect.forever,
       Effect.forkIn(subscriptionScope),
     )
-    return { ctx, state, subscription, cancelled: yield* Deferred.make<void>(), background: false } satisfies Turn
+    return { ctx, state, subscription, cancelled: yield* Deferred.make<void>(), background: false, sent } satisfies Turn
   })
 
   const take = (subscription: Subscription) =>
@@ -143,12 +153,14 @@ export const make = Effect.fnUntraced(function* (input: {
       )
         return markOutside(turn, sessionID, below)
       const info = yield* input.client.session.get({ sessionID }).pipe(
+        Effect.retry({ ...AskReadRetry, while: (error) => error._tag !== "SessionNotFoundError" }),
         Effect.catchTag("SessionNotFoundError", () =>
           Effect.succeed({ id: sessionID, parentID: undefined, title: "" }),
         ),
-        // Unknown for now rather than outside: the session's next event looks again.
+        // Unknown for now rather than outside: the session's next event, or the next prompt's pending list, looks
+        // again.
         Effect.catch((error) =>
-          Effect.logDebug("ACP could not look up a session's parent", error).pipe(Effect.as(undefined)),
+          Effect.logWarning("ACP could not look up a session's parent", error).pipe(Effect.as(undefined)),
         ),
       )
       if (!info) return []
@@ -175,19 +187,21 @@ export const make = Effect.fnUntraced(function* (input: {
 
   // Asks raised while nothing followed the session, or before this process attached it, are still pending. Asked
   // before events are read; one listed here and also seen as an event is asked once.
-  const askPending = Effect.fnUntraced(function* (turn: Turn, replayed: boolean) {
+  const askPending = Effect.fnUntraced(function* (turn: Turn) {
     const location = { directory: turn.ctx.cwd }
-    // Each list stands alone, so one that fails does not hide what the other found.
+    // Each list is retried and falls back on its own, so one that fails does not hide what the other found.
     const unlisted = (name: string) => (error: unknown) =>
       Effect.logWarning(`ACP could not list pending ${name}`, error).pipe(Effect.as([]))
     const [permissions, forms] = yield* Effect.all(
       [
         input.client.permission.request.list({ location }).pipe(
           Effect.map((listed) => listed.data),
+          Effect.retry(AskReadRetry),
           Effect.catch(unlisted("permission requests")),
         ),
         input.client.form.list({ location }).pipe(
           Effect.map((listed) => listed.data),
+          Effect.retry(AskReadRetry),
           Effect.catch(unlisted("questions")),
         ),
       ],
@@ -199,7 +213,7 @@ export const make = Effect.fnUntraced(function* (input: {
       { discard: true },
     )
     const folded = yield* Ref.modify(turn.state, (current) => {
-      const next = ACPTranslate.pending(current, turn.ctx, { permissions, forms }, replayed)
+      const next = ACPTranslate.pending(current, turn.ctx, { permissions, forms })
       return [next, next.state]
     })
     yield* Effect.forEach(folded.outputs, (output) => interpret(turn, output), { discard: true })
@@ -250,6 +264,11 @@ export const make = Effect.fnUntraced(function* (input: {
         if (turn.background) return Effect.void
         return ACPPermission.withCompletedDiffs(output.update, output.diff, turn.ctx.cwd).pipe(
           Effect.flatMap((update) => input.connection.sessionUpdate({ sessionId: turn.ctx.sessionID, update })),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              if (output.update.sessionUpdate === "tool_call") turn.sent.add(output.update.toolCallId)
+            }),
+          ),
         )
       case "ChildUpdate":
         return Effect.gen(function* () {
@@ -265,6 +284,8 @@ export const make = Effect.fnUntraced(function* (input: {
           ),
         )
       case "PermissionAsk": {
+        // A listed ask has no tracked tool here, but the client may already have the tool call it came from.
+        const source = output.request.source?.id
         const permission = {
           client: input.client,
           connection: input.connection,
@@ -272,6 +293,8 @@ export const make = Effect.fnUntraced(function* (input: {
           clientSessionID: turn.ctx.sessionID,
           cwd: turn.ctx.cwd,
           tool: output.tool,
+          sourceToolCall:
+            source !== undefined && turn.sent.has(ACPChild.toolCallID(output.child, source)) ? source : undefined,
           child: output.child,
         }
         return queueAsk(turn, output.request.id, ACPPermission.ask(permission), "reject", (decision) =>
@@ -283,6 +306,7 @@ export const make = Effect.fnUntraced(function* (input: {
           const capabilities = yield* Ref.get(input.capabilities)
           const requestedSchema = ACPElicitation.requestedSchema(output.form, capabilities)
           if (!requestedSchema) return yield* ACPElicitation.cancelUnshown(input.client, output.form)
+          const source = ACPElicitation.sourceToolCall(output.form)
           const elicitation = {
             client: input.client,
             connection: input.connection,
@@ -290,9 +314,8 @@ export const make = Effect.fnUntraced(function* (input: {
             requestedSchema,
             clientSessionID: turn.ctx.sessionID,
             child: output.child,
-            toolCallSent:
-              output.toolCall === "replayed" ||
-              (output.toolCall === "live" && !turn.background && (!output.child || !turn.ctx.childUpdates)),
+            // Only a tool call the client received as `session/update` can be named.
+            toolCallSent: source !== undefined && turn.sent.has(ACPChild.toolCallID(output.child, source)),
           }
           yield* queueAsk(turn, output.form.id, ACPElicitation.ask(elicitation), "cancel", (outcome) =>
             ACPElicitation.respond(elicitation, outcome),
@@ -335,8 +358,11 @@ export const make = Effect.fnUntraced(function* (input: {
   // session itself when a background child's result wakes it. Following runs until the session's next prompt stops
   // it or the session detaches.
   const follow = Effect.fnUntraced(function* (attached: Attached, turn: Turn, ready: Effect.Effect<void, unknown>) {
-    yield* stopFollowing(attached.id)
     const close = Scope.close(turn.subscription.scope, Exit.void)
+    // A stale attach (an overlapping load of the same session) must not stop the newer attachment's follower.
+    const current = yield* input.sessions.require(attached.id).pipe(Effect.option)
+    if (Option.getOrUndefined(current) !== attached) return yield* close
+    yield* stopFollowing(attached.id)
     const fiber = yield* input.sessions
       .fork(
         attached,
@@ -421,7 +447,7 @@ export const make = Effect.fnUntraced(function* (input: {
   const execute = (attached: Attached, prompt: ACPPrompt.Prepared, turn: Turn) =>
     Effect.gen(function* () {
       yield* connected(turn.subscription)
-      yield* askPending(turn, false)
+      yield* askPending(turn)
       const events = yield* consume(turn).pipe(Effect.forkScoped)
       return yield* Effect.gen(function* () {
         yield* submit(attached, prompt)
@@ -504,6 +530,7 @@ export const make = Effect.fnUntraced(function* (input: {
           compaction: capabilities.compaction,
         },
         state,
+        attached.sent,
       ),
       (turn) => execute(attached, prompt, turn),
       (turn, exit) => handoff(attached, turn, exit),
@@ -542,7 +569,7 @@ export const make = Effect.fnUntraced(function* (input: {
         Effect.catch(ACPClient.classify),
       )
     }),
-    follow: Effect.fn("cli.acp.turn.followAttached")(function* (attached, replayed) {
+    follow: Effect.fn("cli.acp.turn.followAttached")(function* (attached) {
       if (FiberMap.hasUnsafe(turns, attached.id)) return
       const responded = yield* ACPConnection.Responded
       const capabilities = yield* Ref.get(input.capabilities)
@@ -555,12 +582,13 @@ export const make = Effect.fnUntraced(function* (input: {
           compaction: capabilities.compaction,
         },
         yield* Ref.make({ ...ACPTranslate.initial, started: true }),
+        attached.sent,
       )
-      // Asks wait for the attach response, so the client knows the session they name.
+      // Asks wait for the attach response, so the client knows the session they name and has any replayed history.
       yield* follow(
         attached,
         { ...turn, background: true },
-        responded.pipe(Effect.andThen(connected(turn.subscription)), Effect.andThen(askPending(turn, replayed))),
+        responded.pipe(Effect.andThen(connected(turn.subscription)), Effect.andThen(askPending(turn))),
       )
     }),
   } satisfies Interface

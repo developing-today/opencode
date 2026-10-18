@@ -16,6 +16,11 @@ export type Attached = {
   readonly id: Session.ID
   readonly cwd: string
   readonly selection: Ref.Ref<Selection>
+  /**
+   * Tool call IDs this client received as `session/update` for the session, from prompts and history replay. An ask
+   * names a tool call only when the client has it.
+   */
+  readonly sent: Set<string>
 }
 
 export interface Interface {
@@ -132,6 +137,7 @@ export const make = Effect.fnUntraced(function* (input: {
           id: session.id,
           cwd,
           selection: yield* Ref.make<Selection>({ model: session.model, modeID: session.agent }),
+          sent: new Set(),
         },
         scope: Scope.forkUnsafe(scope),
         selected: yield* Queue.unbounded<Change>(),

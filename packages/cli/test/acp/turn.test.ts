@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { SessionNotification } from "@agentclientprotocol/sdk"
 import { ACPElicitation } from "../../src/acp/elicitation"
 import {
+  assistantMessage,
   childCreated,
   delivered,
   durableEvent,
@@ -306,6 +307,20 @@ describe("acp turn events over the wire", () => {
     await acp.initialize({ elicitation: true })
     acp.server.sessions.set("ses_loaded", makeSession("ses_loaded"))
     acp.server.sessions.set("ses_child", { ...makeSession("ses_child"), parentID: "ses_loaded", title: "Explore code" })
+    // The replay sends the running question's tool call before the load response.
+    acp.server.messages.set("ses_loaded", [
+      assistantMessage("msg_question", {
+        content: [
+          {
+            type: "tool",
+            id: "call_question",
+            name: "question",
+            time: { created: 2, ran: 2 },
+            state: { status: "running", input: {}, metadata: {} },
+          },
+        ],
+      }),
+    ])
     acp.server.pending.permissions.push({
       id: "perm_waiting",
       sessionID: "ses_child",
@@ -313,17 +328,12 @@ describe("acp turn events over the wire", () => {
       resources: ["*"],
       metadata: { path: "/workspace/waiting.md" },
     })
-    acp.server.pending.forms.push({
-      id: "frm_loaded",
-      sessionID: "ses_loaded",
-      title: "Which package manager?",
-      metadata: { kind: "question", tool: { id: "call_question" } },
-      fields: [{ key: "pm", title: "Package manager", type: "string", options: [{ value: "bun", label: "Bun" }] }],
-    })
+    acp.server.pending.forms.push(pendingQuestion("ses_loaded", "frm_replayed", "call_question"))
+    acp.server.pending.forms.push(pendingQuestion("ses_loaded", "frm_unseen", "call_unseen"))
 
     await acp.request("session/load", { sessionId: "ses_loaded", cwd: "/workspace", mcpServers: [] })
     await acp.until(
-      () => acp.server.replies.length === 1 && acp.server.repliedForms.length === 1,
+      () => acp.server.replies.length === 1 && acp.server.repliedForms.length === 2,
       "the pending permission and question replies",
     )
 
@@ -333,8 +343,80 @@ describe("acp turn events over the wire", () => {
         toolCall: { toolCallId: "ses_child:perm_waiting", title: "Explore code: /workspace/waiting.md" },
       },
     ])
-    // The load replayed the session's own question tool call, so the question still points at it.
-    expect(acp.elicitations).toMatchObject([{ sessionId: "ses_loaded", toolCallId: "call_question" }])
+    // Only the question whose tool call the replay sent points at it.
+    expect(acp.elicitations).toMatchObject([{ sessionId: "ses_loaded", toolCallId: "call_question" }, {}])
+    expect(acp.elicitations[1]).not.toHaveProperty("toolCallId")
+  })
+
+  test("names in an ask only a tool call the client received", async () => {
+    await using acp = await startSession({
+      capabilities: { elicitation: true },
+      onPrompt: ({ sessionID, id }) => [
+        // Before the prompt's delivery, so its tool call never reaches the client.
+        toolStarted(sessionID, "call_early", "question"),
+        delivered(sessionID, id),
+        toolStarted(sessionID, "call_live", "question"),
+        ephemeralEvent("form.created", { form: pendingQuestion(sessionID, "frm_early", "call_early") }),
+        ephemeralEvent("form.created", { form: pendingQuestion(sessionID, "frm_live", "call_live") }),
+        succeeded(sessionID),
+      ],
+      elicitation: () => ({ action: "accept", content: { pm: "bun" } }),
+    })
+
+    expect((await acp.prompt(acp.sessionId, "hello")).stopReason).toBe("end_turn")
+
+    expect(acp.elicitations).toMatchObject([{}, { toolCallId: "call_live" }])
+    expect(acp.elicitations[0]).not.toHaveProperty("toolCallId")
+  })
+
+  test("links a pending permission to the tool call an earlier prompt sent", async () => {
+    await using acp = await startSession({
+      onPrompt: ({ sessionID, id }) =>
+        acp.server.prompts.length > 1
+          ? turn(sessionID, id)
+          : turn(sessionID, id, toolStarted(sessionID, "call_shell", "shell")),
+      permission: () => ({ outcome: { outcome: "selected", optionId: "once" } }),
+    })
+
+    expect((await acp.prompt(acp.sessionId, "start")).stopReason).toBe("end_turn")
+    acp.server.pending.permissions.push({
+      id: "perm_listed",
+      sessionID: acp.sessionId,
+      action: "shell",
+      resources: ["*"],
+      source: { type: "tool", messageID: "msg_tools", id: "call_shell" },
+    })
+    expect((await acp.prompt(acp.sessionId, "again")).stopReason).toBe("end_turn")
+
+    expect(acp.permissions).toMatchObject([{ toolCall: { toolCallId: "call_shell" } }])
+  })
+
+  test("retries a pending list and a parent lookup that fail once", async () => {
+    const failed = new Set<string>()
+    await using acp = await startSession({
+      capabilities: { elicitation: true },
+      fetch: (request) => {
+        if (request.method !== "GET" || (request.path !== "/api/form" && request.path !== "/api/session/ses_child"))
+          return undefined
+        if (failed.has(request.path)) return undefined
+        failed.add(request.path)
+        return new Response(null, { status: 503 })
+      },
+      permission: () => ({ outcome: { outcome: "selected", optionId: "once" } }),
+      elicitation: () => ({ action: "accept", content: { pm: "bun" } }),
+    })
+    acp.server.sessions.set("ses_child", {
+      ...makeSession("ses_child"),
+      parentID: acp.sessionId,
+      title: "Explore code",
+    })
+    acp.server.pending.permissions.push({ id: "perm_child", sessionID: "ses_child", action: "read", resources: ["*"] })
+    acp.server.pending.forms.push(pendingQuestion(acp.sessionId, "frm_root", "call_question"))
+
+    expect((await acp.prompt(acp.sessionId, "hello")).stopReason).toBe("end_turn")
+
+    expect(acp.server.replies).toEqual([{ sessionID: "ses_child", requestID: "perm_child", decision: "once" }])
+    expect(acp.server.repliedForms).toEqual([{ sessionID: acp.sessionId, formID: "frm_root", answer: { pm: "bun" } }])
   })
 
   test("asks the pending asks one list found when the other list fails", async () => {
@@ -386,4 +468,16 @@ function turnUpdates(updates: readonly SessionNotification[]) {
   return updates.filter(
     (item) => item.update.sessionUpdate !== "available_commands_update" && item.update.sessionUpdate !== "usage_update",
   )
+}
+
+function pendingQuestion(sessionID: string, id: string, toolCallID: string) {
+  return {
+    id,
+    sessionID,
+    title: "Which package manager?",
+    metadata: { kind: "question", tool: { id: toolCallID } },
+    fields: [
+      { key: "pm", title: "Package manager", type: "string", options: [{ value: "bun", label: "Bun" }] },
+    ] as const,
+  }
 }
