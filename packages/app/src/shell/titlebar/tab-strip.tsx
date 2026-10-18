@@ -152,6 +152,27 @@ function SessionTabEntry(props: {
   createEffect(() => props.onVisibleChange(visible()))
   createEffect(() => props.onUnreadChange(unread()))
 
+  // The root shows every ask in its session tree, so a background tab waiting on one reopens there, not in a subagent.
+  createEffect(() => {
+    if (props.active || !props.tab.routeSessionId || !status.attention()) return
+    tabs.rememberSessionRoute(props.tab, props.tab.sessionId)
+  })
+
+  // A subagent keeps running while it waits on an ask, so a background tab also loads the asks of its running
+  // subagents, including ones raised before this client connected.
+  createEffect(() => {
+    const ctx = props.serverCtx
+    const value = session()
+
+    if (!ctx || !value || props.active || ctx.sdk.connection.status() !== "connected") return
+    void Promise.allSettled(
+      ctx.data.session
+        .family(value.id)
+        .filter((id) => id !== value.id && ctx.data.session.status(id) === "running")
+        .flatMap((id) => [ctx.data.session.permission.sync(id), ctx.data.session.form.sync(id)]),
+    )
+  })
+
   createEffect(() => {
     const ctx = props.serverCtx
     const value = session()
