@@ -1,5 +1,9 @@
 name: docs-update
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   schedule:
     - cron: "0 */12 * * *"

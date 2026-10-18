@@ -1,5 +1,9 @@
 name: close-issues
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   schedule:
     - cron: "0 2 * * *" # Daily at 2:00 AM
