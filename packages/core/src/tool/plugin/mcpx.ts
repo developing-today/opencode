@@ -88,8 +88,25 @@ export const daemonAutostartEnabled = (env: NodeJS.ProcessEnv = process.env): bo
 export const daemonSpawnArgs = (env: NodeJS.ProcessEnv = process.env): string[] => {
   const idle = env.OPENCODE_MCPX_DAEMON_IDLE_EXIT?.trim() || "1h"
   if (idle === "0" || idle === "0s") return ["daemon"]
+  if (!isMcpxDuration(idle)) {
+    console.warn(
+      `Invalid OPENCODE_MCPX_DAEMON_IDLE_EXIT value ${JSON.stringify(idle)}: expected a duration like "1h" or "15m"; falling back to "1h".`,
+    )
+    return ["daemon", "--daemon-idle-exit", "1h"]
+  }
   return ["daemon", "--daemon-idle-exit", idle]
 }
+
+// mcpx parses durations with Go's time.ParseDuration (its settings validation
+// rejects anything else before the daemon starts, and the spawn below discards
+// the daemon's stderr, so a rejected value used to fail silently): an optional
+// sign, then one or more <number><unit> components ("1h", "15m", "1h30m",
+// "1.5h"), where the number may be fractional and the unit is ns, us, µs, μs,
+// ms, s, m, or h. A bare "0" is also valid in Go; it is handled above.
+const isMcpxDuration = (value: string): boolean =>
+  /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h)(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))*$/.test(
+    value,
+  )
 
 export const runCli = (args: string[], env?: Record<string, string | undefined>): Promise<string> =>
   new Promise((resolve, reject) => {

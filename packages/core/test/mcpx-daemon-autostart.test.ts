@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
@@ -99,6 +99,46 @@ describe("mcpx daemon autostart policy", () => {
       "15m",
     ])
     expect(McpxTool.daemonSpawnArgs({ OPENCODE_MCPX_DAEMON_IDLE_EXIT: "0" })).toEqual(["daemon"])
+    expect(McpxTool.daemonSpawnArgs({ OPENCODE_MCPX_DAEMON_IDLE_EXIT: "0s" })).toEqual(["daemon"])
+    expect(McpxTool.daemonSpawnArgs({ OPENCODE_MCPX_DAEMON_IDLE_EXIT: "1h30m" })).toEqual([
+      "daemon",
+      "--daemon-idle-exit",
+      "1h30m",
+    ])
+    expect(McpxTool.daemonSpawnArgs({ OPENCODE_MCPX_DAEMON_IDLE_EXIT: "1.5h" })).toEqual([
+      "daemon",
+      "--daemon-idle-exit",
+      "1.5h",
+    ])
+  })
+
+  test("spawn args fall back to the default with a warning for an invalid idle exit", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      for (const value of ["banana", "1 hour", "60", "1hr"]) {
+        expect(McpxTool.daemonSpawnArgs({ OPENCODE_MCPX_DAEMON_IDLE_EXIT: value })).toEqual([
+          "daemon",
+          "--daemon-idle-exit",
+          "1h",
+        ])
+      }
+      expect(warn).toHaveBeenCalledTimes(4)
+      expect(warn.mock.calls[0]?.[0]).toContain("OPENCODE_MCPX_DAEMON_IDLE_EXIT")
+      expect(warn.mock.calls[0]?.[0]).toContain("banana")
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test("spawn args do not warn for a valid idle exit", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      McpxTool.daemonSpawnArgs({ OPENCODE_MCPX_DAEMON_IDLE_EXIT: "15m" })
+      McpxTool.daemonSpawnArgs({})
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   test("ensureDaemon spawns nothing in a test process", async () => {
