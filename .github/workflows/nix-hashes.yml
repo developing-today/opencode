@@ -1,4 +1,9 @@
 name: nix-hashes
+# RUNNER-SWITCH (2026-10-18): runners in this workflow were switched from Blacksmith to
+# GitHub-hosted at Drew's direction. To switch back, grep the repo for RUNNER-SWITCH and
+# swap each commented Blacksmith line back in for the active line under it. To choose per
+# run instead, use an expression on runs-on, e.g. ${{ vars.RUNNER_UBUNTU || 'ubuntu-24.04' }},
+# or gate individual steps with if: on the runner.
 
 permissions:
   contents: write
@@ -31,9 +36,11 @@ jobs:
       matrix:
         include:
           - system: x86_64-linux
-            runner: blacksmith-4vcpu-ubuntu-2404
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runner: blacksmith-4vcpu-ubuntu-2404
+            runner: ubuntu-24.04
           - system: aarch64-linux
-            runner: blacksmith-4vcpu-ubuntu-2404-arm
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runner: blacksmith-4vcpu-ubuntu-2404-arm
+            runner: ubuntu-24.04-arm
           - system: aarch64-darwin
             runner: macos-latest
     runs-on: ${{ matrix.runner }}
@@ -90,7 +97,8 @@ jobs:
   update-hashes:
     needs: compute-hash
     if: github.event_name != 'pull_request'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout repository
