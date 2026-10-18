@@ -1,7 +1,7 @@
 import { Service, type Endpoint, type EnsureOptions } from "@opencode/client/effect/service"
 import { ClientError, isUnauthorizedError, OpenCode } from "@opencode/client/promise"
 import { OPENCODE_VERSION } from "../version"
-import { Effect, Redacted } from "effect"
+import { Cause, Clock, Effect, Exit, Redacted } from "effect"
 import { Env } from "../env"
 import { ServiceConfig } from "./service-config"
 import { Standalone } from "./standalone"
@@ -28,10 +28,7 @@ export const resolve = Effect.fn("cli.server-connection.resolve")(function* (arg
       auth: password ? { type: "basic" as const, username: "opencode", password: Redacted.value(password) } : undefined,
     } satisfies Endpoint
     const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
-    const health = yield* Effect.tryPromise({
-      try: () => client.server.info({ signal: AbortSignal.timeout(5_000) }),
-      catch: (cause) => connectError(endpoint, cause),
-    })
+    const health = yield* probe(endpoint, client)
     if (health.version !== OPENCODE_VERSION)
       process.stderr.write(
         `Warning: Server at ${endpoint.url} has version ${health.version}; this client is ${OPENCODE_VERSION}. Continuing anyway.\n`,
@@ -82,6 +79,39 @@ const resolveManaged = Effect.fnUntraced(function* (options: EnsureOptions, mism
     return yield* Effect.fail(new Error("Background server version does not match this client"))
   return yield* Service.ensure(options)
 })
+
+// An explicit --server target answers GET /api/info with 503 and `Retry-After: 1` while it is
+// starting or stopping (the server process dispatch), and a handoff leaves a window in which
+// the port refuses connections outright. Both are transient: retry at the advertised
+// one-second cadence for as long as the server itself waits for startup (Status.startupWait,
+// 25 seconds). The generated client discards error response headers, so the Retry-After value
+// cannot be read back; one second is the value the server sends. Any other failure — an auth
+// rejection, or a health response that is not a compatible V2 response from a server that is
+// actually up — is terminal and keeps its current message.
+const probe = Effect.fnUntraced(function* (endpoint: Endpoint, client: ReturnType<typeof OpenCode.make>) {
+  const deadline = (yield* Clock.currentTimeMillis) + 25_000
+  while (true) {
+    const outcome = yield* Effect.exit(
+      Effect.tryPromise({
+        try: () => client.server.info({ signal: AbortSignal.timeout(5_000) }),
+        catch: (cause) => cause,
+      }),
+    )
+    if (Exit.isSuccess(outcome)) return outcome.value
+    const cause = Cause.squash(outcome.cause)
+    if (!transientProbeFailure(cause)) return yield* Effect.fail(connectError(endpoint, cause))
+    const remaining = deadline - (yield* Clock.currentTimeMillis)
+    if (remaining <= 0) return yield* Effect.fail(new Error(`Could not reach server at ${endpoint.url}`, { cause }))
+    yield* Effect.sleep(Math.min(1_000, remaining))
+  }
+})
+
+function transientProbeFailure(cause: unknown) {
+  if (!(cause instanceof ClientError)) return false
+  if (cause.reason === "Transport") return true
+  if (cause.reason !== "UnexpectedStatus") return false
+  return (cause.cause as { readonly status?: unknown } | undefined)?.status === 503
+}
 
 function connectError(endpoint: Endpoint, cause: unknown) {
   if (isUnauthorizedError(cause)) {
