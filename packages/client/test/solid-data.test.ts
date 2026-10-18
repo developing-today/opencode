@@ -319,6 +319,41 @@ test("fills a subagent from discovery while its own read is in flight, and keeps
   }
 })
 
+test("lists a branch again on the next sync after its listing failed", async () => {
+  const failures = { left: 1 }
+  const info = (id: string, parentID?: string): SessionInfo => ({ ...session(0), id, parentID })
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      if (url.pathname === "/api/session/ses_root") return Response.json({ data: info("ses_root") })
+      const parentID = url.searchParams.get("parentID")
+      if (parentID === "ses_root") return Response.json({ data: [info("ses_child", "ses_root")], cursor: {} })
+      if (parentID === "ses_child" && failures.left > 0) {
+        failures.left--
+        return new Response(null, { status: 500 })
+      }
+      if (parentID === "ses_child") return Response.json({ data: [info("ses_grandchild", "ses_child")], cursor: {} })
+      return Response.json({ data: [], cursor: {} })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    await setup.data.session.sync("ses_root", { children: true })
+    expect(setup.data.session.get("ses_grandchild")).toBeUndefined()
+
+    await setup.data.session.sync("ses_root", { children: true })
+    expect(setup.data.session.get("ses_grandchild")?.parentID).toBe("ses_child")
+    expect(setup.data.session.family("ses_root").toSorted()).toEqual(["ses_child", "ses_grandchild", "ses_root"])
+  } finally {
+    setup.dispose()
+  }
+})
+
 test("lists each session once when parent links form a cycle", async () => {
   const requests: string[] = []
   const api = OpenCode.make({

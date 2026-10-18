@@ -570,9 +570,9 @@ export function createData(config: CreateDataInput) {
   // its children as soon as it resolves, and every walk shares one listing limit. `seen` holds the sessions
   // already listed, so every session is listed once and a parent cycle still ends the walk. Below the direct
   // children the walk is best effort: a branch whose listing fails is left to live events rather than failing
-  // the sync and closing the view.
-  async function syncDescendants(parents: SessionInfo[], seen: Set<string>): Promise<void> {
-    await Promise.all(
+  // the sync and closing the view. The walk resolves to whether every listing succeeded.
+  async function syncDescendants(parents: SessionInfo[], seen: Set<string>): Promise<boolean> {
+    const branches = await Promise.all(
       parents
         .filter((parent) => {
           if (seen.has(parent.id)) return false
@@ -581,15 +581,16 @@ export function createData(config: CreateDataInput) {
         })
         .map(async (parent) => {
           const generation = sync.generation()
-          const children = (
-            await descendantListing(() =>
-              listChildren({ parentID: parent.id, order: "desc", limit: CHILD_PAGE }),
-            ).catch((): SessionInfo[] => [])
-          ).filter((child) => !seen.has(child.id))
+          const listed = await descendantListing(() =>
+            listChildren({ parentID: parent.id, order: "desc", limit: CHILD_PAGE }),
+          ).catch(() => undefined)
+          if (!listed) return false
+          const children = listed.filter((child) => !seen.has(child.id))
           publishSessions(children.filter(unread), generation)
           return syncDescendants(children, seen)
         }),
     )
+    return branches.every(Boolean)
   }
 
   // A listing fills in a session this client holds no info for, even while that session's own read is in flight: if
@@ -1753,7 +1754,9 @@ export function createData(config: CreateDataInput) {
             options?.children ? listChildren({ parentID: sessionID, order: "desc", limit: CHILD_PAGE }) : [],
           ])
           publishSessions([info, ...children.filter(unread)], generation)
-          if (options?.children) await syncDescendants(children, new Set([sessionID]))
+          // A walk that skipped a failed branch is not kept, so the next sync lists the tree again.
+          if (options?.children && !(await syncDescendants(children, new Set([sessionID]))))
+            sync.invalidate(`session.family:${sessionID}`)
         })
       },
       invalidate(sessionID: string) {
