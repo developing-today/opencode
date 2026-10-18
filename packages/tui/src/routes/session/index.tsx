@@ -121,6 +121,7 @@ import { createDelayedPresence } from "../../util/delayed-presence"
 import { SessionLocationMissing } from "./location-missing"
 import { isRecord } from "../../util/record"
 import { createHistoryPrepend } from "./history"
+import { createFamilyDiscovery } from "./family"
 import { context, use, type PendingAction } from "./render-context"
 import { INLINE_TOOL_ICON_WIDTH, InlineToolRow, ReasoningPart, TextPart, toolDisplay } from "./message-parts"
 import { defaultVerbosity, type GroupKind, type SessionEntry } from "./grouping/session"
@@ -330,13 +331,10 @@ export function Session(props: {
     }),
   )
 
-  // A subagent view opened before its ancestors walks up to the root, whose tree holds the whole family.
-  createEffect(() => {
-    if (client.connection.status() !== "connected" || !session()?.parentID) return
-    const root = data.session.root(route.sessionID)
-    void (data.session.get(root) ? data.session.sync(root, { children: true }) : data.session.sync(root)).catch(
-      () => undefined,
-    )
+  createFamilyDiscovery({
+    session: data.session,
+    sessionID: () => route.sessionID,
+    connected: () => client.connection.status() === "connected",
   })
 
   createEffect(() => {
