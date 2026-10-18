@@ -168,6 +168,11 @@ export const GithubCopilotPlugin = define({
       models?: CopilotModels.Snapshot
       connection?: Effect.Success<ReturnType<typeof ctx.integration.connection.active>>
     } = {}
+    // Plan endpoints discovered for credentials that never stored one (#13),
+    // keyed by connection so the /copilot_internal/user lookup runs once per
+    // connection. The plugin connection API has no credential-metadata
+    // write-back, so the cache lives in memory for the server's lifetime.
+    const discovered = new Map<string, string>()
 
     const load = Effect.fn("GithubCopilotPlugin.load")(function* () {
       const connection = yield* ctx.integration.connection.active("github-copilot")
@@ -182,7 +187,25 @@ export const GithubCopilotPlugin = define({
         return
       }
 
-      const url = copilotBaseURL(credential.metadata) ?? baseURL()
+      let url = copilotBaseURL(credential.metadata)
+      if (copilotEndpointDiscoveryNeeded(credential.metadata)) {
+        const key = IntegrationConnection.key(connection)
+        const cached = key ? discovered.get(key) : undefined
+        if (cached) url = cached
+        else {
+          // A credential migrated from v1 never stored the plan endpoint that
+          // authorize() learns, so it silently used the deprecated unified
+          // endpoint. Any failure keeps the current fallback URL.
+          const found = yield* discoverCopilotApiEndpoint({ token: credential.refresh, app: ctx.app }).pipe(
+            Effect.tapError((cause) => Effect.logDebug("Copilot plan endpoint discovery failed", { cause })),
+            Effect.orElseSucceed(() => undefined),
+          )
+          if (found) {
+            if (key) discovered.set(key, found)
+            url = found
+          }
+        }
+      }
       const provider = yield* providers.get(Provider.ID.githubCopilot)
       const remote = yield* Effect.tryPromise({
         try: () =>
@@ -386,6 +409,40 @@ export function copilotBaseURL(metadata?: Readonly<Record<string, unknown>>) {
   if (typeof endpoint === "string" && endpoint) return endpoint
   const enterprise = metadata?.enterpriseUrl
   return baseURL(typeof enterprise === "string" ? enterprise : undefined)
+}
+
+/** Discovery is only needed when neither a stored plan endpoint nor an enterprise URL already determines the base URL. */
+export function copilotEndpointDiscoveryNeeded(metadata?: Readonly<Record<string, unknown>>) {
+  const endpoint = metadata?.apiEndpoint
+  if (typeof endpoint === "string" && endpoint) return false
+  const enterprise = metadata?.enterpriseUrl
+  if (typeof enterprise === "string" && enterprise) return false
+  return true
+}
+
+// The same /copilot_internal/user lookup authorize() performs, reused at load
+// time for credentials (such as v1 migrations) that never stored endpoints.api.
+export function discoverCopilotApiEndpoint(input: { token: string; app: App.Info; fetch?: Fetch }) {
+  const send = input.fetch ?? fetch
+  return Effect.tryPromise({
+    try: async (signal) => {
+      const response = await send("https://api.github.com/copilot_internal/user", {
+        signal,
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${input.token}`,
+          "User-Agent": App.useragent(input.app),
+          "X-GitHub-Api-Version": userApiVersion,
+        },
+      })
+      if (!response.ok) throw new Error(`Copilot user lookup failed: ${response.status}`)
+      return response.json()
+    },
+    catch: (cause) => cause,
+  }).pipe(
+    Effect.timeout("10 seconds"),
+    Effect.map((user) => Option.getOrUndefined(decodeUser(user))?.endpoints?.api?.replace(/\/+$/, "") || undefined),
+  )
 }
 
 function headers(app: App.Info) {
