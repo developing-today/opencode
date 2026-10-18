@@ -1,5 +1,6 @@
 import type { CancelNotification, PromptRequest, PromptResponse, RequestError } from "@agentclientprotocol/sdk"
 import type { OpenCodeClient, OpenCodeEvent } from "@opencode/client/effect"
+import type { Session } from "@opencode/schema/session"
 import { TokenUsage } from "@opencode/schema/token-usage"
 import {
   Cause,
@@ -13,6 +14,7 @@ import {
   Option,
   Queue,
   Ref,
+  Schedule,
   Scope,
   Stream,
 } from "effect"
@@ -21,7 +23,7 @@ import { findModel, type ACPCatalog } from "./catalog"
 import { ACPChild } from "./child"
 import { ACPClient } from "./client"
 import { currentModel } from "./config-option"
-import type { ACPConnection } from "./connection"
+import { ACPConnection } from "./connection"
 import { ACPElicitation } from "./elicitation"
 import { ACPError } from "./error"
 import { ACPPermission } from "./permission"
@@ -34,6 +36,11 @@ export interface Interface {
   readonly cancel: (input: CancelNotification) => Effect.Effect<void>
   /** Unlike `cancel`, interrupts an idle session too, since server work can outlive its turn. */
   readonly close: (sessionID: string) => Effect.Effect<void, ACPError.Error | RequestError>
+  /**
+   * Follows a session attached with its history before any prompt: once the attach response is out, asks already
+   * pending in its tree reach the client, and later ones keep coming until its next prompt or detach.
+   */
+  readonly follow: (attached: Attached) => Effect.Effect<void>
 }
 
 /** Core acknowledges an interrupt before its cleanup settles, and its shell tool waits 3s before SIGKILL. */
@@ -41,11 +48,28 @@ export const CancelDrainTimeout = Context.Reference<Duration.Input>("@opencode/c
   defaultValue: () => "5 seconds",
 })
 
+// Deeper than any subagent nesting, so only a broken parent chain reaches it.
+const LineageLimit = 64
+
+// The reads asks depend on get a short retry: a blip in the private server must not drop an ask whose creation event
+// cannot be seen again.
+const AskReadRetry = { times: 2, schedule: Schedule.exponential("100 millis") }
+
+// A scan that still leaves asks unplaced is repeated in the background: 0.5s, 1s, 2s and so on, six times.
+const RescanDelay = 500
+const RescanAttempts = 6
+
+type Ancestor = { readonly id: string; readonly parentID: string; readonly title?: string }
+
 type Subscription = {
   readonly scope: Scope.Closeable
   readonly events: Queue.Dequeue<OpenCodeEvent, unknown>
   readonly askQueue: Queue.Queue<Effect.Effect<void, ACPError.Error | RequestError>>
   readonly settled: Map<string, Deferred.Deferred<void>>
+  /** Sessions whose parent chain leads away from the tree. Lineage never changes, so the answer is kept. */
+  readonly outside: Set<string>
+  /** Whether the last scan of pending asks read both lists and placed every listed ask's session. */
+  readonly placed: Ref.Ref<boolean>
 }
 
 type Turn = {
@@ -54,6 +78,8 @@ type Turn = {
   readonly subscription: Subscription
   readonly cancelled: Deferred.Deferred<void>
   readonly background: boolean
+  /** The attached session's record of tool calls the client received. */
+  readonly sent: Set<string>
 }
 
 export const make = Effect.fnUntraced(function* (input: {
@@ -66,8 +92,14 @@ export const make = Effect.fnUntraced(function* (input: {
   const scope = yield* Effect.scope
   const drainTimeout = yield* CancelDrainTimeout
   const turns = yield* FiberMap.make<string, PromptResponse, ACPError.Failure>()
+  /** The fiber following each session between its prompts; the next prompt stops it. */
+  const followers = new Map<string, Fiber.Fiber<void>>()
 
-  const open = Effect.fnUntraced(function* (ctx: ACPTranslate.TurnContext, state: Ref.Ref<ACPTranslate.TurnState>) {
+  const open = Effect.fnUntraced(function* (
+    ctx: ACPTranslate.TurnContext,
+    state: Ref.Ref<ACPTranslate.TurnState>,
+    sent: Set<string>,
+  ) {
     // Parented to the service scope; the session scope may already be closed.
     const subscriptionScope = yield* Scope.fork(scope)
     const subscription: Subscription = {
@@ -77,6 +109,8 @@ export const make = Effect.fnUntraced(function* (input: {
         .pipe(Stream.toQueue({ capacity: "unbounded" }), Scope.provide(subscriptionScope)),
       askQueue: yield* Queue.unbounded<Effect.Effect<void, ACPError.Error | RequestError>>(),
       settled: new Map(),
+      outside: new Set(),
+      placed: yield* Ref.make(true),
     }
     yield* Queue.take(subscription.askQueue).pipe(
       Effect.flatten,
@@ -86,7 +120,7 @@ export const make = Effect.fnUntraced(function* (input: {
       Effect.forever,
       Effect.forkIn(subscriptionScope),
     )
-    return { ctx, state, subscription, cancelled: yield* Deferred.make<void>(), background: false } satisfies Turn
+    return { ctx, state, subscription, cancelled: yield* Deferred.make<void>(), background: false, sent } satisfies Turn
   })
 
   const take = (subscription: Subscription) =>
@@ -95,6 +129,117 @@ export const make = Effect.fnUntraced(function* (input: {
         Cause.isDone(error) ? Effect.fail(new ACPError.ServerUnavailableError()) : ACPClient.classify(error),
       ),
     )
+
+  // The feed opens with `server.connected`, so every event after it is one the subscription can see.
+  const connected = Effect.fnUntraced(function* (subscription: Subscription) {
+    const event = yield* take(subscription)
+    if (event.type !== "server.connected")
+      return yield* Effect.die(new Error(`expected server.connected, got ${event.type}`))
+  })
+
+  const markOutside = (turn: Turn, sessionID: string, below: ReadonlyArray<Ancestor>) => {
+    turn.subscription.outside.add(sessionID)
+    below.forEach((session) => turn.subscription.outside.add(session.id))
+    return []
+  }
+
+  // Walks parentID up from a session the subscription never saw created, until it reaches the prompt's session or
+  // one tracked below it. `below` holds the sessions passed on the way, nearest the known ancestor first.
+  const lineage = (
+    turn: Turn,
+    sessionID: Session.ID,
+    below: ReadonlyArray<Ancestor>,
+  ): Effect.Effect<ReadonlyArray<ACPChild.Session>> =>
+    Effect.gen(function* () {
+      const depth = sessionID === turn.ctx.sessionID ? 0 : (yield* Ref.get(turn.state)).children.get(sessionID)?.depth
+      if (depth !== undefined) return below.map((session, index) => ({ ...session, depth: depth + index + 1 }))
+      if (
+        turn.subscription.outside.has(sessionID) ||
+        below.length >= LineageLimit ||
+        below.some((session) => session.id === sessionID)
+      )
+        return markOutside(turn, sessionID, below)
+      const info = yield* input.client.session.get({ sessionID }).pipe(
+        Effect.retry({ ...AskReadRetry, while: (error) => error._tag !== "SessionNotFoundError" }),
+        Effect.catchTag("SessionNotFoundError", () =>
+          Effect.succeed({ id: sessionID, parentID: undefined, title: "" }),
+        ),
+        // Unknown for now rather than outside: the session's next event, or the next prompt's pending list, looks
+        // again.
+        Effect.catch((error) =>
+          Effect.logWarning("ACP could not look up a session's parent", error).pipe(Effect.as(undefined)),
+        ),
+      )
+      if (!info) return []
+      if (!info.parentID) return markOutside(turn, sessionID, below)
+      return yield* lineage(turn, info.parentID, [
+        { id: info.id, parentID: info.parentID, ...(info.title ? { title: info.title } : {}) },
+        ...below,
+      ])
+    })
+
+  // A descendant created before this subscription, such as a child continued from an earlier prompt or one woken
+  // later, is adopted when it first appears.
+  const adopt = Effect.fnUntraced(function* (turn: Turn, sessionID: string | undefined) {
+    if (!sessionID || sessionID === turn.ctx.sessionID || turn.subscription.outside.has(sessionID)) return
+    if ((yield* Ref.get(turn.state)).children.has(sessionID)) return
+    const decoded = yield* ACPClient.decodeSessionID(sessionID).pipe(Effect.option)
+    if (Option.isNone(decoded)) {
+      turn.subscription.outside.add(sessionID)
+      return
+    }
+    const found = yield* lineage(turn, decoded.value, [])
+    if (found.length > 0) yield* Ref.update(turn.state, (state) => ACPTranslate.adopt(state, found))
+  })
+
+  // Asks raised while nothing followed the session, or before this process attached it, are still pending. Asked
+  // before events are read; one listed here and also seen as an event is asked once.
+  const askPending = Effect.fnUntraced(function* (turn: Turn) {
+    const location = { directory: turn.ctx.cwd }
+    // Each list is retried and falls back on its own, so one that fails does not hide what the other found. A list
+    // that still fails reads as undefined, which leaves the scan unplaced.
+    const unlisted = (name: string) => (error: unknown) =>
+      Effect.logWarning(`ACP could not list pending ${name}`, error).pipe(Effect.as(undefined))
+    const [permissions, forms] = yield* Effect.all(
+      [
+        input.client.permission.request.list({ location }).pipe(
+          Effect.map((listed) => listed.data),
+          Effect.retry(AskReadRetry),
+          Effect.catch(unlisted("permission requests")),
+        ),
+        input.client.form.list({ location }).pipe(
+          Effect.map((listed) => listed.data),
+          Effect.retry(AskReadRetry),
+          Effect.catch(unlisted("questions")),
+        ),
+      ],
+      { concurrency: "unbounded" },
+    )
+    const listed = { permissions: permissions ?? [], forms: forms ?? [] }
+    const sessions = [
+      ...listed.permissions.map((request) => request.sessionID),
+      ...listed.forms.map((form) => form.sessionID),
+    ]
+    yield* Effect.forEach(sessions, (sessionID) => adopt(turn, sessionID), { discard: true })
+    yield* apply(turn, (current) => ACPTranslate.pending(current, turn.ctx, listed))
+    const children = (yield* Ref.get(turn.state)).children
+    yield* Ref.set(
+      turn.subscription.placed,
+      permissions !== undefined &&
+        forms !== undefined &&
+        sessions.every((id) => id === turn.ctx.sessionID || children.has(id) || turn.subscription.outside.has(id)),
+    )
+  })
+
+  // A list or parent lookup that still fails after its retries leaves asks unseen. Scan again with backoff until
+  // everything listed is placed, so a session blocked on one of them does not wait unseen until the next prompt.
+  const rescan = (turn: Turn, delay: number, attempts: number): Effect.Effect<void, unknown> =>
+    Effect.gen(function* () {
+      if (attempts === 0 || (yield* Ref.get(turn.subscription.placed))) return
+      yield* Effect.sleep(Duration.millis(delay))
+      yield* askPending(turn)
+      yield* rescan(turn, delay * 2, attempts - 1)
+    })
 
   const asksSettled = Effect.fnUntraced(function* (subscription: Subscription) {
     const settled = yield* Deferred.make<void>()
@@ -124,7 +269,11 @@ export const make = Effect.fnUntraced(function* (input: {
             ),
           ).pipe(
             Effect.tapCauseIf(Cause.hasDies, (cause) => Effect.logWarning("ACP ask failed", cause)),
-            Effect.catchCause(() => Effect.succeed(fallback)),
+            // An interrupted ask leaves the request pending: the follower stopped for the next prompt, which asks it
+            // again, or the session detached. A cancelled prompt answers through `turn.cancelled` instead.
+            Effect.catchCause((cause) =>
+              Effect.succeed(Cause.hasInterruptsOnly(cause) ? ("settled" as const) : fallback),
+            ),
             Effect.flatMap((outcome) => (outcome === "settled" ? Effect.void : respond(outcome))),
           ),
         ).pipe(Effect.withSpan("cli.acp.turn.ask")),
@@ -137,13 +286,19 @@ export const make = Effect.fnUntraced(function* (input: {
         if (turn.background) return Effect.void
         return ACPPermission.withCompletedDiffs(output.update, output.diff, turn.ctx.cwd).pipe(
           Effect.flatMap((update) => input.connection.sessionUpdate({ sessionId: turn.ctx.sessionID, update })),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              if (output.update.sessionUpdate === "tool_call") turn.sent.add(output.update.toolCallId)
+            }),
+          ),
         )
       case "ChildUpdate":
         return Effect.gen(function* () {
           if (output.update.type !== "update")
             return yield* input.connection.extNotification(ACPChild.UpdateMethod, output.update)
           const update = yield* ACPPermission.withCompletedDiffs(output.update.update, output.diff, turn.ctx.cwd)
-          return yield* input.connection.extNotification(ACPChild.UpdateMethod, { ...output.update, update })
+          yield* input.connection.extNotification(ACPChild.UpdateMethod, { ...output.update, update })
+          if (update.sessionUpdate === "tool_call") turn.sent.add(update.toolCallId)
         }).pipe(
           Effect.catchCause((cause) =>
             Cause.hasInterruptsOnly(cause)
@@ -152,17 +307,21 @@ export const make = Effect.fnUntraced(function* (input: {
           ),
         )
       case "PermissionAsk": {
+        // Only a tool call the client received can be named: the tracked one, or the one a listed ask came from.
+        const toolCall = [output.tool?.id, output.request.source?.id].find(
+          (id) => id !== undefined && turn.sent.has(ACPChild.toolCallID(output.child, id)),
+        )
         const permission = {
           client: input.client,
           connection: input.connection,
-          event: output.event,
-          sessionID: output.event.data.sessionID,
+          request: output.request,
           clientSessionID: turn.ctx.sessionID,
           cwd: turn.ctx.cwd,
           tool: output.tool,
+          toolCall,
           child: output.child,
         }
-        return queueAsk(turn, output.event.data.id, ACPPermission.ask(permission), "reject", (decision) =>
+        return queueAsk(turn, output.request.id, ACPPermission.ask(permission), "reject", (decision) =>
           ACPPermission.respond(permission, decision),
         )
       }
@@ -171,6 +330,7 @@ export const make = Effect.fnUntraced(function* (input: {
           const capabilities = yield* Ref.get(input.capabilities)
           const requestedSchema = ACPElicitation.requestedSchema(output.form, capabilities)
           if (!requestedSchema) return yield* ACPElicitation.cancelUnshown(input.client, output.form)
+          const source = ACPElicitation.sourceToolCall(output.form)
           const elicitation = {
             client: input.client,
             connection: input.connection,
@@ -178,7 +338,12 @@ export const make = Effect.fnUntraced(function* (input: {
             requestedSchema,
             clientSessionID: turn.ctx.sessionID,
             child: output.child,
-            toolCallSent: !turn.background && (!output.child || !turn.ctx.childUpdates),
+            // Only a tool call the client received as `session/update` can be named; a child's tool calls reach a
+            // client with child updates through the extension instead.
+            toolCallSent:
+              source !== undefined &&
+              (!output.child || !turn.ctx.childUpdates) &&
+              turn.sent.has(ACPChild.toolCallID(output.child, source)),
           }
           yield* queueAsk(turn, output.form.id, ACPElicitation.ask(elicitation), "cancel", (outcome) =>
             ACPElicitation.respond(elicitation, outcome),
@@ -195,14 +360,33 @@ export const make = Effect.fnUntraced(function* (input: {
 
   const advance = Effect.fnUntraced(function* (turn: Turn) {
     const event = yield* take(turn.subscription)
-    const folded = yield* Ref.modify(turn.state, (current) => {
-      const next =
-        turn.background && !ACPTranslate.fromTrackedChild(current, event)
-          ? { state: current, outputs: [] }
-          : ACPTranslate.fold(current, event, turn.ctx)
-      return [next, next.state]
-    })
-    yield* Effect.forEach(folded.outputs, (output) => interpret(turn, output), { discard: true })
+    yield* adopt(turn, ACPTranslate.placedBy(event))
+    return yield* apply(turn, (current) =>
+      turn.background && !ACPTranslate.inTree(current, event, turn.ctx)
+        ? { state: current, outputs: [] }
+        : ACPTranslate.fold(current, event, turn.ctx),
+    )
+  })
+
+  // Recording asks in the state and queuing them is one step. An interruption between the two, such as a prompt ending
+  // mid-rescan, would leave an ask recorded as asked that never reaches the client, and the follower copies that state.
+  // Updates go out afterwards, still interruptible, since a slow client can hold a write.
+  const apply = Effect.fnUntraced(function* (turn: Turn, fold: (state: ACPTranslate.TurnState) => ACPTranslate.Folded) {
+    const folded = yield* Effect.uninterruptible(
+      Ref.modify(turn.state, (current) => {
+        const next = fold(current)
+        return [next, next.state]
+      }).pipe(
+        Effect.tap((next) =>
+          Effect.forEach(next.outputs.filter(isAsk), (output) => interpret(turn, output), { discard: true }),
+        ),
+      ),
+    )
+    yield* Effect.forEach(
+      folded.outputs.filter((output) => !isAsk(output)),
+      (output) => interpret(turn, output),
+      { discard: true },
+    )
     return folded
   })
 
@@ -216,11 +400,40 @@ export const make = Effect.fnUntraced(function* (input: {
     }
   })
 
-  const followChildren = Effect.fnUntraced(function* (turn: Turn) {
-    while (true) {
-      const folded = yield* advance(turn)
-      if (folded.state.openChildren.size === 0) return yield* asksSettled(turn.subscription)
-    }
+  // Between prompts, asks keep coming: from children still running, from descendants woken later, and from the
+  // session itself when a background child's result wakes it. Following runs until the session's next prompt stops
+  // it or the session detaches.
+  const follow = Effect.fnUntraced(function* (attached: Attached, turn: Turn, ready: Effect.Effect<void, unknown>) {
+    const close = Scope.close(turn.subscription.scope, Exit.void)
+    // A stale attach (an overlapping load of the same session) must not stop the newer attachment's follower.
+    const current = yield* input.sessions.require(attached.id).pipe(Effect.option)
+    if (Option.getOrUndefined(current) !== attached) return yield* close
+    yield* stopFollowing(attached.id)
+    const fiber = yield* input.sessions
+      .fork(
+        attached,
+        ready.pipe(
+          Effect.andThen(rescan(turn, RescanDelay, RescanAttempts).pipe(Effect.ignore, Effect.forkChild)),
+          Effect.andThen(Effect.forever(advance(turn))),
+          Effect.ignore,
+          Effect.ensuring(close),
+          Effect.withSpan("cli.acp.turn.follow"),
+        ),
+      )
+      .pipe(Effect.catchTag("ACPSessionNotFoundError", () => close.pipe(Effect.as(undefined))))
+    if (!fiber) return
+    followers.set(attached.id, fiber)
+    fiber.addObserver(() => {
+      if (followers.get(attached.id) === fiber) followers.delete(attached.id)
+    })
+  })
+
+  // Asks the follower still has open are cancelled on the client; the prompt asks them again, since they are pending.
+  const stopFollowing = Effect.fnUntraced(function* (sessionID: string) {
+    const fiber = followers.get(sessionID)
+    if (!fiber) return
+    followers.delete(sessionID)
+    yield* Fiber.interrupt(fiber)
   })
 
   const submit = Effect.fnUntraced(function* (attached: Attached, prompt: ACPPrompt.Prepared) {
@@ -280,10 +493,10 @@ export const make = Effect.fnUntraced(function* (input: {
 
   const execute = (attached: Attached, prompt: ACPPrompt.Prepared, turn: Turn) =>
     Effect.gen(function* () {
-      // The feed opens with `server.connected`, so every event the submission causes comes after it.
-      const connected = yield* take(turn.subscription)
-      if (connected.type !== "server.connected")
-        return yield* Effect.die(new Error(`expected server.connected, got ${connected.type}`))
+      yield* connected(turn.subscription)
+      yield* askPending(turn)
+      // Ends with the prompt; the follower that takes over rescans from where it stopped.
+      yield* rescan(turn, RescanDelay, RescanAttempts).pipe(Effect.ignore, Effect.forkScoped)
       const events = yield* consume(turn).pipe(Effect.forkScoped)
       return yield* Effect.gen(function* () {
         yield* submit(attached, prompt)
@@ -297,18 +510,25 @@ export const make = Effect.fnUntraced(function* (input: {
     turn: Turn,
     exit: Exit.Exit<ACPTranslate.Terminal, ACPError.Failure>,
   ) {
-    const close = Scope.close(turn.subscription.scope, Exit.void)
-    if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) return yield* close
-    const state = yield* Ref.get(turn.state)
-    if (state.openChildren.size === 0) return yield* close
-    // Children outlive a cancelled turn, so their asks still reach the client.
-    const background = followChildren({
-      ...turn,
-      state: yield* Ref.make(state),
-      cancelled: yield* Deferred.make<void>(),
-      background: true,
-    }).pipe(Effect.ignore, Effect.ensuring(close), Effect.withSpan("cli.acp.turn.background"))
-    yield* input.sessions.fork(attached, background).pipe(Effect.catchTag("ACPSessionNotFoundError", () => close))
+    if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause))
+      return yield* Scope.close(turn.subscription.scope, Exit.void)
+    // A load or resume during the prompt replaced the attachment and left following to this handoff, so follow the
+    // current one. The client received this prompt's tool calls in the same connection.
+    const current = Option.getOrUndefined(yield* input.sessions.require(attached.id).pipe(Effect.option))
+    if (!current) return yield* Scope.close(turn.subscription.scope, Exit.void)
+    turn.sent.forEach((id) => current.sent.add(id))
+    // A cancelled prompt hands over too: its children outlive it, so their asks still reach the client.
+    yield* follow(
+      current,
+      {
+        ...turn,
+        state: yield* Ref.make(yield* Ref.get(turn.state)),
+        cancelled: yield* Deferred.make<void>(),
+        background: true,
+        sent: current.sent,
+      },
+      Effect.void,
+    )
   })
 
   const settle = Effect.fnUntraced(function* (
@@ -354,6 +574,7 @@ export const make = Effect.fnUntraced(function* (input: {
     const prompt = yield* ACPPrompt.prepare(yield* input.catalog.get(attached.cwd), params.prompt)
     const capabilities = yield* Ref.get(input.capabilities)
     const state = yield* Ref.make(ACPTranslate.initial)
+    yield* stopFollowing(attached.id)
     const exit = yield* Effect.acquireUseRelease(
       open(
         {
@@ -364,6 +585,7 @@ export const make = Effect.fnUntraced(function* (input: {
           compaction: capabilities.compaction,
         },
         state,
+        attached.sent,
       ),
       (turn) => execute(attached, prompt, turn),
       (turn, exit) => handoff(attached, turn, exit),
@@ -402,8 +624,34 @@ export const make = Effect.fnUntraced(function* (input: {
         Effect.catch(ACPClient.classify),
       )
     }),
+    follow: Effect.fn("cli.acp.turn.followAttached")(function* (attached) {
+      if (FiberMap.hasUnsafe(turns, attached.id)) return
+      const responded = yield* ACPConnection.Responded
+      const capabilities = yield* Ref.get(input.capabilities)
+      // No prompt to wait for: the session's own events count from the start.
+      const turn = yield* open(
+        {
+          sessionID: attached.id,
+          cwd: attached.cwd,
+          childUpdates: capabilities.childSessionUpdates,
+          compaction: capabilities.compaction,
+        },
+        yield* Ref.make({ ...ACPTranslate.initial, started: true }),
+        attached.sent,
+      )
+      // Asks wait for the attach response, so the client knows the session they name and has any replayed history.
+      yield* follow(
+        attached,
+        { ...turn, background: true },
+        responded.pipe(Effect.andThen(connected(turn.subscription)), Effect.andThen(askPending(turn))),
+      )
+    }),
   } satisfies Interface
 })
+
+function isAsk(output: ACPTranslate.Output) {
+  return output._tag === "PermissionAsk" || output._tag === "FormAsk" || output._tag === "AskSettled"
+}
 
 function aborted(signal: AbortSignal) {
   return Effect.callback<void>((resume) => {
