@@ -3,7 +3,7 @@ import type { McpServer, SessionConfigOption } from "@agentclientprotocol/sdk"
 import type { OpenCodeClient, OpenCodeEvent } from "@opencode/client/effect"
 import { Mcp } from "@opencode/schema/mcp"
 import type { Session } from "@opencode/schema/session"
-import { Cause, Deferred, Effect, Exit, Queue, Ref, Scope, Stream } from "effect"
+import { Cause, Deferred, Effect, Exit, type Fiber, Queue, Ref, Scope, Stream } from "effect"
 import type { ACPCatalog, Catalog } from "./catalog"
 import { ACPClient } from "./client"
 import { availableCommands, configOptions, type Change, type Selection } from "./config-option"
@@ -27,7 +27,10 @@ export interface Interface {
   readonly detach: (sessionID: string) => Effect.Effect<void>
   readonly release: (attached: Attached) => Effect.Effect<void>
   readonly require: (sessionID: string) => Effect.Effect<Attached, ACPError.SessionNotFoundError>
-  readonly fork: (attached: Attached, effect: Effect.Effect<void>) => Effect.Effect<void, ACPError.SessionNotFoundError>
+  readonly fork: (
+    attached: Attached,
+    effect: Effect.Effect<void>,
+  ) => Effect.Effect<Fiber.Fiber<void>, ACPError.SessionNotFoundError>
   readonly select: (attached: Attached, change: Change) => Effect.Effect<void, ACPError.Error>
 }
 
@@ -178,7 +181,7 @@ export const make = Effect.fnUntraced(function* (input: {
     fork: Effect.fn("cli.acp.sessions.fork")(function* (attached, effect) {
       const entry = sessions.get(attached.id)
       if (entry?.attached !== attached) return yield* new ACPError.SessionNotFoundError({ sessionId: attached.id })
-      yield* Effect.forkIn(effect, entry.scope, { startImmediately: true })
+      return yield* Effect.forkIn(effect, entry.scope, { startImmediately: true })
     }),
     // Update selection before switching so the echoed event is a no-op.
     select: Effect.fnUntraced(function* (attached, change) {

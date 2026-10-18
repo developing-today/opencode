@@ -1,5 +1,7 @@
 import type { PromptResponse, SessionUpdate } from "@agentclientprotocol/sdk"
 import type { OpenCodeEvent } from "@opencode/client/effect"
+import type { Form } from "@opencode/schema/form"
+import type { Permission } from "@opencode/schema/permission"
 import type { Session } from "@opencode/schema/session"
 import type { SessionError } from "@opencode/schema/session-error"
 import type { SessionMessage } from "@opencode/schema/session-message"
@@ -25,7 +27,8 @@ export type Terminal = "succeeded" | "failed" | "interrupted"
 export type TurnContext = {
   readonly sessionID: Session.ID
   readonly cwd: string
-  readonly start: TurnStart
+  /** Absent for a follower that starts without a prompt, such as after `session/load`. */
+  readonly start?: TurnStart
   readonly childUpdates: boolean
   readonly compaction: boolean
 }
@@ -50,7 +53,6 @@ export type TurnState = {
   readonly retries: ReadonlyMap<string, RetryStatus>
   readonly compactions: ACPCompaction.Tracked
   readonly children: ReadonlyMap<string, ACPChild.Session>
-  readonly openChildren: ReadonlySet<string>
   readonly asks: ReadonlySet<string>
   readonly finish?: SessionMessage.Assistant["finish"]
   readonly usage?: { readonly turn: TokenUsage.Info; readonly last: TokenUsage.Info }
@@ -58,8 +60,6 @@ export type TurnState = {
   readonly executionError?: { readonly type: string; readonly message: string }
 }
 
-type PermissionEvent = Extract<OpenCodeEvent, { type: "permission.asked" }>
-type FormEvent = Extract<OpenCodeEvent, { type: "form.created" }>
 type CreatedEvent = Extract<OpenCodeEvent, { type: "session.created" }>
 
 export type Output =
@@ -67,11 +67,17 @@ export type Output =
   | { readonly _tag: "ChildUpdate"; readonly update: ACPChild.Update; readonly diff?: DiffSource }
   | {
       readonly _tag: "PermissionAsk"
-      readonly event: PermissionEvent
+      readonly request: Permission.Request
       readonly tool?: Tool
       readonly child?: ACPChild.Session
     }
-  | { readonly _tag: "FormAsk"; readonly form: FormEvent["data"]["form"]; readonly child?: ACPChild.Session }
+  | {
+      readonly _tag: "FormAsk"
+      readonly form: Form.Info
+      readonly child?: ACPChild.Session
+      /** Raised before this subscription existed, so the client never saw its tool call. */
+      readonly pending: boolean
+    }
   | { readonly _tag: "AskSettled"; readonly id: string }
 
 export type Folded = {
@@ -86,31 +92,16 @@ export const initial: TurnState = {
   retries: new Map(),
   compactions: new Map(),
   children: new Map(),
-  openChildren: new Set(),
   asks: new Set(),
 }
 
 export function fold(state: TurnState, event: OpenCodeEvent, ctx: TurnContext): Folded {
   if (event.type === "session.created") return childCreated(state, event, ctx)
+  if (event.type === "permission.asked") return permissionAsk(state, ctx, event.data)
+  if (event.type === "form.created") return formAsk(state, ctx, event.data.form, false)
 
   const sessionID = sessionIDFromEvent(event)
   const child = sessionID ? state.children.get(sessionID) : undefined
-
-  if (event.type === "permission.asked" && (event.data.sessionID === ctx.sessionID || child)) {
-    const tool = event.data.source?.id
-      ? state.tools.get(toolKey(event.data.sessionID, event.data.source.id))
-      : undefined
-    return {
-      state: { ...state, asks: new Set(state.asks).add(event.data.id) },
-      outputs: [{ _tag: "PermissionAsk", event, tool, child }],
-    }
-  }
-  if (event.type === "form.created" && (event.data.form.sessionID === ctx.sessionID || child)) {
-    return {
-      state: { ...state, asks: new Set(state.asks).add(event.data.form.id) },
-      outputs: [{ _tag: "FormAsk", form: event.data.form, child }],
-    }
-  }
   const settledID =
     event.type === "permission.replied"
       ? event.data.requestID
@@ -123,15 +114,47 @@ export function fold(state: TurnState, event: OpenCodeEvent, ctx: TurnContext): 
     return { state: { ...state, asks }, outputs: [{ _tag: "AskSettled", id: settledID }] }
   }
   if (!sessionID || (sessionID !== ctx.sessionID && !child)) return { state, outputs: [] }
-  if (event.type === "session.inbox.delivered" && event.data.inboxID === ctx.start.id)
+  if (event.type === "session.inbox.delivered" && event.data.inboxID === ctx.start?.id)
     return { state: { ...state, started: true }, outputs: [] }
   if (!state.started) return { state, outputs: [] }
   return child ? childEvent(state, event, ctx, child) : rootEvent(state, event, ctx)
 }
 
-export function fromTrackedChild(state: TurnState, event: OpenCodeEvent) {
-  const sessionID = event.type === "session.created" ? event.data.parentID : sessionIDFromEvent(event)
-  return sessionID !== undefined && state.children.has(sessionID)
+/** Asks already pending when the subscription started, asked as if their events had just arrived. */
+export function pending(
+  state: TurnState,
+  ctx: TurnContext,
+  input: { readonly permissions: ReadonlyArray<Permission.Request>; readonly forms: ReadonlyArray<Form.Info> },
+): Folded {
+  return [
+    ...input.permissions.map((request) => ({ request })),
+    ...input.forms.map((form) => ({ form })),
+  ].reduce<Folded>(
+    (folded, item) => {
+      const next =
+        "request" in item ? permissionAsk(folded.state, ctx, item.request) : formAsk(folded.state, ctx, item.form, true)
+      return { state: next.state, outputs: [...folded.outputs, ...next.outputs] }
+    },
+    { state, outputs: [] },
+  )
+}
+
+/** The session that places an event in the tree: a new session's parent, otherwise the event's own session. */
+export function placedBy(event: OpenCodeEvent) {
+  return event.type === "session.created" ? event.data.parentID : sessionIDFromEvent(event)
+}
+
+/** Whether the event comes from the prompt's session or a session tracked below it. */
+export function inTree(state: TurnState, event: OpenCodeEvent, ctx: TurnContext) {
+  const sessionID = placedBy(event)
+  return sessionID !== undefined && (sessionID === ctx.sessionID || state.children.has(sessionID))
+}
+
+/** Tracks descendants found by walking up from a session this subscription never saw created. */
+export function adopt(state: TurnState, sessions: ReadonlyArray<ACPChild.Session>): TurnState {
+  const added = sessions.filter((session) => !state.children.has(session.id))
+  if (added.length === 0) return state
+  return { ...state, children: new Map([...state.children, ...added.map((session) => [session.id, session] as const)]) }
 }
 
 export function failure(state: TurnState) {
@@ -204,12 +227,28 @@ function childCreated(state: TurnState, event: CreatedEvent, ctx: TurnContext): 
   if (!parent && parentID !== ctx.sessionID) return { state, outputs: [] }
   const child = { id: event.data.sessionID, parentID, depth: parent ? parent.depth + 1 : 1, title: event.data.title }
   return {
-    state: {
-      ...state,
-      children: new Map(state.children).set(child.id, child),
-      openChildren: new Set(state.openChildren).add(child.id),
-    },
+    state: { ...state, children: new Map(state.children).set(child.id, child) },
     outputs: childStatus(ctx, child, { type: "status", status: "created" }),
+  }
+}
+
+// An ask can arrive twice, once listed as pending and once as its event, so each is asked once.
+function permissionAsk(state: TurnState, ctx: TurnContext, request: Permission.Request): Folded {
+  const child = state.children.get(request.sessionID)
+  if (state.asks.has(request.id) || (request.sessionID !== ctx.sessionID && !child)) return { state, outputs: [] }
+  const tool = request.source ? state.tools.get(toolKey(request.sessionID, request.source.id)) : undefined
+  return {
+    state: { ...state, asks: new Set(state.asks).add(request.id) },
+    outputs: [{ _tag: "PermissionAsk", request, tool, child }],
+  }
+}
+
+function formAsk(state: TurnState, ctx: TurnContext, form: Form.Info, pending: boolean): Folded {
+  const child = state.children.get(form.sessionID)
+  if (state.asks.has(form.id) || (form.sessionID !== ctx.sessionID && !child)) return { state, outputs: [] }
+  return {
+    state: { ...state, asks: new Set(state.asks).add(form.id) },
+    outputs: [{ _tag: "FormAsk", form, child, pending }],
   }
 }
 
@@ -239,11 +278,14 @@ function childEvent(state: TurnState, event: OpenCodeEvent, ctx: TurnContext, ch
     case "session.execution.started":
       return { state, outputs: childStatus(ctx, child, { type: "status", status: "running" }) }
     case "session.execution.succeeded":
-      return childEnded(state, ctx, child, { type: "status", status: "completed" })
+      return { state, outputs: childStatus(ctx, child, { type: "status", status: "completed" }) }
     case "session.execution.interrupted":
-      return childEnded(state, ctx, child, { type: "status", status: "interrupted" })
+      return { state, outputs: childStatus(ctx, child, { type: "status", status: "interrupted" }) }
     case "session.execution.failed":
-      return childEnded(state, ctx, child, { type: "status", status: "failed", error: event.data.error })
+      return {
+        state,
+        outputs: childStatus(ctx, child, { type: "status", status: "failed", error: event.data.error }),
+      }
     default:
       return sessionEvent(state, event, ctx, child)
   }
@@ -425,12 +467,6 @@ function route(ctx: TurnContext, child: ACPChild.Session | undefined, update: Se
 function childStatus(ctx: TurnContext, child: ACPChild.Session, event: ACPChild.Event): Output[] {
   if (!ctx.childUpdates) return []
   return [{ _tag: "ChildUpdate", update: ACPChild.update(ctx.sessionID, child, event) }]
-}
-
-function childEnded(state: TurnState, ctx: TurnContext, child: ACPChild.Session, status: ACPChild.Event): Folded {
-  const openChildren = new Set(state.openChildren)
-  openChildren.delete(child.id)
-  return { state: { ...state, openChildren }, outputs: childStatus(ctx, child, status) }
 }
 
 function recordStep(state: TurnState, tokens: TokenUsage.Info): TurnState {
