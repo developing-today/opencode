@@ -24,6 +24,24 @@ describe("global roots", () => {
     })
   })
 
+  test("OPENCODE_TMPDIR overrides the tmp root with the exact directory", () => {
+    const scratch = path.join(os.tmpdir(), "opencode-durable-scratch")
+    expect(run({ OPENCODE_TMPDIR: scratch }).tmp).toBe(scratch)
+  })
+
+  test("OPENCODE_TMPDIR expands a leading tilde against the home directory", () => {
+    const home = path.join(os.tmpdir(), "opencode-tmpdir-home")
+    const env = {
+      OPENCODE_TMPDIR: "~/scratch",
+      ...(process.platform === "win32" ? { USERPROFILE: home } : { HOME: home }),
+    }
+    expect(run(env).tmp).toBe(path.join(home, "scratch"))
+  })
+
+  test("blank OPENCODE_TMPDIR keeps the OS temp default", () => {
+    expect(run({ OPENCODE_TMPDIR: "  " }).tmp).toBe(path.join(os.tmpdir(), "opencode"))
+  })
+
   test("empty XDG overrides use home directory defaults", () => {
     const home = path.join(os.tmpdir(), "opencode-xdg-home")
 
