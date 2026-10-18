@@ -94,6 +94,10 @@ describe("ModelRouteLimits.retryHintFromMessage", () => {
     expect(ModelRouteLimits.retryHintFromMessage("retry after 2026-01-01T00:00:00Z", at)).toBe(
       Date.parse("2026-01-01T00:00:00Z") - at,
     )
+    // A stated zone is honoured as written, whatever the reader's local timezone is.
+    expect(ModelRouteLimits.retryHintFromMessage("retry after 2026-01-01T05:30:00+05:30", at)).toBe(
+      Date.parse("2026-01-01T00:00:00Z") - at,
+    )
     expect(ModelRouteLimits.retryHintFromMessage("try again in 45 seconds", at)).toBe(45_000)
     expect(ModelRouteLimits.retryHintFromMessage("wait in 2 hours", at)).toBe(7_200_000)
   })

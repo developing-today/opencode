@@ -126,6 +126,9 @@ describe("ModelRouteTuning.parseQuotaReset", () => {
     expect(ModelRouteTuning.parseQuotaReset("quota exhausted; resets at 2026-01-01T18:00:00Z", at)).toBe(
       Date.UTC(2026, 0, 1, 18),
     )
+    expect(ModelRouteTuning.parseQuotaReset("quota exhausted; resets at 2026-01-01T23:30:00+05:30", at)).toBe(
+      Date.UTC(2026, 0, 1, 18),
+    )
     expect(ModelRouteTuning.parseQuotaReset("rate limit reached, back in 30 minutes", at)).toBe(at + 1_800_000)
     expect(ModelRouteTuning.parseQuotaReset("try in 5 minutes", at)).toBeUndefined()
     expect(ModelRouteTuning.parseQuotaReset(undefined, at)).toBeUndefined()

@@ -60,8 +60,10 @@ export const resetMs = (value: string, at: number): number | undefined => {
   return Number.isNaN(date) ? undefined : Math.max(0, date - at)
 }
 
+// The zone designator is part of the capture: dropping it would make Date.parse read a
+// "…T00:00:00Z" timestamp as local time, shifting the instant by the reader's UTC offset.
 const ABSOLUTE_TIME =
-  /(?:retry|try again|wait|back|resume|reset|returns?|until|expires?(?: at)?)[a-z ]{0,20}(?:after|at|on|by)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2})?)?)/
+  /(?:retry|try again|wait|back|resume|reset|returns?|until|expires?(?: at)?)[a-z ]{0,20}(?:after|at|on|by)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?)/
 const RELATIVE_TIME = /in\s+(\d+)\s*(second|minute|hour|day)s?/
 const RELATIVE_UNITS = { second: 1_000, minute: 60_000, hour: 3_600_000, day: 86_400_000 } as Record<string, number>
 
