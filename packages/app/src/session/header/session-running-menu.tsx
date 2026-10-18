@@ -11,6 +11,7 @@ import { useLanguage } from "@/runtime/i18n/language"
 import { useServerSDK } from "@/runtime/server/client"
 import { useServer } from "@/runtime/server/current"
 import { useOpenSessionRoute } from "@/session/session-identity-header"
+import { runningSessions, type RunningSession } from "@/session/requests/background"
 import { errorMessage } from "@/shell/layout/helpers"
 import { showToast } from "@/shell/notifications/toast"
 import { SessionWorkingIndicator } from "./session-working-indicator"
@@ -24,6 +25,10 @@ type RunningItem = {
   agent?: string
   sessionID?: string
   target: string
+  // Nested subagents sit below the subagent that started them.
+  depth: number
+  // A finished subagent still listed as the parent of running work is neither counted nor stoppable.
+  running: boolean
 }
 
 export function SessionRunningMenu(props: {
@@ -50,34 +55,62 @@ export function SessionRunningMenu(props: {
   const sessionAgent = (id: string | undefined) => (id ? server.ctx.data.session.get(id)?.agent : undefined)
 
   // Foreground shells stay out: the timeline already shows them at the bottom.
-  const items = createMemo<RunningItem[]>(() => [
-    ...props.blocking.flatMap((task) =>
-      task.type === "subagent"
-        ? [
-            {
-              ...task,
-              key: task.id ?? task.partID,
-              agent: sessionAgent(task.id),
-              sessionID: task.id,
-              target: task.partID,
-            },
-          ]
-        : [],
-    ),
-    ...props.tasks.flatMap((task) =>
-      task.type === "subagent"
-        ? [{ ...task, key: task.id, agent: task.agent ?? sessionAgent(task.id), sessionID: task.id, target: task.id }]
-        : [],
-    ),
-    ...props.tasks.flatMap((task) => (task.type === "shell" ? [{ ...task, key: task.id, target: task.id }] : [])),
-  ])
+  const items = createMemo<RunningItem[]>(() => {
+    const subagents = [
+      ...props.blocking.flatMap((task) =>
+        task.type === "subagent"
+          ? [
+              {
+                ...task,
+                key: task.id ?? task.partID,
+                agent: sessionAgent(task.id),
+                sessionID: task.id,
+                target: task.partID,
+              },
+            ]
+          : [],
+      ),
+      ...props.tasks.flatMap((task) =>
+        task.type === "subagent"
+          ? [{ ...task, key: task.id, agent: task.agent ?? sessionAgent(task.id), sessionID: task.id, target: task.id }]
+          : [],
+      ),
+    ]
+
+    const tree = props.owner
+      ? runningSessions({
+          sessionID: props.owner,
+          sessions: server.ctx.data.session.list(),
+          status: server.ctx.data.session.status,
+        })
+      : []
+
+    const below = new Map(tree.map((node) => [node.session.id, node.children]))
+    const listed = new Set(subagents.map((item) => item.sessionID))
+
+    return [
+      ...subagents.flatMap((item) => [
+        { ...item, depth: 0, running: true },
+        ...nestedItems(item.sessionID ? (below.get(item.sessionID) ?? []) : [], 1),
+      ]),
+      // Finished subagents no longer listed above stay as the parents of work they started that still runs.
+      ...nestedItems(
+        tree.filter((node) => !node.running && !listed.has(node.session.id)),
+        0,
+      ),
+      ...props.tasks.flatMap((task) =>
+        task.type === "shell" ? [{ ...task, key: task.id, target: task.id, depth: 0, running: true }] : [],
+      ),
+    ]
+  })
 
   const viewing = (item: RunningItem) => !!item.sessionID && item.sessionID === props.sessionID
 
   const label = createMemo(() => {
-    const count = props.title ? items().filter((item) => !viewing(item)).length : items().length
+    const running = items().filter((item) => item.running)
+    const count = props.title ? running.filter((item) => !viewing(item)).length : running.length
 
-    if (!count || (!props.title && count === 1 && viewing(items()[0]))) return undefined
+    if (!count || (!props.title && count === 1 && viewing(running[0]))) return undefined
 
     if (items().some((item) => item.type === "shell")) {
       return language.plural(props.title ? "session.running.additionalRunning" : "session.running.running", count)
@@ -126,8 +159,8 @@ export function SessionRunningMenu(props: {
     openRoute(current, current, item.target)
   }
 
-  // A subagent can only be interrupted once its child session exists.
-  const stoppable = (item: RunningItem) => item.type === "shell" || !!item.sessionID
+  // A subagent can only be interrupted once its child session exists, and only while it runs.
+  const stoppable = (item: RunningItem) => item.running && (item.type === "shell" || !!item.sessionID)
 
   const stop = (item: RunningItem) => {
     const request = item.sessionID
@@ -231,6 +264,8 @@ export function SessionRunningMenu(props: {
                   <Menu.Item
                     class="group/running-item"
                     classList={{ "!bg-v2-overlay-simple-overlay-hover": viewing(item) }}
+                    // Each level adds one icon width to the row's own 12px start padding.
+                    style={item.depth ? { "padding-inline-start": `${12 + item.depth * 16}px` } : undefined}
                     aria-current={viewing(item) ? "page" : undefined}
                     onSelect={() => {
                       // Close before navigating: the router's transition would hold the close until this
@@ -249,13 +284,20 @@ export function SessionRunningMenu(props: {
                       when={item.type === "subagent"}
                       fallback={<Icon name="console" class="shrink-0 text-v2-icon-icon-muted" />}
                     >
-                      {/* Built-in agents have theme tokens; any other agent keeps the neutral color. */}
-                      <SessionProgressIndicatorV2
-                        class="shrink-0"
-                        style={{
-                          color: item.agent ? `var(--v2-agent-${item.agent.toLowerCase()}-solid, ${neutral})` : neutral,
-                        }}
-                      />
+                      <Show
+                        when={item.running}
+                        fallback={<Icon name="subagent" class="shrink-0 text-v2-icon-icon-muted" />}
+                      >
+                        {/* Built-in agents have theme tokens; any other agent keeps the neutral color. */}
+                        <SessionProgressIndicatorV2
+                          class="shrink-0"
+                          style={{
+                            color: item.agent
+                              ? `var(--v2-agent-${item.agent.toLowerCase()}-solid, ${neutral})`
+                              : neutral,
+                          }}
+                        />
+                      </Show>
                     </Show>
                     <span class="shrink-0 font-[530]">
                       {item.type === "shell"
@@ -309,4 +351,20 @@ export function SessionRunningMenu(props: {
       </div>
     </Show>
   )
+}
+
+function nestedItems(nodes: RunningSession[], depth: number): RunningItem[] {
+  return nodes.flatMap((node) => [
+    {
+      key: node.session.id,
+      type: "subagent" as const,
+      label: node.session.title ?? node.session.id,
+      agent: node.session.agent,
+      sessionID: node.session.id,
+      target: node.session.id,
+      depth,
+      running: node.running,
+    },
+    ...nestedItems(node.children, depth + 1),
+  ])
 }

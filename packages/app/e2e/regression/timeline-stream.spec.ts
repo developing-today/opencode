@@ -16,6 +16,7 @@ import {
   reasoningPart,
   renderedPartID,
   session,
+  sessionCreated,
   sessionID,
   setupTimeline,
   shell,
@@ -1399,6 +1400,106 @@ test.describe("background shortcut", () => {
 
     await expect(shellCall.locator('[data-slot="collapsible-trigger"]')).toHaveAttribute("aria-expanded", "true")
     await expect(shellCall).toBeInViewport()
+  })
+
+  test("nests running subagents at any depth under the subagent that started them", async ({ page }) => {
+    const childID = "ses_nested_child"
+    const finishedID = "ses_nested_finished"
+    const grandchildID = "ses_nested_grandchild"
+
+    // These start while the root is open, so the app learns of them as they are created.
+    const started = [
+      session({ id: grandchildID, parentID: childID, title: "Search callers", agent: "general" }),
+      session({ id: "ses_nested_deepest", parentID: grandchildID, title: "Read call sites", agent: "explore" }),
+      session({ id: "ses_nested_stray", parentID: finishedID, title: "Index the docs", agent: "explore" }),
+    ]
+
+    const timeline = await setupTimeline(page, {
+      sessionMessages: [
+        user,
+        {
+          id: "msg_nested",
+          type: "assistant",
+          agent: "build",
+          model: { id: "model", providerID: "provider" },
+          content: [
+            {
+              type: "tool",
+              id: "call_finished",
+              name: "subagent",
+              state: {
+                status: "completed",
+                input: { description: "Review earlier work", agent: "explore" },
+                content: [{ type: "text", text: "done" }],
+                metadata: { sessionID: finishedID, status: "completed" },
+              },
+              time: { created: 2, completed: 3 },
+            },
+            {
+              type: "tool",
+              id: "call_child",
+              name: "subagent",
+              state: {
+                status: "running",
+                input: { description: "Plan the migration", agent: "explore" },
+                metadata: { sessionID: childID },
+              },
+              time: { created: 4 },
+            },
+          ],
+          time: { created: 2 },
+        },
+      ],
+      sessions: [
+        session(),
+        session({ id: finishedID, parentID: sessionID, title: "Review earlier work", agent: "explore" }),
+        session({ id: childID, parentID: sessionID, title: "Plan the migration", agent: "explore" }),
+        ...started,
+      ],
+      // The finished subagent is idle while the subagent it started still runs.
+      sessionStatus: Object.fromEntries(
+        [sessionID, childID, ...started.map((item) => item.id)].map((id) => [id, { type: "busy" }]),
+      ),
+    })
+
+    for (const item of started) await timeline.send(sessionCreated(item))
+
+    const trigger = page.locator("[data-session-title]").getByRole("button", { name: /^\d+ working$/ })
+    await expect(trigger).toHaveAccessibleName("4 working")
+    await trigger.click()
+    const rows = page.getByRole("menu", { name: "4 working", exact: true }).getByRole("menuitem")
+    await expect(rows).toHaveText([
+      /^Explore\s*Plan the migration$/,
+      /^General\s*Search callers$/,
+      /^Explore\s*Read call sites$/,
+      /^Explore\s*Review earlier work$/,
+      /^Explore\s*Index the docs$/,
+    ])
+
+    // Each level starts one step further in than the subagent that started it.
+    const starts = await rows.evaluateAll((items) =>
+      items.map((item) => item.querySelector("svg")!.getBoundingClientRect().left),
+    )
+
+    expect(starts[1]).toBeGreaterThan(starts[0]!)
+    expect(starts[2]).toBeGreaterThan(starts[1]!)
+    expect(starts.slice(3)).toEqual(starts.slice(0, 2))
+
+    // A finished subagent stays only as the parent of the work it started, so it has nothing to interrupt.
+    await rows.nth(3).hover()
+    await expect(rows.nth(3).getByRole("button")).toHaveCount(0)
+
+    const interrupt = page.waitForRequest(
+      (request) =>
+        request.method() === "POST" && new URL(request.url()).pathname === `/api/session/${grandchildID}/interrupt`,
+    )
+
+    await rows.nth(1).hover()
+    await rows.nth(1).getByRole("button", { name: "Interrupt subagent", exact: true }).click()
+    await interrupt
+
+    await rows.nth(2).click()
+    await expect(page).toHaveURL(new RegExp(`/session/${started[1]!.id}$`))
   })
 })
 
