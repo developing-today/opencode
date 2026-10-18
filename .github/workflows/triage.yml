@@ -6,8 +6,9 @@ name: triage
 # or gate individual steps with if: on the runner.
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.issue.number || github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
+  queue: max
 
 on:
   issues:
