@@ -533,6 +533,41 @@ export function createData(config: CreateDataInput) {
     return [...page.data, ...(await listChildren({ cursor: page.cursor.next, limit: CHILD_PAGE }))]
   }
 
+  // Subagents can launch their own, so walk the rest of the tree one level per round of requests,
+  // publishing each level as it arrives. `seen` holds the sessions whose children were already
+  // listed, so every session is listed once and a parent cycle still ends the walk.
+  async function syncDescendants(parents: SessionInfo[], seen: Set<string>): Promise<void> {
+    const expand = parents.filter((parent) => {
+      if (seen.has(parent.id)) return false
+      seen.add(parent.id)
+      return true
+    })
+    if (expand.length === 0) return
+    const children = (
+      await Promise.all(expand.map((parent) => listChildren({ parentID: parent.id, order: "desc", limit: CHILD_PAGE })))
+    )
+      .flat()
+      .filter((child) => !seen.has(child.id))
+    publishSessions(children)
+    return syncDescendants(children, seen)
+  }
+
+  function publishSessions(sessions: SessionInfo[]) {
+    batch(() => {
+      setStore(
+        "session",
+        "info",
+        produce((draft) => {
+          for (const session of sessions) draft[session.id] = session
+        }),
+      )
+      for (const session of sessions) {
+        sync.complete(`session:${session.id}`)
+        registerSession(session.id)
+      }
+    })
+  }
+
   // Walk parentID upward through loaded session info to the family root. When a
   // parent's info is missing, that missing ID is the furthest-known ancestor and
   // is returned so orphan subtrees group under it until the parent arrives. A
@@ -1655,26 +1690,15 @@ export function createData(config: CreateDataInput) {
           throw error
         })
       },
+      /** With `children`, also loads every descendant session at any depth, so the family index is complete. */
       sync(sessionID: string, options?: { children?: boolean }) {
         return sync.run(options?.children ? `session.family:${sessionID}` : `session:${sessionID}`, async () => {
           const [info, children] = await Promise.all([
             api().session.get({ sessionID }),
             options?.children ? listChildren({ parentID: sessionID, order: "desc", limit: CHILD_PAGE }) : [],
           ])
-          const sessions = [info, ...children]
-          batch(() => {
-            setStore(
-              "session",
-              "info",
-              produce((draft) => {
-                for (const session of sessions) draft[session.id] = session
-              }),
-            )
-            for (const session of sessions) {
-              sync.complete(`session:${session.id}`)
-              registerSession(session.id)
-            }
-          })
+          publishSessions([info, ...children])
+          if (options?.children) await syncDescendants(children, new Set([sessionID]))
         })
       },
       invalidate(sessionID: string) {

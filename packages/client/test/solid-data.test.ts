@@ -71,6 +71,8 @@ test("counts every subagent page in a root session's cost", async () => {
       if (url.searchParams.get("cursor") === "page_2")
         return Response.json({ data: Array.from({ length: 50 }, (_, index) => child(200 + index)), cursor: { next: "page_3" } })
 
+      if (url.searchParams.get("parentID") !== "ses_root") return Response.json({ data: [], cursor: {} })
+
       return Response.json({ data: Array.from({ length: 200 }, (_, index) => child(index)), cursor: { next: "page_2" } })
     },
   })
@@ -83,10 +85,102 @@ test("counts every subagent page in a root session's cost", async () => {
     await setup.data.session.sync("ses_root", { children: true })
     expect(setup.data.session.family("ses_root")).toHaveLength(251)
     expect(setup.data.session.cost("ses_root")).toBe(250.5)
-    expect(requests.toSorted()).toEqual([
+    const nested = requests.filter((request) => request.includes("parentID=ses_child_"))
+    expect(requests.filter((request) => !request.includes("parentID=ses_child_")).toSorted()).toEqual([
       "/api/session/ses_root?",
       "/api/session?limit=200&cursor=page_2",
       "/api/session?limit=200&order=desc&parentID=ses_root",
+    ])
+    // Each subagent is asked once for subagents of its own.
+    expect(new Set(nested).size).toBe(250)
+    expect(nested).toHaveLength(250)
+  } finally {
+    setup.dispose()
+  }
+})
+
+test("discovers nested subagents at any depth, publishing each level as it arrives", async () => {
+  const parents: Record<string, string> = {
+    ses_a: "ses_root",
+    ses_b: "ses_root",
+    ses_a1: "ses_a",
+    ses_a2: "ses_a",
+    ses_a1x: "ses_a1",
+  }
+  const deepest = Promise.withResolvers<void>()
+  const requests: string[] = []
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      requests.push(`${url.pathname}?${url.searchParams}`)
+      if (url.pathname === "/api/session/ses_root") return Response.json({ data: { ...session(0), id: "ses_root" } })
+      const parentID = url.searchParams.get("parentID")
+      if (parentID === "ses_a1") await deepest.promise
+      return Response.json({
+        data: Object.entries(parents)
+          .filter(([, parent]) => parent === parentID)
+          .map(([id, parent]) => ({ ...session(0), id, parentID: parent })),
+        cursor: {},
+      })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    const synced = setup.data.session.sync("ses_root", { children: true })
+    await wait(() => setup.data.session.get("ses_a2") !== undefined)
+    expect(setup.data.session.get("ses_a1x")).toBeUndefined()
+    deepest.resolve()
+    await synced
+
+    expect(setup.data.session.family("ses_root")).toEqual(["ses_root", "ses_a", "ses_b", "ses_a1", "ses_a2", "ses_a1x"])
+    expect(setup.data.session.root("ses_a1x")).toBe("ses_root")
+    expect(requests.toSorted()).toEqual(
+      [
+        "/api/session/ses_root?",
+        ...["ses_root", "ses_a", "ses_b", "ses_a1", "ses_a2", "ses_a1x"].map(
+          (id) => `/api/session?limit=200&order=desc&parentID=${id}`,
+        ),
+      ].toSorted(),
+    )
+  } finally {
+    deepest.resolve()
+    setup.dispose()
+  }
+})
+
+test("lists each session once when parent links form a cycle", async () => {
+  const requests: string[] = []
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      requests.push(`${url.pathname}?${url.searchParams}`)
+      if (url.pathname === "/api/session/ses_x")
+        return Response.json({ data: { ...session(0), id: "ses_x", parentID: "ses_y" } })
+      const parentID = url.searchParams.get("parentID")
+      return Response.json({
+        data: [{ ...session(0), id: parentID === "ses_x" ? "ses_y" : "ses_x", parentID }],
+        cursor: {},
+      })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    await setup.data.session.sync("ses_x", { children: true })
+    expect(setup.data.session.get("ses_y")?.parentID).toBe("ses_x")
+    expect(requests.toSorted()).toEqual([
+      "/api/session/ses_x?",
+      "/api/session?limit=200&order=desc&parentID=ses_x",
+      "/api/session?limit=200&order=desc&parentID=ses_y",
     ])
   } finally {
     setup.dispose()
