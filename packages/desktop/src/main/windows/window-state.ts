@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
-import path from "node:path"
+import { existsSync, readFileSync } from "node:fs"
 import type { BrowserWindow, Rectangle } from "electron"
+
+import { writeFileSyncAtomic } from "../atomic-write"
 
 // Remembers a window's bounds and maximized / fullscreen flags across launches in the same JSON
 // file electron-window-state wrote, so existing profiles restore where they were.
@@ -24,6 +25,8 @@ export type Displays = {
 // Bounds are only trusted when they still fit on one of the current displays; otherwise the window
 // falls back to the default size on the primary display. A saved maximized or fullscreen state
 // without bounds is kept so manage() can restore it.
+// SAFETY: saved state comes from a JSON file written by older builds; it is validated via isState before use.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- see SAFETY above
 export function resolveWindowState(saved: unknown, defaults: { width: number; height: number }, displays: Displays) {
   const state = isState(saved) ? saved : undefined
 
@@ -53,6 +56,8 @@ export function windowStateFile(id: string) {
   return `window-state-${id.replace(/[^a-zA-Z0-9._-]/g, "-")}.json`
 }
 
+// SAFETY: the parsed JSON is handed to resolveWindowState, which validates it before use.
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- see SAFETY above
 export function readWindowState(file: string): unknown {
   if (!existsSync(file)) return undefined
 
@@ -100,9 +105,7 @@ export function manageWindowState(win: BrowserWindow, file: string, initial: Win
     win.off("move", changed)
     win.off("close", update)
     win.off("closed", closed)
-    mkdirSync(path.dirname(file), { recursive: true })
-    writeFileSync(`${file}.tmp`, JSON.stringify(state))
-    renameSync(`${file}.tmp`, file)
+    writeFileSyncAtomic(file, JSON.stringify(state))
   }
 
   win.on("resize", changed)
@@ -112,6 +115,8 @@ export function manageWindowState(win: BrowserWindow, file: string, initial: Win
 }
 
 function isState(value: unknown): value is WindowState {
+  // SAFETY: this guard is the boundary check for unparsed saved state; hasBounds validates its fields before use.
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- see SAFETY above
   return typeof value === "object" && value !== null
 }
 
