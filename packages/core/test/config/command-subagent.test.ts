@@ -106,6 +106,49 @@ describe("command subagents", () => {
     )
   }
 
+  it.live("refuses a subtask command when subagent_depth is 0", () =>
+    Effect.gen(function* () {
+      const parent = yield* project({ subagent: true, agent: "build" }, "json", 0)
+      const sessions = yield* Session.Service
+      const error = yield* sessions
+        .command({ sessionID: parent.id, command: "review", text: "changes" })
+        .pipe(Effect.flip)
+      expect(error.message).toContain("Subagent depth limit reached (0)")
+      expect(error.message).toContain("experimental.subagent_depth")
+      expect(error).toMatchObject({ _tag: "Command.ExecutionError" })
+      expect((yield* sessions.list({ parentID: parent.id })).data).toEqual([])
+    }),
+  )
+
+  it.live("refuses a subtask command in a session already at the depth limit", () =>
+    Effect.gen(function* () {
+      const root = yield* project({ subagent: true, agent: "build" }, "json", 1)
+      const sessions = yield* Session.Service
+      const parent = yield* sessions.create({ parentID: root.id, title: "Level one", model: parentModel })
+      const error = yield* sessions
+        .command({ sessionID: parent.id, command: "review", text: "changes" })
+        .pipe(Effect.flip)
+      expect(error.message).toContain("Subagent depth limit reached (1)")
+      expect(error).toMatchObject({ _tag: "Command.ExecutionError" })
+      expect((yield* sessions.list({ parentID: parent.id })).data).toEqual([])
+    }),
+  )
+
+  it.live("runs a subtask command below the depth limit", () =>
+    Effect.gen(function* () {
+      const parent = yield* project({ subagent: true, agent: "build" }, "json", 1)
+      const sessions = yield* Session.Service
+      const llm = yield* TestLLM.Test
+      const gate = yield* llm.gate()
+      yield* sessions.command({ sessionID: parent.id, command: "review", text: "changes" })
+      yield* gate.started
+      expect((yield* sessions.list({ parentID: parent.id })).data).toHaveLength(1)
+      yield* gate.release
+      yield* llm.wait(2)
+      yield* sessions.wait(parent.id)
+    }),
+  )
+
   it.live("subagent: false overrides subagent mode and the legacy alias", () =>
     Effect.gen(function* () {
       const parent = yield* project({ subagent: false, subtask: true, agent: "reviewer" }, "json")
@@ -127,6 +170,7 @@ describe("command subagents", () => {
 function project(
   command: { agent?: string; model?: string; subagent?: boolean; subtask?: boolean },
   format: "json" | "markdown",
+  subagentDepth?: number,
 ) {
   return Effect.gen(function* () {
     const tmp = yield* tmpdirScoped()
@@ -136,6 +180,7 @@ function project(
         path.join(tmp.path, "opencode.json"),
         JSON.stringify({
           agents: { reviewer: { mode: "subagent", model: "test/child" } },
+          ...(subagentDepth === undefined ? {} : { experimental: { subagent_depth: subagentDepth } }),
           ...(format === "markdown" ? {} : { commands: { review: definition } }),
         }),
       ),
