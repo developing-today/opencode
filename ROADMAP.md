@@ -10,8 +10,8 @@ Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](REA
 
 | Area                                                        | Current focus                                                   |
 | ----------------------------------------------------------- | --------------------------------------------------------------- |
-| [Nested subsessions](#nested-subsessions-and-their-asks)    | Shipped across the TUI, the app and ACP. Two follow-ups left    |
-| [mcpx integration](#mcpx-integration)                       | Daemon cleanup on every platform, and where the flake gets mcpx |
+| [Nested subsessions](#nested-subsessions-and-their-asks)    | Shipped across the TUI, the app and ACP. One follow-up left     |
+| [mcpx integration](#mcpx-integration)                       | Where the flake gets mcpx, and the shell tool description       |
 | [Serve handover and restarts](#serve-handover-and-restarts) | Prove the handover under real systemd                           |
 | [Routing, cost and plans](#routing-cost-and-plans)          | Feature requests for failover, cost display and cache use       |
 | [Plugin API](#plugin-api)                                   | Gaps found while building v2 plugins                            |
@@ -25,7 +25,6 @@ Subagents can launch subagents. Pending permissions and questions from any depth
 | Title                                      | Horizon | Status   | Intent                                                                                                                                                          | Links |
 | ------------------------------------------ | ------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
 | Nest the TUI mini Select subagent menu     | Now     | proposed | The follow-up left behind when the TUI changes merged.                                                                                                          | #78   |
-| Sessions in a parent cycle are not dropped | Now     | proposed | `nestWorkspaceSessions` silently drops sessions whose parent links form a cycle. `developing-today/openchamber#79` is the same class of bug in the cost rollup. | #77   |
 
 ## mcpx integration
 
@@ -34,7 +33,6 @@ The fork projects mcpx tools into Code Mode, starts a detached daemon with just-
 | Title                                       | Horizon | Status   | Intent                                                                                                         | Links |
 | ------------------------------------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------- | ----- |
 | Say where the flake gets mcpx               | Now     | proposed | The flake builds `opencode` with no `mcpx` unless the consumer passes one in.                                  | #82   |
-| `mcpx-cleanup` on macOS and Windows         | Next    | proposed | The temp-home check assumes a POSIX tmpdir with no trailing separator, so leaked daemons are missed elsewhere. | #54   |
 | Shell tool description follows config edits | Next    | proposed | The description keeps the boot-time `shell_timeout`, so the model is told the wrong default.                   | #67   |
 
 ## Serve handover and restarts
@@ -71,7 +69,6 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 | `unit (linux)` green on main             | Now     | proposed | `packages/sdk/test/transport.test.ts` fails in both variants. Find the cause before touching the assertion. | #62   |
 | Tests that need no ambient `rg`          | Next    | proposed | Ripgrep and search-tool tests fall through to a download the harness forbids.                               | #72   |
 | Windows test fixes                       | Next    | proposed | The `runScript` tests hardcode `/bin/sh`.                                                                   | #63   |
-| Concurrency groups that do not drop runs | Next    | proposed | Issue and comment workflows share one group, so a burst drops the pending run.                              | #74   |
 | Timeout caps on every job                | Next    | proposed |                                                                                                             | #61   |
 | Build each PR commit once                | Next    | proposed | Test and check run on both push and pull request.                                                           | #59   |
 | A Nix check that completes               | Next    | proposed | Replace `nix-eval` and `nix-hashes`, which have effectively never finished.                                 | #49   |
@@ -97,3 +94,6 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 | Workflows on GitHub-hosted runners, concurrency groups           | 2026-10-18 | #51, #50 |
 | Run e2e for PRs whose head branch is named main                  | 2026-10-18 | #73      |
 | Document `mcpx-cleanup`                                          | 2026-10-18 | #76      |
+| Sessions in a parent cycle are not dropped                       | 2026-10-18 | #84      |
+| Concurrency groups that do not drop runs                         | 2026-10-18 | #86      |
+| `mcpx-cleanup` on macOS and Windows                              | 2026-10-19 | #107     |
