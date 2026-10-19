@@ -45,6 +45,7 @@ env:
 
 jobs:
   version:
+    timeout-minutes: 15
     # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-ubuntu-2404
     runs-on: ubuntu-24.04
     if: github.repository == 'anomalyco/opencode'
@@ -146,6 +147,7 @@ jobs:
       version: ${{ needs.version.outputs.version }}
 
   sign-cli-macos:
+    timeout-minutes: 30
     needs: build-cli
     runs-on: macos-26
     # Beta publishes only the desktop app, which signs the CLI it bundles.
@@ -224,6 +226,7 @@ jobs:
           if-no-files-found: error
 
   build-node-cli:
+    timeout-minutes: 60
     needs:
       - version
       - build-node-app-archive
@@ -286,6 +289,7 @@ jobs:
           if-no-files-found: error
 
   sign-cli-windows:
+    timeout-minutes: 30
     needs:
       - sign-cli-macos
     # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-windows-2025
@@ -356,6 +360,7 @@ jobs:
           if-no-files-found: error
 
   build-electron:
+    timeout-minutes: 90
     # Desktop packaging re-signs the bundled CLI on macOS and Windows, so it starts from the unsigned build.
     needs:
       - version
@@ -556,6 +561,7 @@ jobs:
           path: packages/desktop/dist/latest*.yml
 
   publish:
+    timeout-minutes: 30
     needs:
       - version
       - build-cli
@@ -678,6 +684,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   notify-discord-v2:
+    timeout-minutes: 10
     needs:
       - version
       - publish

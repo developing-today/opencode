@@ -17,6 +17,7 @@ permissions:
 
 jobs:
   close-non-compliant:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - name: Close non-compliant issues and PRs after 72 hours

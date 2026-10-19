@@ -15,6 +15,7 @@ on:
 
 jobs:
   check-duplicates:
+    timeout-minutes: 10
     # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-ubuntu-2404
     runs-on: ubuntu-24.04
     permissions:
@@ -82,6 +83,7 @@ jobs:
           fi
 
   add-contributor-label:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write

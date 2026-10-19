@@ -19,6 +19,7 @@ permissions:
 
 jobs:
   deploy:
+    timeout-minutes: 30
     if: github.repository == 'anomalyco/opencode' && github.ref_name == 'production'
     runs-on: ubuntu-latest
     steps:
