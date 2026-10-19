@@ -37,3 +37,6 @@ logs/
 *.bun-build
 tsconfig.tsbuildinfo
 /artifacts/
+
+# Wrangler/Miniflare local dev state
+.wrangler/
