@@ -97,6 +97,36 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
 
+      - name: Install ripgrep
+        run: |
+          # Unit tests drive a real rg binary (ripgrep, search tools) and
+          # the test harness forbids RipgrepBinary's download fallback, so
+          # unit cannot depend on whether the runner image ships one (#72).
+          # Pin the same release src/ripgrep/binary.ts resolves: 15.1.0.
+          version=15.1.0
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64) platform="x86_64-unknown-linux-musl"; extension="tar.gz" ;;
+            Linux-ARM64) platform="aarch64-unknown-linux-gnu"; extension="tar.gz" ;;
+            Windows-X64) platform="x86_64-pc-windows-msvc"; extension="zip" ;;
+            Windows-ARM64) platform="aarch64-pc-windows-msvc"; extension="zip" ;;
+            *) echo "no ripgrep asset for runner ${{ runner.os }}-${{ runner.arch }}" >&2; exit 1 ;;
+          esac
+          archive="${RUNNER_TEMP}/ripgrep-${version}-${platform}.${extension}"
+          dest="${RUNNER_TEMP}/ripgrep-${version}"
+          mkdir -p "$dest"
+          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${version}/ripgrep-${version}-${platform}.${extension}" -o "$archive"
+          if [ "$extension" = "zip" ]; then
+            # Git's GNU tar cannot read zip; use the bsdtar in System32,
+            # the same tool src/ripgrep/binary.ts extracts zips with.
+            "/c/Windows/System32/tar.exe" -xf "$archive" -C "$dest"
+          else
+            tar -xzf "$archive" -C "$dest"
+          fi
+          bin_dir="$dest/ripgrep-${version}-${platform}"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          export PATH="$bin_dir:$PATH"
+          rg --version
+
       - name: Test Effect simplification rules
         if: runner.os == 'Linux'
         run: bun run test:effect-simplification-rules
