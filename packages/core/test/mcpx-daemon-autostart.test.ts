@@ -76,6 +76,31 @@ const fakeMcpx = async (): Promise<string> => {
   return bin
 }
 
+// A fake whose `settings get daemon.autostart` answers like the real CLI
+// (first line `daemon.autostart = <value>`); every other invocation is a
+// daemon spawn and is recorded the same way as fakeMcpx.
+const fakeMcpxWithAutostart = async (value: string): Promise<string> => {
+  const bin = path.join(dir, "mcpx")
+  await fs.writeFile(
+    bin,
+    [
+      "#!/bin/sh",
+      'if [ "$1" = "settings" ]; then',
+      `  printf 'daemon.autostart = %s\\n' "${value}"`,
+      "  exit 0",
+      "fi",
+      'printf \'args:%s\\n\' "$*" >> "$FAKE_MCPX_RECORD"',
+      'printf \'owner:%s\\n\' "$MCPX_OWNER" >> "$FAKE_MCPX_RECORD"',
+      "exit 0",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  )
+  process.env.OPENCODE_MCPX_BIN = bin
+  process.env.FAKE_MCPX_RECORD = record
+  return bin
+}
+
 describe("mcpx daemon autostart policy", () => {
   test("binary resolution prefers OPENCODE_MCPX_BIN", () => {
     expect(McpxTool.mcpxBinary({})).toBe("mcpx")
@@ -214,6 +239,40 @@ describe("mcpx daemon autostart policy", () => {
       const text = await fs.readFile(record, "utf-8")
       expect(text).toContain("args:daemon --daemon-idle-exit 1h")
       expect(text).toContain(`owner:opencode:${process.pid}`)
+    },
+  )
+
+  test("mcpx daemon.autostart setting parses from settings get output", () => {
+    expect(McpxTool.parseMcpxDaemonAutostart("daemon.autostart = false\n  from      config\n")).toBe(false)
+    expect(McpxTool.parseMcpxDaemonAutostart("daemon.autostart = true\n  from      default\n")).toBe(true)
+    expect(McpxTool.parseMcpxDaemonAutostart("")).toBeUndefined()
+    expect(McpxTool.parseMcpxDaemonAutostart("no such setting\n")).toBeUndefined()
+  })
+
+  // #134: a supervised mcpx daemon (launchd/systemd) is configured with
+  // daemon.autostart=false so nothing else starts a second daemon on the
+  // same socket. The plugin used to spawn anyway whenever health did not
+  // answer — e.g. while the supervised daemon was restarting.
+  test.skipIf(process.platform === "win32")(
+    "ensureDaemon spawns nothing when mcpx daemon.autostart is false",
+    async () => {
+      await fakeMcpxWithAutostart("false")
+      delete process.env.OPENCODE_TEST_HOME
+      delete process.env.OPENCODE_MCPX_DAEMON
+      await McpxTool.ensureDaemon()
+      expect(await exists(record)).toBe(false)
+    },
+  )
+
+  test.skipIf(process.platform === "win32")(
+    "ensureDaemon still spawns when mcpx daemon.autostart is true",
+    async () => {
+      await fakeMcpxWithAutostart("true")
+      delete process.env.OPENCODE_TEST_HOME
+      delete process.env.OPENCODE_MCPX_DAEMON
+      await McpxTool.ensureDaemon()
+      const text = await fs.readFile(record, "utf-8")
+      expect(text).toContain("args:daemon --daemon-idle-exit 1h")
     },
   )
 })
