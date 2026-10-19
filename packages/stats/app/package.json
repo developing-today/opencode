@@ -7,6 +7,7 @@
   "license": "MIT",
   "scripts": {
     "typecheck": "tsgo --noEmit",
+    "test": "bun test",
     "dev": "vite dev --host 0.0.0.0",
     "build": "vite build",
     "start": "vite start"

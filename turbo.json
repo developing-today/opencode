@@ -144,6 +144,18 @@
       "dependsOn": ["transit"],
       "outputs": []
     },
+    "@opencode/console-app#test": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
+    "@opencode/stats-app#test": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
+    "@opencode/stats-core#test": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
     "@opencode/util#test": {
       "dependsOn": ["transit"],
       "outputs": []
