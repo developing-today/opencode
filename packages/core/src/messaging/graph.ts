@@ -23,10 +23,10 @@ export const row = Effect.fnUntraced(function* (db: DatabaseService, id: string)
 export const ancestors = Effect.fnUntraced(function* (db: DatabaseService, id: string) {
   const ids = yield* db
     .all<{ id: string; depth: number }>(
-      sql`WITH RECURSIVE chain(id, parent_id, depth) AS (
-        SELECT id, parent_id, 0 FROM session_v2 WHERE id = ${id}
+      sql`WITH RECURSIVE chain(id, parent_id, depth, path) AS (
+        SELECT id, parent_id, 0, '/' || id || '/' FROM session_v2 WHERE id = ${id}
         UNION ALL
-        SELECT s.id, s.parent_id, c.depth + 1 FROM session_v2 s JOIN chain c ON s.id = c.parent_id WHERE c.depth < 256
+        SELECT s.id, s.parent_id, c.depth + 1, c.path || s.id || '/' FROM session_v2 s JOIN chain c ON s.id = c.parent_id WHERE c.depth < 256 AND instr(c.path, '/' || s.id || '/') = 0
       ) SELECT id, depth FROM chain WHERE depth > 0 ORDER BY depth`,
     )
     .pipe(Effect.orDie)
@@ -40,10 +40,10 @@ export const ancestors = Effect.fnUntraced(function* (db: DatabaseService, id: s
 export const descendants = Effect.fnUntraced(function* (db: DatabaseService, id: string) {
   const ids = yield* db
     .all<{ id: string }>(
-      sql`WITH RECURSIVE tree(id, depth) AS (
-        SELECT id, 0 FROM session_v2 WHERE id = ${id}
+      sql`WITH RECURSIVE tree(id, depth, path) AS (
+        SELECT id, 0, '/' || id || '/' FROM session_v2 WHERE id = ${id}
         UNION ALL
-        SELECT s.id, t.depth + 1 FROM session_v2 s JOIN tree t ON s.parent_id = t.id WHERE t.depth < 256
+        SELECT s.id, t.depth + 1, t.path || s.id || '/' FROM session_v2 s JOIN tree t ON s.parent_id = t.id WHERE t.depth < 256 AND instr(t.path, '/' || s.id || '/') = 0
       ) SELECT id FROM tree WHERE depth > 0 ORDER BY depth, id DESC`,
     )
     .pipe(Effect.orDie)
