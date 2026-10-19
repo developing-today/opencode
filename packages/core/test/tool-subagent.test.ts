@@ -34,6 +34,8 @@ import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { PluginSupervisor } from "@opencode/core/plugin/supervisor"
 import { Permission } from "@opencode/core/permission"
+import { SessionTable } from "@opencode/core/session/sql"
+import { eq } from "drizzle-orm"
 import { SubagentTool } from "@opencode/core/tool/plugin/subagent"
 import { Tool } from "@opencode/core/tool"
 import { tmpdir } from "./fixture/tmpdir"
@@ -391,6 +393,100 @@ describe("SubagentTool", () => {
             },
           })
           expect((yield* sessions.list({ parentID: deepest.id })).data).toHaveLength(0)
+        }),
+      ),
+    ),
+  )
+
+  it.live("fails promptly on a parent cycle instead of hanging", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const root = yield* sessions.create({ location })
+          const a = yield* sessions.create({ parentID: root.id, title: "a" })
+          const b = yield* sessions.create({ parentID: a.id, title: "b" })
+          // A cycle cannot be built through Session.create; corrupt the root's parent link directly.
+          const database = yield* Database.Service
+          yield* database.db
+            .update(SessionTable)
+            .set({ parent_id: b.id })
+            .where(eq(SessionTable.id, root.id))
+            .run()
+            .pipe(Effect.orDie)
+          yield* withSubagent(b.location)
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(b.location)))
+
+          expect(
+            yield* executeTool(registry, {
+              sessionID: b.id,
+              ...toolIdentity,
+              call: {
+                type: "tool-call",
+                id: "call-cycle-subagent",
+                name: SubagentTool.name,
+                input: { agent: "reviewer", description: "cycle", prompt: "should fail" },
+              },
+            }),
+          ).toEqual({
+            status: "error",
+            error: {
+              type: "tool.execution",
+              message: expect.stringContaining("Session parent cycle"),
+            },
+          })
+          // The only child of b is the corrupted root link; no new child session was created.
+          expect((yield* sessions.list({ parentID: b.id })).data.map((session) => session.id)).toEqual([root.id])
+        }),
+      ),
+    ),
+  )
+
+  it.live("fails promptly on a self-parented session instead of hanging", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const parent = yield* sessions.create({ location, title: "self parented" })
+          const database = yield* Database.Service
+          yield* database.db
+            .update(SessionTable)
+            .set({ parent_id: parent.id })
+            .where(eq(SessionTable.id, parent.id))
+            .run()
+            .pipe(Effect.orDie)
+          yield* withSubagent(parent.location)
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(parent.location)))
+
+          expect(
+            yield* executeTool(registry, {
+              sessionID: parent.id,
+              ...toolIdentity,
+              call: {
+                type: "tool-call",
+                id: "call-self-parent-subagent",
+                name: SubagentTool.name,
+                input: { agent: "reviewer", description: "self parent", prompt: "should fail" },
+              },
+            }),
+          ).toEqual({
+            status: "error",
+            error: {
+              type: "tool.execution",
+              message: expect.stringContaining("Session parent cycle"),
+            },
+          })
+          expect((yield* sessions.list({ parentID: parent.id })).data.map((session) => session.id)).toEqual([parent.id])
         }),
       ),
     ),

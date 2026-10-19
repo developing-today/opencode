@@ -116,9 +116,17 @@ export const Plugin = {
                     (error) => new ToolFailure({ message: `Parent session not found: ${context.sessionID}`, error }),
                   ),
                 )
+              const limit = Config.latest(yield* config.entries(), "experimental")?.subagent_depth ?? 5
               let current = parent
               let depth = 0
+              // Parent links can form a cycle (corrupt or imported session data), so each walk
+              // visits a session once, and the depth limit is checked inside the walk: either
+              // condition fails the call promptly instead of looping on the store forever.
+              const seen = new Set([parent.id])
               while (current.parentID) {
+                if (seen.has(current.parentID))
+                  return yield* new ToolFailure({ message: `Session parent cycle: ${current.parentID}` })
+                seen.add(current.parentID)
                 depth++
                 current = yield* sessions
                   .get(current.parentID)
@@ -127,12 +135,11 @@ export const Plugin = {
                       (error) => new ToolFailure({ message: `Parent session not found: ${current.parentID}`, error }),
                     ),
                   )
+                if (depth >= limit)
+                  return yield* new ToolFailure({
+                    message: `Subagent depth limit reached (${limit}). Do this work in the current session; "experimental.subagent_depth" sets the limit.`,
+                  })
               }
-              const limit = Config.latest(yield* config.entries(), "experimental")?.subagent_depth ?? 5
-              if (depth >= limit)
-                return yield* new ToolFailure({
-                  message: `Subagent depth limit reached (${limit}). Do this work in the current session; "experimental.subagent_depth" sets the limit.`,
-                })
               const agent = yield* agents.resolve(input.agent)
               if (agent === undefined) return yield* new ToolFailure({ message: `Unknown agent: ${input.agent}` })
               if (agent.mode === "primary")
