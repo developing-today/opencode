@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test"
+import { eq } from "drizzle-orm"
 import { DateTime, Effect, Fiber, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
@@ -8,6 +9,7 @@ import { Database } from "@opencode/core/database/database"
 import { Location } from "@opencode/core/location"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
 import { Messaging } from "@opencode/core/messaging"
+import { MessagingGraph } from "@opencode/core/messaging/graph"
 import { MessagingEmbedding } from "@opencode/core/messaging/embedding"
 import { MessagingVectorTable } from "@opencode/core/messaging/sql"
 import { MessagingTemplate } from "@opencode/core/messaging/template"
@@ -18,6 +20,7 @@ import { Session } from "@opencode/core/session"
 import { SessionEvent } from "@opencode/core/session/event"
 import { SessionExecution } from "@opencode/core/session/execution"
 import { SessionProjector } from "@opencode/core/session/projector"
+import { SessionTable } from "@opencode/core/session/sql"
 import { SessionStore } from "@opencode/core/session/store"
 import { ConfigMessaging } from "@opencode/schema/config/messaging"
 import { TuiEvent } from "@opencode/schema/tui-event"
@@ -693,6 +696,33 @@ describe("Messaging sessions", () => {
       expect((yield* messaging.sessions({ search: "grand" })).sessions.map((node) => node.id)).toEqual([
         tree.grandchild.id,
       ])
+    }),
+  )
+
+  it.effect("graph walks return each session once when parent links form a cycle", () =>
+    Effect.gen(function* () {
+      const tree = yield* family
+      const database = yield* Database.Service
+      // Point the root at its grandchild: root -> grandchild -> child -> root.
+      yield* database.db
+        .update(SessionTable)
+        .set({ parent_id: tree.grandchild.id })
+        .where(eq(SessionTable.id, tree.root.id))
+        .run()
+      const ancestors = yield* MessagingGraph.ancestors(database.db, tree.grandchild.id)
+      expect(ancestors.map((row) => row.id)).toEqual([tree.child.id, tree.root.id])
+      const descendants = yield* MessagingGraph.descendants(database.db, tree.root.id)
+      expect(descendants.map((row) => row.id).sort()).toEqual(
+        [tree.child.id, tree.grandchild.id, tree.sibling.id].sort(),
+      )
+      // A self-parented session has no ancestors or descendants.
+      yield* database.db
+        .update(SessionTable)
+        .set({ parent_id: tree.stranger.id })
+        .where(eq(SessionTable.id, tree.stranger.id))
+        .run()
+      expect(yield* MessagingGraph.ancestors(database.db, tree.stranger.id)).toEqual([])
+      expect(yield* MessagingGraph.descendants(database.db, tree.stranger.id)).toEqual([])
     }),
   )
 
