@@ -80,6 +80,45 @@ export const daemonAutostartEnabled = (env: NodeJS.ProcessEnv = process.env): bo
 }
 
 /**
+ * Parses `mcpx settings get daemon.autostart` output (first line:
+ * `daemon.autostart = true|false`). Returns undefined when the output does
+ * not carry the setting, e.g. an mcpx too old to know it.
+ */
+export const parseMcpxDaemonAutostart = (output: string): boolean | undefined => {
+  const match = /^daemon\.autostart\s*=\s*(true|false)\b/m.exec(output)
+  if (!match) return undefined
+  return match[1] === "true"
+}
+
+/**
+ * Whether mcpx's own `daemon.autostart` setting allows starting a daemon.
+ * A supervised daemon (launchd/systemd) is configured with the setting off
+ * so nothing else puts a second daemon on the same socket while it restarts
+ * (#134); the CLI honours it, so the plugin resolves it the same way — by
+ * asking the CLI. Only an explicit `false` blocks the spawn: a missing or
+ * unparseable answer (old mcpx, binary not installed) keeps today's
+ * behaviour, since the setting defaults to true.
+ */
+const mcpxDaemonAutostart = async (): Promise<boolean> => {
+  try {
+    const output = await new Promise<string>((resolve, reject) => {
+      execFile(
+        mcpxBinary(),
+        ["settings", "get", "daemon.autostart"],
+        { timeout: 5000, maxBuffer: 1024 * 1024 },
+        (err, stdout, stderr) => {
+          if (err) reject(err)
+          else resolve(stdout || stderr)
+        },
+      )
+    })
+    return parseMcpxDaemonAutostart(output) ?? true
+  } catch {
+    return true
+  }
+}
+
+/**
  * Arguments for a daemon opencode spawns. The daemon gets a bounded idle
  * lifetime (`--daemon-idle-exit`, default 1h, `OPENCODE_MCPX_DAEMON_IDLE_EXIT`
  * overrides; `0`/`0s` restores mcpx's never-exit default) so a daemon started
@@ -232,6 +271,15 @@ export const ensureDaemon = async (): Promise<void> => {
   // a detached daemon per test home leaks invisibly (#14). The tools degrade
   // to their CLI fallback / unreachable errors, as when mcpx is not installed.
   if (!daemonAutostartEnabled()) {
+    daemonEnsured = true
+    return
+  }
+
+  // mcpx itself may forbid autostart (daemon.autostart=false, set when a
+  // supervisor owns the daemon): spawning here would race the supervised
+  // daemon for its socket (#134). Tools degrade as above; the supervised
+  // daemon answers health once it is up.
+  if (!(await mcpxDaemonAutostart())) {
     daemonEnsured = true
     return
   }
