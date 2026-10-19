@@ -10,6 +10,7 @@ on:
 
 jobs:
   check-standards:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -166,6 +167,7 @@ jobs:
             console.log('PR meets all standards');
 
   check-compliance:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     permissions:
       contents: read

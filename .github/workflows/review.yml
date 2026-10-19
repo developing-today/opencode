@@ -16,6 +16,7 @@ on:
 
 jobs:
   check-guidelines:
+    timeout-minutes: 60
     if: |
       github.event.issue.pull_request &&
       startsWith(github.event.comment.body, '/review') &&

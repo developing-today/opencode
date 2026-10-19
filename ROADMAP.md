@@ -69,7 +69,6 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 | `unit (linux)` green on main             | Now     | proposed | `packages/sdk/test/transport.test.ts` fails in both variants. Find the cause before touching the assertion. | #62   |
 | Tests that need no ambient `rg`          | Next    | proposed | Ripgrep and search-tool tests fall through to a download the harness forbids.                               | #72   |
 | Windows test fixes                       | Next    | proposed | The `runScript` tests hardcode `/bin/sh`.                                                                   | #63   |
-| Timeout caps on every job                | Next    | proposed |                                                                                                             | #61   |
 | Build each PR commit once                | Next    | proposed | Test and check run on both push and pull request.                                                           | #59   |
 | A Nix check that completes               | Next    | proposed | Replace `nix-eval` and `nix-hashes`, which have effectively never finished.                                 | #49   |
 
@@ -83,6 +82,7 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| Timeout caps on every job                                        | 2026-10-19 | #61      |
 | Follow nested subsessions in ACP                                 | 2026-10-18 | #58      |
 | Nested asks reach the root in the app                            | 2026-10-18 | #60      |
 | Nested asks reach the root in the TUI                            | 2026-10-18 | #64      |
