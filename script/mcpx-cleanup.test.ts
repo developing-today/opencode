@@ -1,5 +1,18 @@
 import { describe, expect, test } from "bun:test"
-import { isLeaked, isTempHome, parseEnv, parsePsEnv } from "./mcpx-cleanup"
+import { isLeaked, isTempHome, parseEnv, parsePsEnv, processDiscovery, unsupportedMessage } from "./mcpx-cleanup"
+
+describe("processDiscovery", () => {
+  test("reads /proc on Linux and ps elsewhere POSIX", () => {
+    expect(processDiscovery("linux")).toBe("proc")
+    expect(processDiscovery("darwin")).toBe("ps")
+    expect(processDiscovery("freebsd")).toBe("ps")
+  })
+
+  test("native Windows is unsupported instead of falling through to ps", () => {
+    expect(processDiscovery("win32")).toBe("unsupported")
+    expect(unsupportedMessage).toContain("not supported on native Windows")
+  })
+})
 
 describe("isTempHome", () => {
   test("detects a Linux temp home", () => {

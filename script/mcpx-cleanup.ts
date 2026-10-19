@@ -13,6 +13,12 @@
  *
  * Only `mcpx daemon` processes whose HOME is under the OS temp dir or missing
  * are targeted. Daemons running under a real home are never touched.
+ *
+ * Native Windows is not supported: Windows ships no `ps`, and it provides no
+ * supported way to read another process's environment, so a daemon's HOME —
+ * the value the leak check is based on — cannot be read there. The script
+ * says so and exits instead of crashing or reporting a false all-clear;
+ * run it from WSL, macOS or Linux instead.
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -71,8 +77,25 @@ export const parseEnv = (raw: string, platform: string): Map<string, string> => 
   return env
 }
 
-const listDaemonPids = (): number[] => {
-  if (process.platform === "linux") {
+// Process discovery is dispatched by platform, factored out so the win32
+// case is covered by a unit test instead of only being reachable on a real
+// Windows install (where the previous fall-through to `ps` threw an
+// unhandled "Executable not found in $PATH" before anything was scanned).
+export type ProcessDiscovery = "proc" | "ps" | "unsupported"
+
+export const processDiscovery = (platform: string): ProcessDiscovery => {
+  if (platform === "win32") return "unsupported"
+  return platform === "linux" ? "proc" : "ps"
+}
+
+export const unsupportedMessage =
+  "mcpx-cleanup is not supported on native Windows: Windows has no ps command and provides no supported way to read another process's HOME, so leaked daemons cannot be identified there. Run it from WSL, macOS or Linux instead."
+
+const listDaemonPids = (platform: string = process.platform): number[] => {
+  // Unreachable from main(), which gates unsupported platforms first; throwing
+  // here keeps any future caller from falling through to `ps` on Windows.
+  if (processDiscovery(platform) === "unsupported") throw new Error(unsupportedMessage)
+  if (platform === "linux") {
     return readdirSync("/proc")
       .filter((entry) => /^\d+$/.test(entry))
       .filter((entry) => {
@@ -92,19 +115,25 @@ const listDaemonPids = (): number[] => {
   })
 }
 
-const readEnv = (pid: number): Map<string, string> => {
+const readEnv = (pid: number, platform: string = process.platform): Map<string, string> => {
   try {
     const raw =
-      process.platform === "linux"
+      platform === "linux"
         ? readFileSync(join("/proc", String(pid), "environ"), "utf-8")
         : Bun.spawnSync(["ps", "eww", "-p", String(pid)]).stdout.toString()
-    return parseEnv(raw, process.platform)
+    return parseEnv(raw, platform)
   } catch {
     return new Map<string, string>()
   }
 }
 
 const main = async () => {
+  // Gate before any discovery or --apply handling: on native Windows the
+  // POSIX process-group stop path below is unreachable for the same reason.
+  if (processDiscovery(process.platform) === "unsupported") {
+    console.error(unsupportedMessage)
+    process.exit(1)
+  }
   const apply = process.argv.includes("--apply")
   const daemons = listDaemonPids()
     .map((pid) => {
