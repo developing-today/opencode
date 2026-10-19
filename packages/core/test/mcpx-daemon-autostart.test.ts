@@ -200,13 +200,20 @@ describe("mcpx daemon autostart policy", () => {
     expect(await exists(record)).toBe(false)
   })
 
-  test("ensureDaemon spawns the pinned binary with idle exit and owner tag", async () => {
-    await fakeMcpx()
-    delete process.env.OPENCODE_TEST_HOME
-    delete process.env.OPENCODE_MCPX_DAEMON
-    await McpxTool.ensureDaemon()
-    const text = await fs.readFile(record, "utf-8")
-    expect(text).toContain("args:daemon --daemon-idle-exit 1h")
-    expect(text).toContain(`owner:opencode:${process.pid}`)
-  })
+  // Windows cannot execute the #!/bin/sh fake (ensureDaemon spawns the pinned
+  // binary directly, with no shell), so the record file is never written there
+  // and this test fails with ENOENT (#92). The no-spawn policy tests above and
+  // the pure spawn-args tests still run on Windows.
+  test.skipIf(process.platform === "win32")(
+    "ensureDaemon spawns the pinned binary with idle exit and owner tag",
+    async () => {
+      await fakeMcpx()
+      delete process.env.OPENCODE_TEST_HOME
+      delete process.env.OPENCODE_MCPX_DAEMON
+      await McpxTool.ensureDaemon()
+      const text = await fs.readFile(record, "utf-8")
+      expect(text).toContain("args:daemon --daemon-idle-exit 1h")
+      expect(text).toContain(`owner:opencode:${process.pid}`)
+    },
+  )
 })
