@@ -66,7 +66,10 @@ if (!bundleOnly && targets.some((target) => target.platform === "darwin" && targ
   throw new Error("Node 26.4 SEA does not support macOS x64")
 }
 const appArchive = archivePath ? await Bun.file(archivePath).bytes() : await buildAppArchive(Script.channel)
-if (!bundleOnly) await rm(outdir, { recursive: true, force: true })
+// Directory removals that can race a just-executed binary on Windows retry
+// instead of throwing EBUSY on the first attempt (#100); they stay fatal,
+// because the build writes into these directories next.
+if (!bundleOnly) await rm(outdir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 const builder =
   !bundleOnly || targets.some((target) => target.platform === process.platform && target.arch === process.arch)
     ? await resolveHostNode()
@@ -94,7 +97,7 @@ async function assertTextImportsInlined(bundlePath: string) {
 for (const target of targets) {
   console.log(`building cli-node-${targetName(target)}`)
   const assets = await collectNodeAssets(target)
-  await rm("dist-node", { recursive: true, force: true })
+  await rm("dist-node", { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   const assetHash = await hashNodeAssets(assets)
   const input = {
     version: Script.version,
@@ -220,7 +223,7 @@ async function resolveTargetNode(target: NodeTarget, host?: string) {
     run(path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe"), ["-xf", archive, "-C", temporary])
   }
   if (target.platform === "win32" && process.platform !== "win32") run("unzip", ["-q", archive, "-d", temporary])
-  await rm(targetDirectory, { recursive: true, force: true })
+  await rm(targetDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   await rename(path.join(temporary, archiveName), targetDirectory)
   await writeFile(path.join(targetDirectory, ".verified"), `${expected}\n`)
   await rm(temporary, { recursive: true, force: true })
@@ -235,7 +238,16 @@ async function smoke(output: string) {
   if (process.platform !== "win32") await chmod(executable, 0o755)
   run(executable, ["--version"], root)
   run(executable, ["--help"], root)
-  await rm(root, { recursive: true, force: true })
+  // Windows can retain the executable's directory briefly after it exits, so
+  // removing it can throw EBUSY even though the smoke test passed (#100).
+  // The directory is under os.tmpdir() and the OS reaps leftovers, so a
+  // removal that still fails after retries warns instead of failing a build
+  // the executable already verified (service-smoke.ts does the same).
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch((error: unknown) => {
+    console.warn(
+      `Failed to remove Node smoke directory ${root}: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  })
 }
 
 function targetName(target: NodeTarget) {
