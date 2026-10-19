@@ -534,6 +534,47 @@ describe("SubagentTool", () => {
     ),
   )
 
+  it.live("rejects a depth limit of zero from a top-level session", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Bun.write(path.join(dir.path, "opencode.json"), JSON.stringify({ experimental: { subagent_depth: 0 } })),
+          )
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const root = yield* sessions.create({ location })
+          yield* withSubagent(root.location)
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(root.location)))
+
+          expect(
+            yield* executeTool(registry, {
+              sessionID: root.id,
+              ...toolIdentity,
+              call: {
+                type: "tool-call",
+                id: "call-zero-limit",
+                name: SubagentTool.name,
+                input: { agent: "reviewer", description: "top level", prompt: "should fail" },
+              },
+            }),
+          ).toEqual({
+            status: "error",
+            error: {
+              type: "tool.execution",
+              message: expect.stringContaining("Subagent depth limit reached (0)"),
+            },
+          })
+          expect((yield* sessions.list({ parentID: root.id })).data).toHaveLength(0)
+        }),
+      ),
+    ),
+  )
+
   it.live("runs a foreground child session and returns the final assistant text", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),
