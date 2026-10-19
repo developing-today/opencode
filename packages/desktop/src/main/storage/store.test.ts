@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { describe, expect, spyOn, test } from "bun:test"
+import fs, { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { createSettingsStore } from "./store"
@@ -32,6 +32,49 @@ describe("settings store", () => {
     store.delete("ready")
     expect(store.get("ready")).toBeUndefined()
     expect(readFileSync(file, "utf8")).toBe("{}")
+  })
+
+  test("retries a transient rename failure so the setting still lands", () => {
+    const file = path.join(dir(), "opencode.settings")
+    const store = createSettingsStore(file)
+    const rename = fs.renameSync
+    let calls = 0
+
+    const spy = spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+      calls += 1
+
+      if (calls === 1) throw Object.assign(new Error("operation not permitted"), { code: "EPERM" })
+      rename(source, destination)
+    })
+
+    try {
+      store.set("backgroundColor", "#ffffff")
+      expect(calls).toBe(2)
+      expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ backgroundColor: "#ffffff" })
+      expect(existsSync(`${file}.tmp`)).toBe(false)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("a rename that keeps failing transiently throws and leaves no temp file", () => {
+    const file = path.join(dir(), "opencode.settings")
+    const store = createSettingsStore(file)
+    let calls = 0
+
+    const spy = spyOn(fs, "renameSync").mockImplementation(() => {
+      calls += 1
+      throw Object.assign(new Error("operation not permitted"), { code: "EPERM" })
+    })
+
+    try {
+      expect(() => store.set("backgroundColor", "#ffffff")).toThrow("operation not permitted")
+      expect(calls).toBe(5)
+      expect(existsSync(file)).toBe(false)
+      expect(existsSync(`${file}.tmp`)).toBe(false)
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   test("sets an unreadable file aside instead of failing", () => {

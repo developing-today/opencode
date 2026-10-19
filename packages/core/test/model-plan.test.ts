@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -24,6 +24,41 @@ describe("ModelPlan store", () => {
     ModelPlan.writeStore(store, root)
     expect(fs.readdirSync(root).filter((file) => file.endsWith(".tmp"))).toEqual([])
     expect(ModelPlan.readStore(root).plans).toHaveLength(1)
+  })
+
+  test("a write retries a transient rename failure and lands", () => {
+    const root = dir()
+    const rename = fs.renameSync
+    let calls = 0
+    const spy = spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+      calls += 1
+      if (calls === 1) throw Object.assign(new Error("operation not permitted"), { code: "EPERM" })
+      rename(source, destination)
+    })
+    try {
+      ModelPlan.writeStore(ModelPlan.emptyStore(), root)
+      expect(calls).toBe(2)
+      expect(ModelPlan.readStore(root)).toEqual(ModelPlan.emptyStore())
+      expect(fs.readdirSync(root).filter((file) => file.endsWith(".tmp"))).toEqual([])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("a write whose rename keeps failing transiently throws and leaves no temporary file", () => {
+    const root = dir()
+    let calls = 0
+    const spy = spyOn(fs, "renameSync").mockImplementation(() => {
+      calls += 1
+      throw Object.assign(new Error("operation not permitted"), { code: "EPERM" })
+    })
+    try {
+      expect(() => ModelPlan.writeStore(ModelPlan.emptyStore(), root)).toThrow("operation not permitted")
+      expect(calls).toBe(5)
+      expect(fs.readdirSync(root)).toEqual([])
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   test("upsert creates a plan with an id from its provider and name, then updates that same record", () => {
@@ -80,7 +115,12 @@ describe("ModelPlan store", () => {
     expect(store.models["openai/gpt-6-astra"]).toMatchObject({ tier: "frontier", coveredBy: ["openai-plus"] })
     const moved = ModelPlan.setModel(store, "openai/gpt-6-astra", { tier: "cheap" }, NOW)
     expect(moved.models["openai/gpt-6-astra"]).toMatchObject({ tier: "cheap", coveredBy: ["openai-plus"] })
-    const pooled = ModelPlan.setPool(moved, "hard", { tier: "frontier", purpose: "debugging with an unknown cause" }, NOW)
+    const pooled = ModelPlan.setPool(
+      moved,
+      "hard",
+      { tier: "frontier", purpose: "debugging with an unknown cause" },
+      NOW,
+    )
     expect(pooled.pools.hard).toMatchObject({ tier: "frontier", purpose: "debugging with an unknown cause" })
   })
 

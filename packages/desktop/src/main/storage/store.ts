@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, renameSync } from "node:fs"
 import path from "node:path"
 import electron from "electron"
 
+import { writeFileSyncAtomic } from "../atomic-write"
 import { SETTINGS_STORE } from "./keys"
 
 const cache = new Map<string, SettingsStore>()
@@ -33,14 +34,16 @@ export function createSettingsStore(file: string) {
   let data = read(file)
 
   const write = () => {
-    mkdirSync(path.dirname(file), { recursive: true })
-    writeFileSync(`${file}.tmp`, JSON.stringify(data, null, "\t"))
-    renameSync(`${file}.tmp`, file)
+    writeFileSyncAtomic(file, JSON.stringify(data, null, "\t"))
   }
 
   return {
     path: file,
+    // SAFETY: settings values are opaque JSON chosen by each caller; the store round-trips them uninterpreted.
+    // oxlint-disable-next-line anti-slop/no-unknown-returns -- see SAFETY above
     get: (key: string): unknown => data[key],
+    // SAFETY: see the get note above — any JSON value a caller sets is stored verbatim.
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- see SAFETY above
     set: (key: string, value: unknown) => {
       if (value === undefined) throw new TypeError(`Use \`delete()\` to clear values: ${key}`)
       data = { ...data, [key]: value }
@@ -54,12 +57,16 @@ export function createSettingsStore(file: string) {
 }
 
 // A missing file is an empty store. An unreadable one is set aside instead of blocking startup.
+// SAFETY: the on-disk settings file is a JSON object whose values are opaque to this module (see above).
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- see SAFETY above
 function read(file: string): Record<string, unknown> {
   if (!existsSync(file)) return {}
 
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, "utf8"))
 
+    // SAFETY: JSON.parse output is narrowed to a non-array object before the cast; anything else reads as empty.
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof, anti-slop/no-unsafe-dictionary-type -- see SAFETY above
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
   } catch {
     renameSync(file, `${file}.corrupt`)
