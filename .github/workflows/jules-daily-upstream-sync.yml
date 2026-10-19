@@ -3,6 +3,7 @@ name: Jules Daily Upstream Sync (OpenCode)
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 # Daily automated upstream sync, conflict resolution, feature-opportunity triage,
 # and safe merging for developing-today/opencode using Google Jules.
