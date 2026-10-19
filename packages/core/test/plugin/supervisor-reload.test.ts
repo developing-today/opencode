@@ -20,6 +20,7 @@ import { LocationServiceMap } from "@opencode/core/location-services"
 import { Location } from "@opencode/core/location"
 import { Plugin } from "@opencode/core/plugin"
 import { Rpc } from "@opencode/core/rpc"
+import { Tool } from "@opencode/core/tool"
 import { SdkPlugins } from "@opencode/core/plugin/sdk"
 import { AbsolutePath } from "@opencode/core/schema"
 import { tempGlobalLayer } from "../fixture/global"
@@ -397,6 +398,46 @@ it.live("applies organization integration changes to running external plugins", 
     )
   }),
 )
+
+describe("PluginSupervisor shell tool timeout description", () => {
+  it.live("re-renders the shell timeout description after a mid-session shell_timeout edit", () =>
+    Effect.gen(function* () {
+      const directory = yield* tmpdirScoped()
+      const configuration = path.join(directory.path, ".opencode/opencode.json")
+      yield* Effect.promise(() => Bun.write(configuration, JSON.stringify({ experimental: { shell_timeout: 100 } })))
+      const locations = yield* LocationServiceMap.Service
+      yield* Effect.gen(function* () {
+        const plugins = yield* Plugin.Service
+        const config = yield* Config.Service
+        const tools = yield* Tool.Service
+        yield* plugins.awaitActivation
+        const description = tools
+          .snapshot()
+          .pipe(
+            Effect.map((snapshot) =>
+              JSON.stringify(snapshot.definitions.find((tool) => tool.name === "shell")?.inputSchema ?? {}),
+            ),
+          )
+        expect(yield* description).toContain("Defaults to 100 for foreground commands")
+        yield* Effect.promise(() =>
+          Bun.write(configuration, JSON.stringify({ experimental: { shell_timeout: 60000 } })),
+        )
+        // Drive the real reload path: Config re-reads the file and publishes
+        // config.updated; the shell tool definition must follow without a restart.
+        yield* config.reload()
+        yield* description.pipe(
+          Effect.flatMap((text) =>
+            text.includes("Defaults to 60000 for foreground commands") ? Effect.void : Effect.fail("pending" as const),
+          ),
+          Effect.retry({ times: 200, schedule: Schedule.spaced("10 millis") }),
+        )
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(directory.path) }))),
+      )
+    }),
+  )
+})
 
 describe("PluginSupervisor reload after an entrypoint load failure", () => {
   const recovered = (plugins: Plugin.Interface) =>
