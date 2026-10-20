@@ -13,6 +13,7 @@ on:
 concurrency:
   group: deploy-posts-${{ github.ref_name }}
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
