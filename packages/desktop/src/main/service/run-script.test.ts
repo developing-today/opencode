@@ -28,6 +28,7 @@ describe("runScript", () => {
       'process.stdin.on("data", (chunk) => (data += chunk))',
       'process.stdin.on("end", () => process.exit(data === "stdin reaches the child" ? 7 : 1))',
     ].join("; ")
+
     const result = await runProgram(program, "stdin reaches the child")
 
     expect(result).toEqual({ code: 7, stderr: "" })
