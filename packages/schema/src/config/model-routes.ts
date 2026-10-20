@@ -11,6 +11,10 @@ const PositiveFinite = Schema.Finite.check(Schema.isGreaterThan(0))
  * The match cannot hold a colon, so the first colon is the separator. */
 export const NOTE_LINE = /^[^:\r\n]*[^\s:][^:\r\n]*:[^\r\n]*\S[^\r\n]*$/
 
+/** A level a route is selected at, mapped to the variant a target runs it at, or `false` when the target
+ * sits that level out. */
+const VariantChoice = Schema.Union([Schema.String, Schema.Literal(false)])
+
 /** An ordered model target: either `provider/model`, `provider/model#variant`, or an object with
  * per-target variant defaults and remaps. */
 const TargetObject = Schema.Struct({
@@ -20,10 +24,12 @@ const TargetObject = Schema.Struct({
   defaultVariant: Schema.String.pipe(optional).annotate({
     description: "Variant used when the route is selected without an explicit variant.",
   }),
-  variants: Schema.Record(Schema.String, Schema.String).pipe(optional).annotate({
-    description:
-      'Remaps a route-level variant to this target\'s variant, e.g. { "low": "high" } runs this target at high when the route is selected at low.',
-  }),
+  variants: Schema.Record(Schema.String, VariantChoice)
+    .annotate({
+      description:
+        'Remaps a route-level variant to this target\'s variant, e.g. { "low": "high" } runs this target at high when the route is selected at low. false makes the target sit that level out, e.g. { "max": false }: it is never used at that level, not even as a last resort. Overrides the route\'s variantRules level by level.',
+    })
+    .pipe(optional),
   until: PositiveInt.pipe(optional).annotate({
     description:
       "Epoch milliseconds after which this target leaves the route. Used for time-limited pool membership; takes effect when the configuration reloads.",
@@ -33,6 +39,18 @@ export const Target = Schema.Union([ConfigModel.Selection, TargetObject]).annota
   identifier: "Config.ModelRoute.Target",
 })
 export type Target = typeof Target.Type
+
+/** A level remap for the models a route's `match` selects. */
+export class VariantRule extends Schema.Class<VariantRule>("Config.ModelRoute.VariantRule")({
+  match: Schema.String.annotate({
+    description:
+      'Which models the rule covers: a pattern, a route name, or an expression of them with and, or, not and parentheses, as in the route\'s match, e.g. "*argon*" or "claude and not *haiku*".',
+  }),
+  map: Schema.Record(Schema.String, VariantChoice).annotate({
+    description:
+      'Route-level variant to the variant the model runs it at, or false to sit that level out, e.g. { "xhigh": "high", "max": false }. A later rule overrides an earlier one level by level, and a target\'s own variants override every rule.',
+  }),
+}) {}
 
 /** Request and token allowances for one target. A target that reaches `softLimit` of any allowance is
  * passed over until it recovers, so traffic moves before the provider starts refusing it. */
@@ -181,9 +199,51 @@ export class GlobalSchedule extends Schema.Class<GlobalSchedule>("Config.ModelRo
 
 export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
   name: Schema.String.pipe(optional),
-  targets: Schema.Array(Target).annotate({
-    description: "Ordered provider/model references. A route may include another route reference.",
-  }),
+  // The descriptions of the keys below sit inside optional(...): annotated outside it, a description never
+  // reaches the generated JSON schema, so editors could not show it.
+  targets: Schema.Array(Target)
+    .annotate({
+      description:
+        "Ordered provider/model references. A route may include another route reference. A * in the model matches within that one provider and is case-sensitive. Optional when include, contains or match supply the models.",
+    })
+    .pipe(optional),
+  include: Schema.Array(Schema.String)
+    .annotate({
+      description:
+        'Patterns whose models join the route after its targets, in provider order. Only models of connected providers are matched, so connecting a provider adds its matching models. * matches any run of characters, re: starts a regular expression, and case never matters. A pattern with / is tested against provider/model, one without against the model id in every provider. A route name, or opencode-route/<name>, stands for that route\'s models. E.g. ["*luna*", "anthropic/*haiku*", "small"].',
+    })
+    .pipe(optional),
+  exclude: Schema.Array(Schema.String)
+    .annotate({
+      description:
+        'Patterns, written as in include, whose models are removed from the route, including those its targets and nested routes bring. E.g. ["*-mini", "frontier-direct"].',
+    })
+    .pipe(optional),
+  contains: Schema.Array(Schema.String)
+    .annotate({
+      description:
+        'Text whose models join the route: found anywhere in the model id, or in provider/model when the text has a /. Case never matters, and only models of connected providers are matched. E.g. ["haiku", "sonnet", "opus"].',
+    })
+    .pipe(optional),
+  notContains: Schema.Array(Schema.String)
+    .annotate({ description: "Text, written as in contains, whose models are removed from the route." })
+    .pipe(optional),
+  match: Schema.String.annotate({
+    description:
+      "One expression whose models join the route: patterns and route names joined by and, or, not and parentheses, e.g. \"(*luna* or *haiku*) and not *-mini\". Quote a term that has spaces or parentheses, such as 're:gpt-(5|6)$'. There is no xor.",
+  }).pipe(optional),
+  levels: Schema.Array(Schema.String)
+    .annotate({
+      description:
+        'The levels (variants) the route offers, e.g. ["low", "medium", "high"]. Each target runs a level through its remap, else its own variant of that name, else sits the level out. A level no target can run is left out and logged. Unset, the route offers each level that every target can run or sits out.',
+    })
+    .pipe(optional),
+  variantRules: Schema.Array(VariantRule)
+    .annotate({
+      description:
+        "Level remaps for the route's models chosen by pattern, applied in order. They reach models of nested routes too, where the nested route's own rules come later. A target's own variants override them.",
+    })
+    .pipe(optional),
   health: Health.pipe(optional),
   budgets: Schema.Record(Schema.String, Budget).pipe(optional).annotate({
     description:

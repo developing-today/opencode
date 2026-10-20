@@ -84,22 +84,61 @@ model `opencode-route/<id>`.
 - `targets`: `"provider/model"`, `"provider/model#variant"`, or
   `{ "model": "provider/model", "defaultVariant", "variants", "until" }`. `until` is
   an epoch-millisecond time after which the target leaves the pool. A target can be
-  another pool, written `"opencode-route/<id>"`.
+  another pool, written `"opencode-route/<id>"`. A `*` in a target stays inside that
+  provider and is case-sensitive. `targets` is optional when a matching key below
+  adds models.
+- Matching keys pick models across every connected provider, ignoring case. A
+  provider that is not connected contributes nothing until it is:
+  - `include`: patterns that add models, e.g. `["*luna*", "anthropic/*haiku*"]`.
+    `*` is any run of characters; a pattern with `/` is tested against
+    `provider/model`, one without against the model id; `re:` starts a regular
+    expression, unanchored unless it uses `^` or `$`.
+  - `exclude`: patterns that remove models, including targets and the members of
+    nested pools. `["*-5"]` drops `luna-5` and keeps `luna-5.5`.
+  - `contains`, `notContains`: plain text found in the model id, or in
+    `provider/model` when it has a `/`. `["haiku", "sonnet"]`.
+  - `match`: one expression with `and`, `or`, `not` and parentheses, e.g.
+    `"(*luna* or *haiku*) and not *mini*"`. Quote a term with spaces or parentheses:
+    `"'re:gpt-(5|6)$' or *luna*"`. There is no `xor`.
+  - An entry or term that is exactly another pool's id, or `opencode-route/<id>`,
+    stands for that pool's models, without its weights or effort settings. A pool
+    naming itself gets nothing from that name.
+  - Order: targets first, then matched models in provider order, each model once;
+    then the removals.
+- Effort levels (variants):
+  - `variants` on a target object remaps a level, `{ "xhigh": "high" }`; `false`
+    makes the target sit that level out, `{ "max": false }`. A target that sits out
+    a level is never used at it, not even as a last resort.
+  - `variantRules`: `[{ "match": "*argon*", "map": { "xhigh": "high", "max": false } }]`.
+    `match` takes a pattern, pool name or expression. Later rules override earlier
+    ones per level; a target's own `variants` override every rule.
+  - `levels`: `["low", "medium", "high"]` makes the pool offer exactly those. A
+    target that cannot run one sits it out; a level no target can run is dropped
+    and logged. Without `levels`, a level is offered when every target runs it or
+    sits it out.
 - `selection`: `ordered` (the default), `round-robin`, or `weighted`.
-- `weights`: relative ratios keyed by target. A target not listed weighs 1.
+- `weights`: relative ratios keyed by target. A target not listed weighs 1. Models
+  from matching keys are keyed by `provider/model` too.
 - `autonomy`: `fixed`, `rules`, `adaptive`, `predictive`, or `agent`. Each level
   includes the ones before it. `agent` also exposes `route_stats`, `route_usage` and
   `route_adjust` to the model.
 - `health`, `budgets`, `attempts`, `hedgeAfterMs`: see routing-review, section 1.
 
+A malformed pattern, regular expression or expression skips the whole pool, and a
+pool with none of `targets`, `include`, `contains` and `match` is skipped too. The
+config warning names the key. Check the log after editing a pool.
+
 Common changes:
 
 - Change a member's share: edit its `weights` entry. Ordered pools rank failover by
   weight too, so a weight change there also changes the order.
-- Add a member: append it to `targets`, and give it a `weights` entry if it should
-  not weigh 1.
-- Remove a member for good: delete it from `targets` and `weights`. For a temporary
-  removal, give it an `until` instead, or use `route_adjust` skip.
+- Add a member: append it to `targets`, or widen `include`, and give it a `weights`
+  entry if it should not weigh 1.
+- Remove a member for good: delete it from `targets` and `weights`, or add it to
+  `exclude`. For a temporary removal, give it an `until` instead, or use
+  `route_adjust` skip.
+- Keep a member out of one level: map that level to `false` in its `variants`, or in
+  a `variantRules` entry that matches it.
 - A new pool: add a new key under `model_routes`. Then point a category at
   `opencode-route/<id>` in OpenChamber (Settings → Routing).
 

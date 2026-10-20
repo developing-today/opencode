@@ -37,9 +37,11 @@ exact config keys.
 
 ### Pools
 
-A pool is `experimental.model_routes.<id>`: an ordered list of targets, shown as the
-model `opencode-route/<id>`. A category's model can be a pool, and a pool can list
-another pool as a target.
+A pool is `experimental.model_routes.<id>`: an ordered list of targets plus the
+models its matching keys (`include`, `contains`, `match`) add, shown as the model
+`opencode-route/<id>`. A category's model can be a pool, and a pool can list
+another pool as a target or name it in a matching key. `route_stats` lists only the
+configured `targets` as members until the history has offered the matched ones.
 
 - `selection`: `ordered` (default; the first ready target takes the traffic, and the
   rest are failover, ranked by effective weight), `round-robin` (new sessions rotate
@@ -60,8 +62,9 @@ another pool as a target.
   the ones before it.
 
 A target is left out of a selection for one reason, which `route_stats` reports as
-`excluded`: `cooldown`, `provider-limit`, `user-skip`, `soft-budget`, or
-`already-tried` (it already failed in this request).
+`excluded`: `cooldown`, `provider-limit`, `user-skip`, `soft-budget`,
+`already-tried` (it already failed in this request), or `sits-out-level` (its
+remap sits out the requested level, which is configuration, not a fault).
 
 ### How effective weight is formed
 

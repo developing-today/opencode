@@ -67,7 +67,8 @@ export interface Member {
   readonly expectedShare: number | null
   /** The share of those draws it won. Compare with `expectedShare`. */
   readonly takeRate: number | null
-  /** Selections in which it was left out, by reason: cooldown, provider-limit, user-skip, soft-budget, already-tried. */
+  /** Selections in which it was left out, by reason: cooldown, provider-limit, user-skip, soft-budget,
+   * already-tried, or sits-out-level when its remap sits the requested level out. */
   readonly excluded: Readonly<Record<string, number>>
 }
 
@@ -96,12 +97,13 @@ const referenceOf = (reference: { readonly providerID: string; readonly model: s
 /** `provider/model` without the `#variant` a configured reference may carry. */
 const bare = (reference: string) => reference.replace(/#.*$/, "")
 
-/** The pool as its configuration states it, in the terms the history uses. */
+/** The pool as its configuration states it, in the terms the history uses. Models a pool gains through
+ * include, contains or match are not listed here; they appear once the history has offered them. */
 export const configured = (route: ConfigModelRoutes.Route): Configured => ({
   selection: route.selection ?? "ordered",
   ...(route.autonomy !== undefined ? { autonomy: route.autonomy } : {}),
   ...(route.hedgeAfterMs !== undefined ? { hedgeAfterMs: route.hedgeAfterMs } : {}),
-  targets: route.targets.map((target) =>
+  targets: (route.targets ?? []).map((target) =>
     bare("providerID" in target ? referenceOf(target) : referenceOf(target.model)),
   ),
   weights: Object.fromEntries(

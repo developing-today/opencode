@@ -26,7 +26,9 @@ const Policy = Schema.Struct({
 
 const TargetVariant = Schema.Struct({
   default: Model.VariantID.pipe(optional),
-  map: Schema.Record(Schema.String, Model.VariantID).pipe(optional),
+  /** Route-level variant → the variant this target runs it at, or `false` when the target sits that level
+   * out and is never used at it. */
+  map: Schema.Record(Schema.String, Schema.Union([Model.VariantID, Schema.Literal(false)])).pipe(optional),
 })
 
 const Mode = Schema.Literals(["ordered", "round-robin", "weighted"])

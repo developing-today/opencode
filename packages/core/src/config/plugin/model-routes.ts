@@ -4,10 +4,11 @@ import { define } from "@opencode/plugin/effect/plugin"
 import { Document, type Entry } from "@opencode/schema/config"
 import { ConfigModel } from "@opencode/schema/config/model"
 import { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
-import { Effect } from "effect"
+import { Effect, Result } from "effect"
 import { Config } from "../../config.js"
 import { Model } from "../../model.js"
 import { ModelRoute } from "../../model-route.js"
+import { ModelRouteMatch } from "../../model-route-match.js"
 import { ModelRouteSchedule } from "../../model-route-schedule.js"
 import { Provider } from "../../provider.js"
 import { ConfigEntryObserver } from "./entry-observer.js"
@@ -25,10 +26,20 @@ type SourceModel = {
   readonly fixedVariant: boolean
   /** Variant used when the route is selected without an explicit one. */
   readonly defaultVariant?: Model.VariantID
-  /** Route-level variant → this target's variant. */
   readonly budget?: ModelRoute.Budget
-  readonly variantMap?: Readonly<Record<string, Model.VariantID>>
+  /** Route-level variant → this target's variant, or `false` when the target sits that level out. */
+  readonly variantMap?: Readonly<Record<string, Model.VariantID | false>>
 }
+
+/** What the pools a pool is nested in hand down to its members. */
+type Enclosing = {
+  /** The exclusions of every pool on the way in. */
+  readonly excludes: readonly ModelRouteMatch.Predicate[]
+  /** The variantRules of every pool on the way in, outermost first. */
+  readonly rules: readonly ModelRouteMatch.Rule[]
+}
+
+const POOL_PREFIX = `${ModelRoute.PROVIDER_ID}/`
 
 export const Plugin = define({
   id: "opencode.config.model-routes",
@@ -63,6 +74,17 @@ export const Plugin = define({
       }))
     })
 
+    const runFork = Effect.runForkWith(yield* Effect.context())
+    // Transforms replay on every reload, so each diagnostic is logged once while it lasts.
+    const report = (diagnostics: ReadonlySet<string>, reported: ReadonlySet<string>) => {
+      diagnostics.forEach((message) => {
+        if (!reported.has(message)) runFork(Effect.logWarning("model route diagnostic", { message }))
+      })
+      return diagnostics
+    }
+    let reportedByProviders: ReadonlySet<string> = new Set()
+    let reportedByModels: ReadonlySet<string> = new Set()
+
     yield* ctx.provider.transform((providers) => {
       if (providers.get(ModelRoute.PROVIDER_ID)) return
       const routes = configuredRoutes(loaded.entries)
@@ -71,51 +93,19 @@ export const Plugin = define({
       const definitions = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>(
         providers.list().map((record) => [record.provider.id, record.models] as const),
       )
+      const later = builtWithModels(routes)
+      const diagnostics = new Set<string>()
       const models = Array.from(routes, ([id, route]) => {
-        const { leaves: expanded, nodes } = expand(id, routes, definitions)
+        if (later.has(id)) return undefined
+        const { leaves: expanded, nodes, diagnostics: found } = expand(id, routes, definitions)
+        found.forEach((message) => diagnostics.add(message))
         if (expanded.length === 0) return undefined
-        const first = expanded[0].model
-        const health = ModelRoute.policy(route.health)
-        const info = Model.Info.make({
-          ...Model.Info.default(ModelRoute.PROVIDER_ID, Model.ID.make(id)),
-          name: route.name?.trim() || id,
-          settings: {
-            [ModelRoute.SETTING]: {
-              id: Model.ID.make(id),
-              targets: expanded.map((target) => target.ref),
-              targetVariants: expanded.map((target) => ({
-                ...(target.defaultVariant ? { default: target.defaultVariant } : {}),
-                ...(target.variantMap ? { map: target.variantMap } : {}),
-              })),
-              health,
-              nodes,
-              ...(route.attempts !== undefined ? { attempts: route.attempts } : {}),
-              ...(route.hedgeAfterMs ? { hedgeAfterMs: route.hedgeAfterMs } : {}),
-              ...(route.autonomy ? { autonomy: route.autonomy } : {}),
-              budgets: expanded.map((target) => target.budget ?? {}),
-              ...(globalSchedules.length > 0 ? { schedules: globalSchedules } : {}),
-            },
-          },
-          capabilities: {
-            tools: expanded.every((target) => target.model.capabilities.tools),
-            input: intersect(expanded.map((target) => target.model.capabilities.input)),
-            output: intersect(expanded.map((target) => target.model.capabilities.output)),
-          },
-          variants: routeVariants(expanded),
-          cost: first.cost,
-          status: "active",
-          limit: {
-            context: Math.min(...expanded.map((target) => target.model.limit.context)),
-            output: Math.min(...expanded.map((target) => target.model.limit.output)),
-            ...(expanded.every((target) => target.model.limit.input !== undefined)
-              ? { input: Math.min(...expanded.map((target) => target.model.limit.input!)) }
-              : {}),
-          },
-        })
-        return info
+        return routeModel(id, route, expanded, nodes, globalSchedules)
       }).filter((model): model is Model.Info => model !== undefined)
+      reportedByProviders = report(diagnostics, reportedByProviders)
 
-      if (models.length === 0) return
+      // A pool built with the models below still needs this provider to exist.
+      if (models.length === 0 && later.size === 0) return
       providers.add({
         info: {
           ...Provider.Info.empty(ModelRoute.PROVIDER_ID),
@@ -125,8 +115,114 @@ export const Plugin = define({
         models,
       })
     })
+
+    // Pools that use the matching or effort keys are built once provider connections are known, so a pattern
+    // adds only models that can be used: a model of a provider that is not connected is never offered here.
+    yield* ctx.model.transform((editor) => {
+      const routes = configuredRoutes(loaded.entries)
+      const later = builtWithModels(routes)
+      if (later.size === 0) return
+      const globalSchedules = weightRulesAcross(configuredSchedules(loaded.entries))
+      const definitions = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>(
+        editor.provider
+          .list()
+          .filter((record) => record.provider.id !== ModelRoute.PROVIDER_ID)
+          .map((record) => [record.provider.id, record.models] as const),
+      )
+      const diagnostics = new Set<string>()
+      routes.forEach((route, id) => {
+        if (!later.has(id)) return
+        const {
+          leaves,
+          nodes,
+          diagnostics: found,
+        } = expand(id, routes, definitions, (providerID, modelID) => editor.get(providerID, modelID))
+        found.forEach((message) => diagnostics.add(message))
+        if (leaves.length === 0) return editor.remove(ModelRoute.PROVIDER_ID, id)
+        const info = routeModel(id, route, leaves, nodes, globalSchedules)
+        editor.update(ModelRoute.PROVIDER_ID, id, (model) => {
+          Object.assign(model, info)
+        })
+      })
+      reportedByModels = report(diagnostics, reportedByModels)
+    })
   }),
 })
+
+/** The model a route is offered as, carrying the definition the resolver reads back. */
+function routeModel(
+  id: string,
+  route: ConfigModelRoutes.Route,
+  expanded: readonly SourceModel[],
+  nodes: readonly ModelRoute.Node[],
+  globalSchedules: readonly ModelRoute.WeightRule[],
+) {
+  const first = expanded[0].model
+  const health = ModelRoute.policy(route.health)
+  return Model.Info.make({
+    ...Model.Info.default(ModelRoute.PROVIDER_ID, Model.ID.make(id)),
+    name: route.name?.trim() || id,
+    settings: {
+      [ModelRoute.SETTING]: {
+        id: Model.ID.make(id),
+        targets: expanded.map((target) => target.ref),
+        targetVariants: expanded.map((target) => ({
+          ...(target.defaultVariant ? { default: target.defaultVariant } : {}),
+          ...(target.variantMap ? { map: target.variantMap } : {}),
+        })),
+        health,
+        nodes,
+        ...(route.attempts !== undefined ? { attempts: route.attempts } : {}),
+        ...(route.hedgeAfterMs ? { hedgeAfterMs: route.hedgeAfterMs } : {}),
+        ...(route.autonomy ? { autonomy: route.autonomy } : {}),
+        budgets: expanded.map((target) => target.budget ?? {}),
+        ...(globalSchedules.length > 0 ? { schedules: globalSchedules } : {}),
+      },
+    },
+    capabilities: {
+      tools: expanded.every((target) => target.model.capabilities.tools),
+      input: intersect(expanded.map((target) => target.model.capabilities.input)),
+      output: intersect(expanded.map((target) => target.model.capabilities.output)),
+    },
+    variants: routeVariants(expanded, route.levels),
+    cost: first.cost,
+    status: "active",
+    limit: {
+      context: Math.min(...expanded.map((target) => target.model.limit.context)),
+      output: Math.min(...expanded.map((target) => target.model.limit.output)),
+      ...(expanded.every((target) => target.model.limit.input !== undefined)
+        ? { input: Math.min(...expanded.map((target) => target.model.limit.input!)) }
+        : {}),
+    },
+  })
+}
+
+/** Pools that use a matching or effort key, or nest a pool that does. They are built with the models of
+ * connected providers; every other pool is built from the provider definitions, as it always was. */
+function builtWithModels(routes: ReadonlyMap<string, ConfigModelRoutes.Route>) {
+  const uses = (id: string, trail: ReadonlySet<string>): boolean => {
+    const route = routes.get(id)
+    if (!route || trail.has(id)) return false
+    if (
+      [
+        route.include,
+        route.exclude,
+        route.contains,
+        route.notContains,
+        route.match,
+        route.levels,
+        route.variantRules,
+      ].some((value) => value !== undefined)
+    )
+      return true
+    const next = new Set(trail).add(id)
+    return (route.targets ?? []).some((target) => {
+      const ref = targetRef(targetSpec(target).model)
+      return ref.providerID === ModelRoute.PROVIDER_ID && uses(ref.id, next)
+    })
+  }
+  return new Set([...routes.keys()].filter((id) => uses(id, new Set())))
+}
 
 function configuredTuning(entries: readonly Entry[]) {
   return entries
@@ -211,14 +307,107 @@ export function weightRulesAcross(schedules: readonly ConfigModelRoutes.GlobalSc
   })
 }
 
+/** One route's targets and selection tree, with what the pool's author should hear about it. Targets come
+ * from `definitions`; models that matching keys add come through `candidate`, which returns the model as
+ * it can be used now, or undefined when its provider is not connected. Declared `levels` are applied
+ * here: a target that cannot run one of them sits it out. */
 export function expand(
   id: string,
   routes: ReadonlyMap<string, ConfigModelRoutes.Route>,
   definitions: ReadonlyMap<Provider.ID, ReadonlyMap<string, Model.Info>>,
+  candidate: (providerID: Provider.ID, id: Model.ID) => Model.Info | undefined = (providerID, modelID) =>
+    definitions.get(providerID)?.get(modelID),
+) {
+  let catalog: readonly CatalogEntry[] | undefined
+  const collected = collect(id, routes, definitions, new Set(), {
+    models: () =>
+      (catalog ??= [...definitions].flatMap(([providerID, models]) =>
+        [...models.keys()].map((modelID) => ({ providerID, id: Model.ID.make(modelID) })),
+      )),
+    candidate,
+    members: new Map(),
+  })
+  const levels = routes.get(id)?.levels
+  if (levels === undefined || collected.leaves.length === 0)
+    return { leaves: collected.leaves, nodes: collected.nodes, diagnostics: collected.diagnostics }
+  const leaves = collected.leaves.map((leaf) => {
+    const missing = levels.filter((level) => !runs(leaf, level) && leaf.variantMap?.[level] !== false)
+    if (missing.length === 0) return leaf
+    return {
+      ...leaf,
+      variantMap: { ...leaf.variantMap, ...Object.fromEntries(missing.map((level) => [level, false] as const)) },
+    }
+  })
+  return {
+    leaves,
+    nodes: collected.nodes,
+    diagnostics: [
+      ...collected.diagnostics,
+      ...[...new Set(levels)]
+        .filter((level) => !leaves.some((leaf) => runs(leaf, level)))
+        .map((level) => `pool ${id} declares level ${level}, but none of its models can run it, so it is not offered`),
+    ],
+  }
+}
+
+type CatalogEntry = { readonly providerID: Provider.ID; readonly id: Model.ID }
+
+/** What one expansion shares across the pools it reaches. */
+type Shared = {
+  /** Every defined model in provider order, read only once a pool has matching keys. */
+  readonly models: () => readonly CatalogEntry[]
+  readonly candidate: (providerID: Provider.ID, id: Model.ID) => Model.Info | undefined
+  /** The `provider/model` members of pools named by matching keys, kept only when no cycle was cut while
+   * finding them: nothing else makes them depend on which pools were above at the time. Without this a
+   * pool naming two pools that each name two more expands the same pools again at every level. */
+  readonly members: Map<string, ReadonlySet<string>>
+}
+
+function collect(
+  id: string,
+  routes: ReadonlyMap<string, ConfigModelRoutes.Route>,
+  definitions: ReadonlyMap<Provider.ID, ReadonlyMap<string, Model.Info>>,
+  trail: ReadonlySet<string>,
+  shared: Shared,
 ) {
   const result: SourceModel[] = []
   const nodes: ModelRoute.Node[] = []
   const seen = new Set<string>()
+  // `provider/model` of every target placed so far, whatever its variant: matching keys add a model once.
+  const placed = new Set<string>()
+  const diagnostics: string[] = []
+  // Set when a pool already on the way in is reached again, here or in a pool named below.
+  let cut = false
+
+  // A term that names a pool, as `<id>` or `opencode-route/<id>`, stands for that pool's models. A pool
+  // already on the way in adds nothing for that name, so a pool naming itself, directly or through
+  // others, is not an error.
+  const reference =
+    (routeID: string, within: ReadonlySet<string>) =>
+    (text: string): ModelRouteMatch.Predicate | undefined => {
+      const poolID = routes.has(text)
+        ? text
+        : text.startsWith(POOL_PREFIX) && routes.has(text.slice(POOL_PREFIX.length))
+          ? text.slice(POOL_PREFIX.length)
+          : undefined
+      if (poolID === undefined) {
+        if (text.startsWith(POOL_PREFIX)) diagnostics.push(`pool ${routeID} names ${text}, which is not a pool`)
+        return undefined
+      }
+      if (within.has(poolID)) {
+        cut = true
+        return () => false
+      }
+      const members = shared.members.get(poolID) ?? membersOf(poolID, within)
+      return (candidate) => members.has(`${candidate.providerID}/${candidate.id}`)
+    }
+  const membersOf = (poolID: string, within: ReadonlySet<string>) => {
+    const named = collect(poolID, routes, definitions, within, shared)
+    const members = new Set(named.leaves.map((leaf) => `${leaf.ref.providerID}/${leaf.ref.id}`))
+    if (named.cut) cut = true
+    else shared.members.set(poolID, members)
+    return members
+  }
 
   // Each route becomes a group node with its own selection mode and weights, so a weighted route
   // nested in another is chosen as one unit and then splits among its own members.
@@ -226,11 +415,27 @@ export function expand(
     routeID: string,
     inheritedVariant: Model.VariantID | undefined,
     trail: ReadonlySet<string>,
+    enclosing: Enclosing,
   ): number | undefined => {
-    if (trail.has(routeID)) return
+    if (trail.has(routeID)) {
+      cut = true
+      return
+    }
     const current = routes.get(routeID)
     if (!current) return
     const nextTrail = new Set(trail).add(routeID)
+    // The config loader skips a pool with a malformed matching key, so this fails only for a pool that
+    // never went through it; such a pool contributes nothing rather than part of what it says.
+    const compiled = ModelRouteMatch.compile(current, reference(routeID, nextTrail))
+    if (Result.isFailure(compiled)) {
+      diagnostics.push(
+        `pool ${routeID} is skipped: ${compiled.failure.map((problem) => `${problem.path.join(".")}: ${problem.message}`).join("; ")}`,
+      )
+      return
+    }
+    const excludes = [...enclosing.excludes, compiled.success.excludes]
+    const rules = [...enclosing.rules, ...compiled.success.rules]
+    const excluded = (candidate: ModelRouteMatch.Candidate) => excludes.some((test) => test(candidate))
     const nodeIndex = nodes.length
     const node: {
       routeID: string
@@ -250,61 +455,111 @@ export function expand(
       node.children.push(child)
       node.weights.push(ModelRouteAutonomy.usesRules(current.autonomy) ? (current.weights?.[key] ?? 1) : 1)
     }
-    for (const target of current.targets) {
+    const place = (
+      resolved: Model.Ref,
+      model: Model.Info,
+      fixedVariant: boolean,
+      spec: {
+        readonly defaultVariant?: string
+        readonly variants?: Readonly<Record<string, string | false>>
+      } = {},
+    ) => {
+      const key = `${resolved.providerID}/${resolved.id}${resolved.variant ? `#${resolved.variant}` : ""}`
+      if (seen.has(key)) return
+      seen.add(key)
+      const leafKey = `${resolved.providerID}/${resolved.id}`
+      placed.add(leafKey)
+      const defaultVariant =
+        spec.defaultVariant && model.variants.some((item) => item.id === spec.defaultVariant)
+          ? Model.VariantID.make(spec.defaultVariant)
+          : undefined
+      // The rules of every pool on the way in, outermost first, then the target's own remap.
+      const variantMap = effort(model, [
+        ...rules
+          .filter((rule) => rule.applies({ providerID: resolved.providerID, id: resolved.id }))
+          .map((rule) => rule.map),
+        spec.variants ?? {},
+      ])
+      attach({ leaf: result.length }, leafKey)
+      // Budgets belong to the target: the outermost route that declares one wins, wherever the
+      // target was first reached.
+      const budget = plainBudget(
+        [...nextTrail]
+          .filter((id) => ModelRouteAutonomy.usesRules(routes.get(id)?.autonomy))
+          .map((id) => routes.get(id)?.budgets?.[leafKey])
+          .find((value) => value !== undefined),
+      )
+      result.push({
+        ...(budget ? { budget } : {}),
+        ref: resolved,
+        model,
+        fixedVariant,
+        ...(defaultVariant ? { defaultVariant } : {}),
+        ...(Object.keys(variantMap).length ? { variantMap } : {}),
+      })
+    }
+    for (const target of current.targets ?? []) {
       const spec = targetSpec(target)
       const ref = targetRef(spec.model)
       if (ref.providerID === ModelRoute.PROVIDER_ID) {
-        const child = visit(ref.id, ref.variant ?? inheritedVariant, nextTrail)
+        const child = visit(ref.id, ref.variant ?? inheritedVariant, nextTrail, { excludes, rules })
         if (child !== undefined) attach({ node: child }, `${ModelRoute.PROVIDER_ID}/${ref.id}`)
         continue
       }
       if (spec.until !== undefined && Date.now() >= spec.until) continue
       for (const [id, model] of matchingModels(ref.id, definitions.get(ref.providerID))) {
-        if (!model.enabled) continue
+        if (!model.enabled || excluded({ providerID: ref.providerID, id })) continue
         const variant = ref.variant ?? inheritedVariant
         if (variant && !model.variants.some((item) => item.id === variant)) continue
-        const resolved = Model.Ref.make({
-          providerID: ref.providerID,
-          id,
-          ...(variant ? { variant } : {}),
-        })
-        const key = `${resolved.providerID}/${resolved.id}${resolved.variant ? `#${resolved.variant}` : ""}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        const defaultVariant =
-          spec.defaultVariant && model.variants.some((item) => item.id === spec.defaultVariant)
-            ? Model.VariantID.make(spec.defaultVariant)
-            : undefined
-        const variantMap = Object.fromEntries(
-          Object.entries(spec.variants ?? {}).flatMap(([from, to]) =>
-            model.variants.some((item) => item.id === to) ? [[from, Model.VariantID.make(to)] as const] : [],
-          ),
-        )
-        const leafKey = `${resolved.providerID}/${resolved.id}`
-        attach({ leaf: result.length }, leafKey)
-        // Budgets belong to the target: the outermost route that declares one wins, wherever the
-        // target was first reached.
-        const budget = plainBudget(
-          [...nextTrail]
-            .filter((id) => ModelRouteAutonomy.usesRules(routes.get(id)?.autonomy))
-            .map((id) => routes.get(id)?.budgets?.[leafKey])
-            .find((value) => value !== undefined),
-        )
-        result.push({
-          ...(budget ? { budget } : {}),
-          ref: resolved,
+        place(
+          Model.Ref.make({ providerID: ref.providerID, id, ...(variant ? { variant } : {}) }),
           model,
-          fixedVariant: ref.variant !== undefined || inheritedVariant !== undefined,
-          ...(defaultVariant ? { defaultVariant } : {}),
-          ...(Object.keys(variantMap).length ? { variantMap } : {}),
-        })
+          ref.variant !== undefined || inheritedVariant !== undefined,
+          spec,
+        )
       }
     }
+    // Models from include, contains and match follow the targets, in provider order. The cheap tests come
+    // first: looking a model up may copy it.
+    const selects = compiled.success.selects
+    if (selects)
+      for (const entry of shared.models()) {
+        if (placed.has(`${entry.providerID}/${entry.id}`) || !selects(entry) || excluded(entry)) continue
+        const model = shared.candidate(entry.providerID, entry.id)
+        if (!model?.enabled) continue
+        if (inheritedVariant && !model.variants.some((item) => item.id === inheritedVariant)) continue
+        place(
+          Model.Ref.make({
+            providerID: entry.providerID,
+            id: entry.id,
+            ...(inheritedVariant ? { variant: inheritedVariant } : {}),
+          }),
+          model,
+          inheritedVariant !== undefined,
+        )
+      }
     return node.children.length > 0 ? nodeIndex : undefined
   }
 
-  visit(id, undefined, new Set())
-  return { leaves: result, nodes }
+  visit(id, undefined, trail, { excludes: [], rules: [] })
+  return { leaves: result, nodes, diagnostics, cut }
+}
+
+/** A target's level remaps: each map in order, a later one overriding an earlier one level by level. A
+ * remap to a variant the model does not have leaves that level alone; `false`, sitting it out, always
+ * applies. */
+function effort(
+  model: Model.Info,
+  maps: readonly Readonly<Record<string, string | false>>[],
+): Record<string, Model.VariantID | false> {
+  return Object.fromEntries(
+    maps.flatMap((map) =>
+      Object.entries(map).flatMap(([from, to]): (readonly [string, Model.VariantID | false])[] => {
+        if (to === false) return [[from, false]]
+        return model.variants.some((item) => item.id === to) ? [[from, Model.VariantID.make(to)]] : []
+      }),
+    ),
+  )
 }
 
 /** A model id, or every model of the provider whose id matches a `*` pattern, in the provider's order. */
@@ -347,15 +602,34 @@ function intersect(values: readonly (readonly string[])[]) {
   return (first ?? []).filter((value) => rest.every((items) => items.includes(value)))
 }
 
-export function routeVariants(targets: readonly SourceModel[]) {
+/** Whether a target runs `level` when its pool is selected at it: a pinned target always does, at its
+ * pin; any other through its remap or its own variant of that name. A remap to `false` sits it out. */
+function runs(target: SourceModel, level: string) {
+  const mapped = target.variantMap?.[level]
+  if (mapped === false) return false
+  return target.fixedVariant || mapped !== undefined || target.model.variants.some((item) => item.id === level)
+}
+
+/** The levels a route offers. Declared `levels` are offered when at least one target runs them. Without
+ * them a level is offered when every target runs it or sits it out and at least one runs it, so one
+ * target without a level no longer takes it from the whole route once it says it sits that level out.
+ * A route with a pinned target offers none, as it always has. */
+export function routeVariants(targets: readonly SourceModel[], levels?: readonly string[]) {
+  const offer = (list: readonly string[]) => list.map((id) => ({ id: Model.VariantID.make(id) }))
+  if (levels !== undefined)
+    return offer([...new Set(levels)].filter((level) => targets.some((target) => runs(target, level))))
   if (targets.some((target) => target.fixedVariant)) return []
-  // A route-level variant is offered when every target can produce it, either natively or through
-  // its remap table.
-  return intersect(
-    targets.map((target) => {
-      const native = target.model.variants.map((variant) => variant.id)
-      const remapped = Object.keys(target.variantMap ?? {})
-      return [...new Set([...native, ...remapped])]
-    }),
-  ).map((id) => ({ id: Model.VariantID.make(id) }))
+  const candidates = new Set(
+    targets.flatMap((target) => [
+      ...target.model.variants.map((variant) => variant.id),
+      ...Object.keys(target.variantMap ?? {}),
+    ]),
+  )
+  return offer(
+    [...candidates].filter(
+      (level) =>
+        targets.some((target) => runs(target, level)) &&
+        targets.every((target) => runs(target, level) || target.variantMap?.[level] === false),
+    ),
+  )
 }

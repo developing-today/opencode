@@ -281,21 +281,22 @@ that deadline. Optional `maxResponseTimeMs` and `minOutputTokensPerSecond`
 thresholds define a slow completed response; omitting both leaves the first
 output deadline as the only performance signal. Cooldowns are shared by every
 session in the OpenCode process and are restored from the health history after a
-restart. A route can reference another route,
-and a requested variant is offered only when every target supports it.
+restart. A route can reference another route. Which variants a route offers is
+covered under "Effort levels in a pool".
 Provider-use policies still apply to the concrete targets; a route only exposes
 models that remain available after those policies run.
 
 A target can also be an object. `defaultVariant` runs that target at a chosen
 variant when the route is selected without one, and `variants` remaps a
 route-level variant per target, so `opencode-route/luna-stack#low` can run one
-provider at `high` and another at `low`. The route advertises the union of each
-target's native variants and remap keys, and only offers what every target can
-produce.
+provider at `high` and another at `low`. A remap to `false` makes the target sit
+that level out.
 
 A target's model can contain `*` to match every model of its provider whose id
 fits, such as `"openai/gpt-6-*"`; matches follow the provider's order, and a model
-reached twice is used once, at its first place. `until` is an epoch time in
+reached twice is used once, at its first place. This glob stays inside one
+provider and is case-sensitive. To pick models across providers, use the matching
+keys under "Choosing pool members by pattern". `until` is an epoch time in
 milliseconds after which the target leaves the route, for time-limited pool
 membership. It takes effect when the configuration reloads.
 
@@ -311,6 +312,167 @@ Weights order every selection mode: at each decision the targets are ranked by
 their effective weight, and equal weights keep their configured relative order.
 With no other configuration every weight is 1, so `ordered` routes keep their
 order exactly.
+
+### Choosing pool members by pattern
+
+A pool can pick its models by pattern instead of listing each one. `include`,
+`contains` and `match` add models; `exclude` and `notContains` remove them.
+
+```jsonc
+{
+  "experimental": {
+    "model_routes": {
+      "small": { "include": ["*luna*", "*haiku*"], "exclude": ["*-5", "*-6"] },
+      "claude": { "contains": ["haiku", "sonnet", "opus", "mythos"] },
+      "frontier-direct": { "include": ["anthropic/*opus*", "anthropic/*mythos*"] },
+      "claude-agg": { "include": ["claude"], "exclude": ["frontier-direct"] },
+      "small-all": { "include": ["small", "small-old"] },
+    },
+  },
+}
+```
+
+`small` takes every Luna and Haiku model from every connected provider, then drops
+the ids that end in `-5` or `-6`, so `luna-5.5` and `luna-6.1` stay. `claude-agg` is
+the `claude` pool without the models of `frontier-direct`.
+
+| Entry                             | What it matches                                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `*luna*`                          | Model ids that contain `luna`, in every provider. `*` stands for any run of characters.           |
+| `anthropic/*opus*`                | A pattern with `/` is tested against `provider/model`, so this is only Anthropic's Opus models.   |
+| `re:luna-(5\|6)$`                 | `re:` starts a regular expression. It matches anywhere in the id unless anchored with `^` or `$`. |
+| `claude`, `opencode-route/claude` | Exactly another pool's id: that pool's models.                                                    |
+
+- Case never matters, in globs, regular expressions or text.
+- A glob covers the whole id: `*-5` matches `luna-5` and not `luna-5.5`.
+- `contains` and `notContains` take plain text, found anywhere in the model id, or
+  in `provider/model` when the text has a `/`.
+- Patterns only add models the model picker offers: enabled models of providers
+  that are connected or configured, switched on, and allowed by provider-use
+  policies. Connecting a provider adds its matching models to the pool.
+  `targets` can still name a provider that is not connected, as before.
+
+A pool's members are built in this order:
+
+1. `targets`, in their order.
+2. Models from `include`, `contains` and `match`, in provider order. A model that is
+   already in the pool is not added again.
+3. Whatever `exclude` and `notContains` match is removed, including targets and the
+   members of nested pools.
+
+`targets` can be left out when a pool has `include`, `contains` or `match`.
+
+#### Pools by name
+
+A pool's name brings in that pool's models, without its order, weights or effort
+settings. To nest a whole pool with its own selection, list it in `targets` as
+`opencode-route/<id>`.
+
+```jsonc
+"claude-agg": { "include": ["opencode-route/claude"], "exclude": ["frontier-direct"] }
+```
+
+A pool that names itself, directly or through other pools, gets nothing from that
+name and no warning, so `small-all` may name a pool that names `small-all` back. A
+name that starts with `opencode-route/` and is not a pool is logged as a warning;
+any other name that is not a pool is read as a pattern.
+
+#### Expressions
+
+`match` takes one expression of patterns and pool names, joined by `and`, `or` and
+`not`, with parentheses.
+
+```jsonc
+"small": { "match": "(*luna* or *haiku*) and not 're:-(5|6)$' and not *mini*" }
+```
+
+`not` binds tightest and `or` loosest. Quote a term that has spaces or parentheses
+with single or double quotes, as the regular expression above is. There is no
+`xor`: a pool rarely needs it, it is easy to misread, and
+`(a or b) and not (a and b)` says the same thing.
+
+#### Malformed pools
+
+A pool with a malformed pattern, regular expression or expression is skipped
+whole, and the config warning names the key and what is wrong. Skipping only the
+bad entry could make the pool larger than written, for example when an `exclude`
+stops applying. A pool with none of `targets`, `include`, `contains` and `match`
+is skipped the same way.
+
+```jsonc
+"small": { "include": ["*luna*"], "exclude": ["re:luna-(5"] }
+```
+
+This pool is skipped with the warning `skipped pool: Invalid regular expression:
+missing )` at `experimental.model_routes.small.exclude.0`.
+
+### Effort levels in a pool
+
+A pool offers effort levels, its variants, as `opencode-route/<id>#<level>`. When a
+pool is selected at a level, each target runs it through the first of these that
+applies:
+
+1. The target's own `variants` remap for that level.
+2. The last `variantRules` entry that matches the model and maps that level.
+3. The model's own variant of the same name.
+
+A remap to `false` makes the target sit that level out. A target that sits out
+the requested level is never used at it, not even as a last resort when every
+other target is cooling down.
+
+```jsonc
+{
+  "experimental": {
+    "model_routes": {
+      "big": {
+        "targets": [
+          { "model": "openai/argon", "variants": { "xhigh": "high", "max": false } },
+          "anthropic/claude-opus-5",
+        ],
+      },
+      "smart-fast": {
+        "include": ["*argon*", "*luna*"],
+        "variantRules": [
+          { "match": "*argon*", "map": { "medium": "high", "high": "high", "xhigh": "high", "max": "high" } },
+        ],
+      },
+      "small": { "include": ["*haiku*", "*luna-mini*"], "levels": ["low", "medium", "high"] },
+    },
+  },
+}
+```
+
+In `big`, Argon runs `xhigh` at its `high` and sits out `max`, which goes to
+Opus. In `smart-fast`, Argon runs every level from `medium` up at its `high`.
+`small` offers exactly `low`, `medium` and `high`, and each model runs them at its
+own variants of those names.
+
+Which levels a pool offers:
+
+- Without `levels`, a level is offered when every target can run it or sits it
+  out, and at least one target runs it. A target that cannot run a level and does
+  not sit it out still keeps that level from the whole pool.
+- With `levels`, the pool offers exactly those levels. A target that cannot run
+  one of them sits it out. A declared level that no target can run is left out,
+  with a warning in the log.
+- A pool with a target pinned as `provider/model#variant` offers no levels unless
+  it declares `levels`. With `levels`, the pinned target runs each of them at its
+  pin.
+
+`variantRules` apply in order, and a later rule overrides an earlier one level by
+level. A target's own `variants` override every rule, and a remap to a variant the
+model does not have is ignored for that model. Rules reach the members of nested
+pools too; the nested pool's own rules come later, so they win.
+
+```jsonc
+"variantRules": [
+  { "match": "*", "map": { "max": "high" } },
+  { "match": "claude and not *haiku*", "map": { "max": false } },
+]
+```
+
+A rule's `match` takes a pattern, a pool name or an expression, as `match` on the
+pool does.
 
 ### Schedules: peak hours and recurring priorities
 

@@ -26,6 +26,7 @@ import { ConfigPermissionV1 } from "../v1/config/permission.js"
 import { ConfigPluginV1 } from "../v1/config/plugin.js"
 import { ConfigProviderV1 } from "../v1/config/provider.js"
 import { ConfigMigrateV1 } from "../v1/config/migrate.js"
+import { ModelRouteMatch } from "../model-route-match.js"
 import { PositiveInt } from "../schema.js"
 
 export interface Diagnostic {
@@ -523,7 +524,7 @@ function normalizeExperimental(
           ConfigModelRoutes.Route,
           ["experimental", "model_routes"],
           diagnostics,
-          decodeEncoded,
+          decodeRoute,
         )
         if (
           Object.keys(value).length ||
@@ -799,6 +800,27 @@ function decodeEncoded<S extends Schema.Codec<unknown, unknown, never, never>>(
   const encoded = Schema.encodeUnknownOption(schema, options)(decoded.value)
   if (Option.isSome(encoded)) return plain(encoded.value)
   invalid(path, diagnostics)
+  return undefined
+}
+
+/** A pool is skipped whole when nothing could ever join it or a matching key is malformed. Dropping only
+ * the bad key could widen the pool, for an exclude that no longer applies. */
+function decodeRoute(
+  schema: typeof ConfigModelRoutes.Route,
+  value: unknown,
+  path: string[],
+  diagnostics: Diagnostic[],
+) {
+  const decoded = Schema.decodeUnknownOption(schema, options)(value)
+  const problems = Option.isSome(decoded) ? ModelRouteMatch.problems(decoded.value) : []
+  if (problems.length === 0) return decodeEncoded(schema, value, path, diagnostics)
+  problems.forEach((problem) =>
+    diagnostics.push({
+      kind: "invalid",
+      path: [...path, ...problem.path],
+      message: `skipped pool: ${problem.message}`,
+    }),
+  )
   return undefined
 }
 

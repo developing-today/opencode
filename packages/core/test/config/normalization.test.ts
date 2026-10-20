@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Arbitrary, Duration, Effect, Schema } from "effect"
 import { ConfigNormalize } from "@opencode/core/config/normalize"
+import { ModelRouteMatch } from "@opencode/core/model-route-match"
 import { ModelRouteTuning } from "@opencode/core/model-route-tuning"
 import { Info } from "@opencode/schema/config"
 import { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
@@ -63,6 +64,23 @@ function withoutMalformedNotes(input: Record<string, unknown>) {
   const result = structuredClone(input)
   const tuning = (result.experimental as { model_route_tuning?: { notes?: string[] } } | undefined)?.model_route_tuning
   if (tuning?.notes) tuning.notes = tuning.notes.filter((line) => ConfigModelRoutes.NOTE_LINE.test(line))
+  return result
+}
+
+/** Normalization skips a pool that nothing could join or that has a malformed matching key, and then an
+ * emptied block, so the expected config does too. */
+function withoutSkippedPools(input: Record<string, unknown>) {
+  const result = structuredClone(input)
+  const experimental = result.experimental as { model_routes?: Record<string, unknown> } | undefined
+  const routes = experimental?.model_routes
+  if (!experimental || !routes) return result
+  const kept = Object.entries(routes).filter(
+    ([, route]) => ModelRouteMatch.problems(Schema.decodeUnknownSync(ConfigModelRoutes.Route)(route)).length === 0,
+  )
+  if (kept.length === Object.keys(routes).length) return result
+  if (kept.length > 0) experimental.model_routes = Object.fromEntries(kept)
+  else delete experimental.model_routes
+  if (!Object.keys(experimental).length) delete result.experimental
   return result
 }
 
@@ -134,7 +152,9 @@ describe("ConfigNormalize", () => {
           const source = JSON.parse(JSON.stringify(Schema.encodeSync(Info)(info)))
           const result = normalized(source)
           expect(Schema.decodeUnknownSync(Info)(result.encoded)).toEqual(
-            Schema.decodeUnknownSync(Info)(withoutMalformedNotes(withoutEmptyCompatibilityContainers(source))),
+            Schema.decodeUnknownSync(Info)(
+              withoutSkippedPools(withoutMalformedNotes(withoutEmptyCompatibilityContainers(source))),
+            ),
           )
           return true
         },
@@ -858,5 +878,82 @@ describe("model route tuning and log settings", () => {
       path: ["experimental", "model_route_log", "captureErrorBody"],
       message: "omitted unknown setting",
     })
+  })
+})
+
+describe("model route pools", () => {
+  const routesOf = (encoded: Readonly<Record<string, unknown>>) =>
+    Schema.decodeUnknownSync(Info, options)(encoded).experimental?.model_routes
+
+  test("matching keys, declared levels, variant rules and false remaps survive normalization", () => {
+    const small = {
+      include: ["*luna*", "*haiku*"],
+      exclude: ["*-5", "frontier-direct"],
+      contains: ["mini"],
+      notContains: ["old"],
+      match: "(*luna* or 're:haiku-(5|6)') and not *preview*",
+      levels: ["low", "medium", "high"],
+      variantRules: [{ match: "*argon*", map: { xhigh: "high", max: false } }],
+    }
+    const result = normalized({
+      experimental: {
+        model_routes: {
+          small,
+          big: { targets: [{ model: "openai/argon", variants: { xhigh: "high", max: false } }] },
+        },
+      },
+    })
+    expect(result.diagnostics).toEqual([])
+    const routes = routesOf(result.encoded)
+    expect(routes?.small).toMatchObject(small)
+    expect(routes?.small.targets).toBeUndefined()
+    expect(routes?.big).toMatchObject({
+      targets: [{ model: { providerID: "openai", model: "argon" }, variants: { xhigh: "high", max: false } }],
+    })
+  })
+
+  test("a pool with a malformed matching key, or that nothing could join, is skipped whole with a diagnostic at the key", () => {
+    const result = normalized({
+      experimental: {
+        model_routes: {
+          ok: { include: ["*luna*"] },
+          regex: { include: ["*luna*"], exclude: ["re:luna-(5"] },
+          expression: { match: "*luna* xor *haiku*" },
+          rule: { targets: ["openai/argon"], variantRules: [{ match: "(*argon*", map: { max: false } }] },
+          empty: { include: ["*luna*"], contains: [""] },
+          nothing: { exclude: ["*-mini"] },
+          explicit: { targets: [] },
+        },
+      },
+    })
+    const path = (...rest: string[]) => ["experimental", "model_routes", ...rest]
+    expect(result.diagnostics).toEqual([
+      {
+        kind: "invalid",
+        path: path("regex", "exclude", "0"),
+        message: expect.stringContaining("skipped pool: Invalid regular expression"),
+      },
+      {
+        kind: "invalid",
+        path: path("expression", "match"),
+        message: "skipped pool: xor is not supported: write (a or b) and not (a and b)",
+      },
+      {
+        kind: "invalid",
+        path: path("rule", "variantRules", "0", "match"),
+        message: 'skipped pool: missing ")" before the end',
+      },
+      {
+        kind: "invalid",
+        path: path("empty", "contains", "0"),
+        message: "skipped pool: empty text, which would match every model",
+      },
+      {
+        kind: "invalid",
+        path: path("nothing"),
+        message: "skipped pool: it has no targets, include, contains or match",
+      },
+    ])
+    expect(Object.keys(routesOf(result.encoded) ?? {})).toEqual(["ok", "explicit"])
   })
 })
