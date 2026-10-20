@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test"
 import { readFile } from "node:fs/promises"
+import path from "node:path"
 import { Effect } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/http"
 import { GitHubActions } from "../src/actions.js"
@@ -326,7 +327,7 @@ describe("github actions tools", () => {
         expect(grep.jobs.map((job) => job.text)).toEqual([
           "4: FAIL tokenize: expected 2\n--\n6: ##[error]Process completed with exit code 1.",
         ])
-        expect(grep.jobs[0].path).toEndWith("/opencode-github/logs/acme-widgets-900.log")
+        expect(grep.jobs[0].path).toEndWith(path.join("opencode-github", "logs", "acme-widgets-900.log"))
         expect(yield* Effect.promise(() => readFile(grep.jobs[0].path ?? "", "utf8"))).toBe(LOG.slice(1))
 
         const context = yield* run<object, { jobs: Array<{ text: string }> }>(logs, {
