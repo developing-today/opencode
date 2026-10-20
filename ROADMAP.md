@@ -77,6 +77,8 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| turbo.json `#test` tasks deduplicated, with a guard test         | 2026-10-20 | #183     |
+| `jules-action` pinned to a commit SHA (v1.0.0)                   | 2026-10-20 | #185     |
 | `queue: max` on the six deploy workflows                         | 2026-10-20 | #180     |
 | Console and stats service tests run via turbo                    | 2026-10-20 | #144     |
 | `actions/checkout` aligned to the v4.3.1 standard pin            | 2026-10-20 | #170     |
