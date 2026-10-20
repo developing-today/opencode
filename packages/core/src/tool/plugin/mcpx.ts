@@ -97,15 +97,17 @@ export const parseMcpxDaemonAutostart = (output: string): boolean | undefined =>
  * (#134); the CLI honours it, so the plugin resolves it the same way — by
  * asking the CLI. Only an explicit `false` blocks the spawn: a missing or
  * unparseable answer (old mcpx, binary not installed) keeps today's
- * behaviour, since the setting defaults to true.
+ * behaviour, since the setting defaults to true. The settings-call timeout
+ * is a parameter (default 5s) so tests can exercise the timeout branch
+ * without waiting it out (#178).
  */
-const mcpxDaemonAutostart = async (): Promise<boolean> => {
+export const mcpxDaemonAutostart = async (timeoutMs = 5000): Promise<boolean> => {
   try {
     const output = await new Promise<string>((resolve, reject) => {
       execFile(
         mcpxBinary(),
         ["settings", "get", "daemon.autostart"],
-        { timeout: 5000, maxBuffer: 1024 * 1024 },
+        { timeout: timeoutMs, maxBuffer: 1024 * 1024 },
         (err, stdout, stderr) => {
           if (err) reject(err)
           else resolve(stdout || stderr)
