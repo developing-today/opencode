@@ -65,8 +65,6 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                    | Horizon | Status   | Intent                                                                                                      | Links |
 | ---------------------------------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------- | ----- |
-| `unit (linux)` green on main             | Now     | proposed | `verify-package` fails whenever it runs: `plugin-github` is missing from the pack list.                       | #159  |
-| Windows test fixes                       | Next    | proposed | The `runScript` tests hardcode `/bin/sh`.                                                                   | #63   |
 | A Nix check that completes               | Next    | proposed | Replace `nix-eval` and `nix-hashes`, which have effectively never finished.                                 | #49   |
 
 ## Upstream sync
@@ -79,6 +77,9 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| `runScript` tests run on Windows                                 | 2026-10-20 | #167     |
+| `verify-package` packs `plugin-github`                           | 2026-10-20 | #166     |
+| `actions/github-script` aligned to v8.0.0                        | 2026-10-20 | #165     |
 | Transport test expects the protocol `SessionNotFoundError`       | 2026-10-20 | #158     |
 | ACP follow stale-attach guard covered by a test                  | 2026-10-20 | #154     |
 | `queue: max` on models-snapshot, docs-update and stats           | 2026-10-20 | #157     |
