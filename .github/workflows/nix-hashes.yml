@@ -110,11 +110,26 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.ref_name }}
 
+      # The app token is preferred (its pushes trigger downstream workflows),
+      # but on a repo where the app is not configured the token step fails
+      # with "appId option is required" and the computed hashes are thrown
+      # away — that is how the stale hashes in #175 survived a successful
+      # compute-hash run. Fall back to GITHUB_TOKEN there: its pushes do not
+      # trigger downstream workflows, which a hashes.json commit does not
+      # need (this workflow's own paths do not include nix/hashes.json).
       - name: Setup git committer
+        if: vars.OPENCODE_APP_ID != ''
         uses: ./.github/actions/setup-git-committer
         with:
           opencode-app-id: ${{ vars.OPENCODE_APP_ID }}
           opencode-app-secret: ${{ secrets.OPENCODE_APP_SECRET }}
+
+      - name: Setup git committer (fallback token)
+        if: vars.OPENCODE_APP_ID == ''
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
 
       - name: Pull latest changes
         run: |
