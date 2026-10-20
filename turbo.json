@@ -45,6 +45,14 @@
       "dependsOn": ["transit"],
       "outputs": []
     },
+    "@opencode/changelog#test": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
+    "@opencode/update#test": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
     "@opencode/codemode#test": {
       "dependsOn": ["transit"],
       "outputs": []
