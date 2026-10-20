@@ -77,6 +77,9 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| `queue: max` on the six deploy workflows                         | 2026-10-20 | #180     |
+| Console and stats service tests run via turbo                    | 2026-10-20 | #144     |
+| `actions/checkout` aligned to the v4.3.1 standard pin            | 2026-10-20 | #170     |
 | Ast-grep lint rule tests run in CI                               | 2026-10-20 | #155     |
 | Changelog and update service tests run via turbo                 | 2026-10-20 | #142     |
 | `plugin-github` tests pass on Windows                            | 2026-10-20 | #174     |
