@@ -462,6 +462,45 @@ describe("acp turn events over the wire", () => {
     expect(acp.server.replies).toEqual([{ sessionID: acp.sessionId, requestID: "perm_after_load", decision: "once" }])
   })
 
+  test("a stale load finishing after a newer load does not stop the newer follower", async () => {
+    let releaseMcp: (() => void) | undefined
+    const held = new Promise<void>((resolve) => {
+      releaseMcp = resolve
+    })
+    let mcpHeld = false
+    await using acp = await startWire({
+      // Hold load A's MCP registration so load B attaches and starts following first.
+      fetch: async (request) => {
+        if (request.method !== "PUT" || request.path !== "/api/experimental/mcp/tools" || mcpHeld) return undefined
+        mcpHeld = true
+        await held
+        return undefined
+      },
+      permission: () => ({ outcome: { outcome: "selected", optionId: "once" } }),
+    })
+    await acp.initialize()
+    acp.server.sessions.set("ses_stale", makeSession("ses_stale"))
+
+    const stale = acp.request("session/load", {
+      sessionId: "ses_stale",
+      cwd: "/workspace",
+      mcpServers: [{ name: "tools", command: "bun", args: ["server.ts"], env: [] }],
+    })
+    // The fixture records the request before awaiting the fetch override, so its arrival is observable here.
+    await acp.until(
+      () => acp.server.requests.some((item) => item.method === "PUT" && item.path === "/api/experimental/mcp/tools"),
+      "load A's held MCP registration",
+    )
+    await acp.request("session/load", { sessionId: "ses_stale", cwd: "/workspace", mcpServers: [] })
+    releaseMcp!()
+    await stale
+
+    acp.server.send(permissionAsked("ses_stale", "perm_stale", { action: "read" }))
+    await acp.until(() => acp.server.replies.length === 1, "the permission reply from the newer follower")
+
+    expect(acp.server.replies).toEqual([{ sessionID: "ses_stale", requestID: "perm_stale", decision: "once" }])
+  })
+
   test("does not name a tool call the follower tracked but never sent", async () => {
     await using acp = await startSession({ permission: () => ({ outcome: { outcome: "selected", optionId: "once" } }) })
 
