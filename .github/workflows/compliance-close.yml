@@ -3,6 +3,7 @@ name: compliance-close
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 on:
   schedule:
