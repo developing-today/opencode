@@ -77,6 +77,9 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| Ast-grep lint rule tests run in CI                               | 2026-10-20 | #155     |
+| Changelog and update service tests run via turbo                 | 2026-10-20 | #142     |
+| `plugin-github` tests pass on Windows                            | 2026-10-20 | #174     |
 | `runScript` tests run on Windows                                 | 2026-10-20 | #167     |
 | `verify-package` packs `plugin-github`                           | 2026-10-20 | #166     |
 | `actions/github-script` aligned to v8.0.0                        | 2026-10-20 | #165     |
