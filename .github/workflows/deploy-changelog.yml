@@ -12,6 +12,7 @@ on:
 concurrency:
   group: deploy-changelog
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
