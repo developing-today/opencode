@@ -76,6 +76,54 @@ const fakeMcpx = async (): Promise<string> => {
   return bin
 }
 
+// A fake whose `settings get daemon.autostart` fails: it prints the given
+// autostart value (when one is passed) and then exits non-zero, like a
+// broken or too-old mcpx. Every other invocation is a daemon spawn and is
+// recorded the same way as fakeMcpx.
+const fakeMcpxWithFailingSettings = async (value?: string): Promise<string> => {
+  const bin = path.join(dir, "mcpx")
+  await fs.writeFile(
+    bin,
+    [
+      "#!/bin/sh",
+      'if [ "$1" = "settings" ]; then',
+      ...(value === undefined ? [] : [`  printf 'daemon.autostart = %s\\n' "${value}"`]),
+      "  exit 3",
+      "fi",
+      'printf \'args:%s\\n\' "$*" >> "$FAKE_MCPX_RECORD"',
+      'printf \'owner:%s\\n\' "$MCPX_OWNER" >> "$FAKE_MCPX_RECORD"',
+      "exit 0",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  )
+  process.env.OPENCODE_MCPX_BIN = bin
+  process.env.FAKE_MCPX_RECORD = record
+  return bin
+}
+
+// A fake whose `settings get daemon.autostart` never answers: it replaces
+// itself with a long sleep, so only the caller's timeout ends the call.
+const fakeMcpxWithHangingSettings = async (): Promise<string> => {
+  const bin = path.join(dir, "mcpx")
+  await fs.writeFile(
+    bin,
+    [
+      "#!/bin/sh",
+      'if [ "$1" = "settings" ]; then',
+      "  exec sleep 30",
+      "fi",
+      'printf \'args:%s\\n\' "$*" >> "$FAKE_MCPX_RECORD"',
+      "exit 0",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  )
+  process.env.OPENCODE_MCPX_BIN = bin
+  process.env.FAKE_MCPX_RECORD = record
+  return bin
+}
+
 // A fake whose `settings get daemon.autostart` answers like the real CLI
 // (first line `daemon.autostart = <value>`); every other invocation is a
 // daemon spawn and is recorded the same way as fakeMcpx.
@@ -273,6 +321,75 @@ describe("mcpx daemon autostart policy", () => {
       await McpxTool.ensureDaemon()
       const text = await fs.readFile(record, "utf-8")
       expect(text).toContain("args:daemon --daemon-idle-exit 1h")
+    },
+  )
+
+  // #178: the fail-open contract. Only an explicit `false` from a settings
+  // call that succeeds may block the spawn; every failure of the call
+  // itself (non-zero exit, missing binary, timeout) must keep today's
+  // spawn behaviour, because the setting defaults to true. A regression
+  // that treats a settings error as `false` would silently disable daemon
+  // autostart for every user whose mcpx is old, broken, or slow.
+  test.skipIf(process.platform === "win32")(
+    "ensureDaemon still spawns when the settings call exits non-zero",
+    async () => {
+      await fakeMcpxWithFailingSettings()
+      delete process.env.OPENCODE_TEST_HOME
+      delete process.env.OPENCODE_MCPX_DAEMON
+      await McpxTool.ensureDaemon()
+      const text = await fs.readFile(record, "utf-8")
+      expect(text).toContain("args:daemon --daemon-idle-exit 1h")
+    },
+  )
+
+  test.skipIf(process.platform === "win32")(
+    "mcpxDaemonAutostart is true when the settings call exits non-zero",
+    async () => {
+      await fakeMcpxWithFailingSettings()
+      expect(await McpxTool.mcpxDaemonAutostart()).toBe(true)
+    },
+  )
+
+  // The failing call's output must not be parsed either: a settings call
+  // that prints `false` and then fails has not answered, so it cannot
+  // block the spawn (the exec callback's error branch rejects outright).
+  test.skipIf(process.platform === "win32")(
+    "mcpxDaemonAutostart is true when a failing settings call prints false",
+    async () => {
+      await fakeMcpxWithFailingSettings("false")
+      expect(await McpxTool.mcpxDaemonAutostart()).toBe(true)
+    },
+  )
+
+  test("mcpxDaemonAutostart is true when the mcpx binary is missing", async () => {
+    process.env.OPENCODE_MCPX_BIN = path.join(dir, "no-such-mcpx")
+    expect(await McpxTool.mcpxDaemonAutostart()).toBe(true)
+  })
+
+  // At the ensureDaemon level a missing binary's spawn attempt is not
+  // separately observable — the spawn itself fails with an async ENOENT
+  // that ensureDaemon swallows by design — so the gating assertion is the
+  // mcpxDaemonAutostart test above; this test pins that ensureDaemon
+  // walks the spawn path and resolves instead of throwing or hanging.
+  test("ensureDaemon resolves when the mcpx binary is missing", async () => {
+    process.env.OPENCODE_MCPX_BIN = path.join(dir, "no-such-mcpx")
+    delete process.env.OPENCODE_TEST_HOME
+    delete process.env.OPENCODE_MCPX_DAEMON
+    await McpxTool.ensureDaemon()
+    expect(await exists(record)).toBe(false)
+  })
+
+  // The production timeout is 5s; the call passes 250ms so the timeout
+  // branch is exercised without waiting it out. The elapsed bound is
+  // timing-sensitive by design: 16x the injected timeout, yet below the
+  // 5s default the call would take if the parameter were ignored.
+  test.skipIf(process.platform === "win32")(
+    "mcpxDaemonAutostart is true when the settings call never answers",
+    async () => {
+      await fakeMcpxWithHangingSettings()
+      const started = Date.now()
+      expect(await McpxTool.mcpxDaemonAutostart(250)).toBe(true)
+      expect(Date.now() - started).toBeLessThan(4000)
     },
   )
 })
