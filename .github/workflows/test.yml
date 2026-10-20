@@ -150,6 +150,13 @@ jobs:
         working-directory: script
         run: bun test mcpx-cleanup.test.ts
 
+      - name: Check turbo.json for duplicate keys
+        # Turbo silently keeps the last definition of a repeated task key
+        # (#145); the script-level test scans turbo.json duplicate-aware.
+        # Same script/ wiring as the mcpx-cleanup step above.
+        working-directory: script
+        run: bun test turbo-json.test.ts
+
       - name: Configure git identity
         run: |
           git config --global user.email "bot@opencode.ai"
