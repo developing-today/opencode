@@ -127,6 +127,13 @@ jobs:
           export PATH="$bin_dir:$PATH"
           rg --version
 
+      - name: Test lint rules
+        # The main ast-grep rules (script/ast-grep/rules) have their own
+        # test suite (test:lint-rules) that nothing ran (#153); the
+        # effect-simplification suite below was already wired up.
+        if: runner.os == 'Linux'
+        run: bun run test:lint-rules
+
       - name: Test Effect simplification rules
         if: runner.os == 'Linux'
         run: bun run test:effect-simplification-rules
