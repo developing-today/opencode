@@ -1,0 +1,13 @@
+# Dependabot is configured for the bun ecosystem so version bumps
+# regenerate bun.lock together with package.json. The previous
+# GitHub-side npm-style updates changed package.json only, which made
+# every Dependabot PR fail CI at `bun install --frozen-lockfile`
+# (see #196). bun.lock lives at the repository root and covers all
+# workspace packages, so a single root entry handles the monorepo.
+version: 2
+updates:
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
