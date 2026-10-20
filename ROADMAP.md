@@ -4,7 +4,7 @@ This is the roadmap for the fork. It is grouped by area. Each area lists its ite
 
 A row here records intent. It does not settle a product question and it is not a go-ahead to build.
 
-Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](README.md), and the merged PRs of 2026-10-19.
+Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](README.md), and the merged PRs of 2026-10-20.
 
 ## Areas
 
@@ -65,8 +65,6 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                    | Horizon | Status   | Intent                                                                                                      | Links |
 | ---------------------------------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------- | ----- |
-| `unit (linux)` green on main             | Now     | proposed | `packages/sdk/test/transport.test.ts` fails in both variants. Find the cause before touching the assertion. | #62   |
-| Windows test fixes                       | Next    | proposed | The `runScript` tests hardcode `/bin/sh`.                                                                   | #63   |
 | A Nix check that completes               | Next    | proposed | Replace `nix-eval` and `nix-hashes`, which have effectively never finished.                                 | #49   |
 
 ## Upstream sync
@@ -79,6 +77,12 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| `runScript` tests run on Windows                                 | 2026-10-20 | #167     |
+| `verify-package` packs `plugin-github`                           | 2026-10-20 | #166     |
+| `actions/github-script` aligned to v8.0.0                        | 2026-10-20 | #165     |
+| Transport test expects the protocol `SessionNotFoundError`       | 2026-10-20 | #158     |
+| ACP follow stale-attach guard covered by a test                  | 2026-10-20 | #154     |
+| `queue: max` on models-snapshot, docs-update and stats           | 2026-10-20 | #157     |
 | Timeout caps on every job                                        | 2026-10-19 | #61      |
 | Shell tool description follows config edits                      | 2026-10-19 | #67      |
 | Tests that need no ambient `rg`                                  | 2026-10-19 | #72      |
