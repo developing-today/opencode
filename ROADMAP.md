@@ -4,14 +4,14 @@ This is the roadmap for the fork. It is grouped by area. Each area lists its ite
 
 A row here records intent. It does not settle a product question and it is not a go-ahead to build.
 
-Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](README.md), and the merged PRs of 2026-10-18.
+Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](README.md), and the merged PRs of 2026-10-19.
 
 ## Areas
 
 | Area                                                        | Current focus                                                   |
 | ----------------------------------------------------------- | --------------------------------------------------------------- |
 | [Nested subsessions](#nested-subsessions-and-their-asks)    | Shipped across the TUI, the app and ACP. One follow-up left     |
-| [mcpx integration](#mcpx-integration)                       | Where the flake gets mcpx, and the shell tool description       |
+| [mcpx integration](#mcpx-integration)                       | Where the flake gets mcpx                                       |
 | [Serve handover and restarts](#serve-handover-and-restarts) | Prove the handover under real systemd                           |
 | [Routing, cost and plans](#routing-cost-and-plans)          | Feature requests for failover, cost display and cache use       |
 | [Plugin API](#plugin-api)                                   | Gaps found while building v2 plugins                            |
@@ -33,7 +33,6 @@ The fork projects mcpx tools into Code Mode, starts a detached daemon with just-
 | Title                                       | Horizon | Status   | Intent                                                                                                         | Links |
 | ------------------------------------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------- | ----- |
 | Say where the flake gets mcpx               | Now     | proposed | The flake builds `opencode` with no `mcpx` unless the consumer passes one in.                                  | #82   |
-| Shell tool description follows config edits | Next    | proposed | The description keeps the boot-time `shell_timeout`, so the model is told the wrong default.                   | #67   |
 
 ## Serve handover and restarts
 
@@ -67,9 +66,7 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 | Title                                    | Horizon | Status   | Intent                                                                                                      | Links |
 | ---------------------------------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------- | ----- |
 | `unit (linux)` green on main             | Now     | proposed | `packages/sdk/test/transport.test.ts` fails in both variants. Find the cause before touching the assertion. | #62   |
-| Tests that need no ambient `rg`          | Next    | proposed | Ripgrep and search-tool tests fall through to a download the harness forbids.                               | #72   |
 | Windows test fixes                       | Next    | proposed | The `runScript` tests hardcode `/bin/sh`.                                                                   | #63   |
-| Build each PR commit once                | Next    | proposed | Test and check run on both push and pull request.                                                           | #59   |
 | A Nix check that completes               | Next    | proposed | Replace `nix-eval` and `nix-hashes`, which have effectively never finished.                                 | #49   |
 
 ## Upstream sync
@@ -83,6 +80,10 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
 | Timeout caps on every job                                        | 2026-10-19 | #61      |
+| Shell tool description follows config edits                      | 2026-10-19 | #67      |
+| Tests that need no ambient `rg`                                  | 2026-10-19 | #72      |
+| Subtask commands enforce the subagent depth limit                | 2026-10-19 | #127     |
+| mcpx plugin respects `daemon.autostart=false`                    | 2026-10-19 | #134     |
 | Follow nested subsessions in ACP                                 | 2026-10-18 | #58      |
 | Nested asks reach the root in the app                            | 2026-10-18 | #60      |
 | Nested asks reach the root in the TUI                            | 2026-10-18 | #64      |
