@@ -41,6 +41,12 @@ export async function openEditor(input: { value: string; renderer: CliRenderer; 
   }
 }
 
+export function parseEditorPort(value: string): number | undefined {
+  if (!/^\d+$/.test(value)) return undefined
+  const port = Number(value)
+  return port > 0 && port <= 65535 ? port : undefined
+}
+
 export function discoverEditorConnection(directory: string) {
   const root = path.join(os.homedir(), ".claude", "ide")
   const contains = (parent: string) => {
@@ -53,8 +59,8 @@ export function discoverEditorConnection(directory: string) {
       .filter((entry) => entry.endsWith(".lock"))
       .flatMap((entry) => {
         const file = path.join(root, entry)
-        const port = Number.parseInt(path.basename(file, ".lock"), 10)
-        if (!Number.isInteger(port) || port <= 0 || port > 65535) return []
+        const port = parseEditorPort(path.basename(file, ".lock"))
+        if (!port) return []
         try {
           const value = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>
           if (value.transport !== undefined && value.transport !== "ws") return []
