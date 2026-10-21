@@ -10,7 +10,8 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
     description: "Enable the experimental portable shell permission scanner. Defaults to false.",
   }),
   subagent_depth: NonNegativeInt.pipe(optional).annotate({
-    description: "Maximum subagent nesting depth. Defaults to 1.",
+    description:
+      "Maximum subagent nesting depth below a top-level session. 0 disables subagents and 1 stops subagents from launching their own. Defaults to 5.",
   }),
   shell_timeout: NonNegativeInt.pipe(optional).annotate({
     description:

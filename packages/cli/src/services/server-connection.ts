@@ -87,7 +87,10 @@ const resolveManaged = Effect.fnUntraced(function* (options: EnsureOptions, mism
 // 25 seconds). The generated client discards error response headers, so the Retry-After value
 // cannot be read back; one second is the value the server sends. Any other failure — an auth
 // rejection, or a health response that is not a compatible V2 response from a server that is
-// actually up — is terminal and keeps its current message.
+// actually up — is terminal and keeps its current message. When the window runs out, the
+// last failure goes through connectError too: a port that never answered is "could not
+// reach", while a server that kept answering 503 was reached and reports its incompatible
+// health response instead.
 const probe = Effect.fnUntraced(function* (endpoint: Endpoint, client: ReturnType<typeof OpenCode.make>) {
   const deadline = (yield* Clock.currentTimeMillis) + 25_000
   while (true) {
@@ -101,7 +104,7 @@ const probe = Effect.fnUntraced(function* (endpoint: Endpoint, client: ReturnTyp
     const cause = Cause.squash(outcome.cause)
     if (!transientProbeFailure(cause)) return yield* Effect.fail(connectError(endpoint, cause))
     const remaining = deadline - (yield* Clock.currentTimeMillis)
-    if (remaining <= 0) return yield* Effect.fail(new Error(`Could not reach server at ${endpoint.url}`, { cause }))
+    if (remaining <= 0) return yield* Effect.fail(connectError(endpoint, cause))
     yield* Effect.sleep(Math.min(1_000, remaining))
   }
 })

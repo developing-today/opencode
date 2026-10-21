@@ -24,6 +24,7 @@ import type { Command } from "@opencode/schema/command"
 import { Form } from "@opencode/schema/form"
 import type { Location } from "@opencode/schema/location"
 import type { Model } from "@opencode/schema/model"
+import type { Permission } from "@opencode/schema/permission"
 import type { Plugin } from "@opencode/schema/plugin"
 import type { Session } from "@opencode/schema/session"
 import type { SessionMessage } from "@opencode/schema/session-message"
@@ -42,6 +43,8 @@ type CommandInfo = typeof Command.Info.Encoded
 type LocationRef = typeof Location.PublicRef.Encoded
 type ModelInfo = typeof Model.Info.Encoded
 type ModelRef = typeof Model.Ref.Encoded
+type PermissionRequestInfo = typeof Permission.Request.Encoded
+type FormInfo = typeof Form.Info.Encoded
 type PluginInfo = typeof Plugin.Info.Encoded
 type SessionInfo = typeof Session.Info.Encoded
 type SessionMessageInfo = typeof SessionMessage.Info.Encoded
@@ -604,6 +607,8 @@ function startServer(options: WireOptions, changed: () => void) {
     cancelledForms,
     repliedForms,
     mcp,
+    /** Asks the server lists as pending. Tests add the ones raised before ACP subscribed. */
+    pending: { permissions: [] as PermissionRequestInfo[], forms: [] as FormInfo[] },
     send(...events: ReadonlyArray<OpenCodeEvent>) {
       events.forEach((event) => {
         const seq = ++counter.events
@@ -674,11 +679,11 @@ function startServer(options: WireOptions, changed: () => void) {
         })
         .finally(changed)
   }
-  const catalogRoute = (data: () => unknown) =>
-    route((_req, query) => {
-      const directory = query["location[directory]"] ?? "/workspace"
-      return Response.json({ location: { directory, project: { id: "global", directory } }, data: data() })
-    })
+  const located = (query: Record<string, string>, data: unknown) => {
+    const directory = query["location[directory]"] ?? "/workspace"
+    return Response.json({ location: { directory, project: { id: "global", directory } }, data })
+  }
+  const catalogRoute = (data: () => unknown) => route((_req, query) => located(query, data()))
   const page = <Item>(items: readonly Item[], query: Record<string, string>, limit: number) => {
     const start = Number(query.cursor ?? 0)
     const end = start + Number(query.limit ?? limit)
@@ -719,6 +724,8 @@ function startServer(options: WireOptions, changed: () => void) {
       "/api/agent": { GET: catalogRoute(() => catalog.agents) },
       "/api/command": { GET: catalogRoute(() => catalog.commands) },
       "/api/plugin": { GET: catalogRoute(() => catalog.plugins) },
+      "/api/permission/request": { GET: route((_req, query) => located(query, fake.pending.permissions)) },
+      "/api/form": { GET: route((_req, query) => located(query, fake.pending.forms)) },
       "/api/session": {
         GET: route((_req, query) => {
           const sessions = [...fake.sessions.values()]

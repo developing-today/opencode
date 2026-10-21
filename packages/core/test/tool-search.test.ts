@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test"
+import { existsSync } from "node:fs"
 import fs from "fs/promises"
 import path from "path"
 import { Effect, Layer } from "effect"
@@ -16,6 +17,7 @@ import { Session } from "@opencode/core/session"
 import { GlobTool } from "@opencode/core/tool/plugin/glob"
 import { GrepTool } from "@opencode/core/tool/plugin/grep"
 import { Tool } from "@opencode/core/tool"
+import { Global } from "@opencode/util/global"
 import { location } from "./fixture/location"
 import { tmpdir, tmpdirScoped } from "./fixture/tmpdir"
 import { it } from "./lib/effect"
@@ -33,6 +35,14 @@ const grepToolNode = makeLocationNode({
   deps: [Tool.node, Environment.node, Ripgrep.node, Location.node, FileAccess.node, Permission.node],
 })
 const sessionID = Session.ID.make("ses_search_tool_test")
+
+// The glob and grep tools drive a real rg binary. Without one on PATH
+// or in the global bin cache, RipgrepBinary falls through to downloading
+// one from the network, which the test harness forbids — the suite then
+// fails twelve times instead of surfacing the missing setup once (#72).
+const rgExecutable = process.platform === "win32" ? "rg.exe" : "rg"
+const describeSearch =
+  Bun.which(rgExecutable) || existsSync(path.join(Global.Path.bin, rgExecutable)) ? describe : describe.skip
 
 const withTools = <A, E, R>(
   directory: string,
@@ -66,7 +76,7 @@ const call = (name: "glob" | "grep", input: unknown) => ({
   call: { type: "tool-call" as const, id: `call-${name}`, name, input },
 })
 
-describe("search tools", () => {
+describeSearch("search tools", () => {
   for (const hidden of [undefined, false, true]) {
     for (const limit of hidden ? [10] : [1, 10]) {
       it.live(`glob honors hidden=${hidden} before limit=${limit}`, () =>

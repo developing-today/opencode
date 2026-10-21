@@ -128,6 +128,26 @@ Subagents run with fresh context in foreground or background child sessions. The
 }
 ```
 
+### Nested subagents
+
+A subagent can launch its own subagents. Those launches always run in the foreground, so the subagent's final answer includes their results. Nesting stops five levels below the top-level session; the next launch fails and the agent does that work itself. Set `experimental.subagent_depth` to change the limit:
+
+```jsonc
+{
+  "experimental": {
+    "subagent_depth": 2,
+  },
+}
+```
+
+| Value | Effect |
+| --- | --- |
+| `0` | No agent can launch subagents. |
+| `1` | Top-level sessions launch subagents; subagents cannot launch their own. |
+| `5` | Default. |
+
+The built-in `general` agent can launch subagents. `explore` cannot, because it only allows shell, read, and search tools.
+
 ## Builtins
 
 OpenCode includes these visible agents:
@@ -136,7 +156,7 @@ OpenCode includes these visible agents:
 | --- | --- | --- |
 | **Build** (`build`) | `primary` | Default coding agent. Tools are allowed by default; sensitive environment-file reads and access outside the workspace ask for approval. |
 | **Plan** (`plan`) | `primary` | Explores and plans without editing normal project files. It may write OpenCode plan files when asked, and shell commands remain permission-controlled. |
-| **General** (`general`) | `subagent` | Handles research and multi-step work with broad tool access, but cannot launch more subagents. |
+| **General** (`general`) | `subagent` | Handles research and multi-step work with broad tool access, and can launch its own subagents. |
 | **Explore** (`explore`) | `subagent` | Searches and reads code or web sources without editing files. |
 
 Override a built-in by using the same ID:

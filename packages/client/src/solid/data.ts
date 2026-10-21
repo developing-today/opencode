@@ -176,6 +176,9 @@ function createSync() {
   // that window are already covered, since the reload has not read anything yet.
   type Pending = { promise: Promise<void>; invalidated: boolean; started: boolean }
   const state = new Map<string, true | Pending>()
+  // Counts full invalidations, such as a disconnect. A read requested before the latest one may be older than what
+  // the reload brings.
+  let generation = 0
   const start = (key: string, load: () => Promise<void>, wait?: Promise<void>) => {
     const entry: Pending = { promise: Promise.resolve(), invalidated: false, started: !wait }
     state.set(key, entry)
@@ -207,10 +210,16 @@ function createSync() {
     has(key: string) {
       return state.has(key)
     },
+    /** Whether a settled read, or one in flight that no invalidation has overtaken, covers the key. */
+    current(key: string) {
+      const active = state.get(key)
+      return active === true || (active !== undefined && !active.invalidated)
+    },
     pending(key: string) {
       const active = state.get(key)
       return active !== undefined && active !== true
     },
+    generation: () => generation,
     invalidate(key?: string) {
       if (key) {
         const active = state.get(key)
@@ -218,6 +227,7 @@ function createSync() {
         if (active !== undefined && active !== true && active.started) active.invalidated = true
         return
       }
+      generation++
       state.forEach((active, current) => {
         if (active === true) state.delete(current)
         if (active !== true && active.started) active.invalidated = true
@@ -226,7 +236,29 @@ function createSync() {
   }
 }
 
+// Runs at most `limit` tasks at once and starts queued tasks in order as running ones settle.
+function createLimiter(limit: number) {
+  const queue: (() => void)[] = []
+  let running = 0
+  const next = () => {
+    running--
+    queue.shift()?.()
+  }
+  return <Value>(task: () => Promise<Value>) =>
+    new Promise<Value>((resolve, reject) => {
+      const start = () => {
+        running++
+        void Promise.resolve().then(task).then(resolve, reject).finally(next)
+      }
+      if (running < limit) return start()
+      queue.push(start)
+    })
+}
+
 const CHILD_PAGE = 200
+// Listings in flight across every walk below direct children in one client, so wide trees and several open
+// tabs do not queue the client's other requests behind discovery.
+const DESCENDANT_LISTINGS = 8
 
 export function createData(config: CreateDataInput) {
   const api = config.api
@@ -281,6 +313,7 @@ export function createData(config: CreateDataInput) {
   )
   const messageIndex = new Map<string, Map<string, number>>()
   const sync = createSync()
+  const descendantListing = createLimiter(DESCENDANT_LISTINGS)
   let activeUpdates: Map<string, DataSessionStatus | undefined> | undefined
   const pendingUpdates = new Map<string, Map<string, SessionInboxInfo | SessionInbox.Delivery | undefined>>()
 
@@ -531,6 +564,63 @@ export function createData(config: CreateDataInput) {
     if (page.data.length < CHILD_PAGE || !page.cursor.next) return page.data
 
     return [...page.data, ...(await listChildren({ cursor: page.cursor.next, limit: CHILD_PAGE }))]
+  }
+
+  // Subagents can launch their own, so the walk continues below every listed session. Each listing publishes
+  // its children as soon as it resolves, and every walk shares one listing limit. `seen` holds the sessions
+  // already listed, so every session is listed once and a parent cycle still ends the walk. Below the direct
+  // children the walk is best effort: a branch whose listing fails is left to live events rather than failing
+  // the sync and closing the view. The walk resolves to whether every listing succeeded.
+  async function syncDescendants(parents: SessionInfo[], seen: Set<string>): Promise<boolean> {
+    const branches = await Promise.all(
+      parents
+        .filter((parent) => {
+          if (seen.has(parent.id)) return false
+          seen.add(parent.id)
+          return true
+        })
+        .map(async (parent) => {
+          const generation = sync.generation()
+          const listed = await descendantListing(() =>
+            listChildren({ parentID: parent.id, order: "desc", limit: CHILD_PAGE }),
+          ).catch(() => undefined)
+          if (!listed) return false
+          const children = listed.filter((child) => !seen.has(child.id))
+          publishSessions(children.filter(unread), generation)
+          return syncDescendants(children, seen)
+        }),
+    )
+    return branches.every(Boolean)
+  }
+
+  // A listing fills in a session this client holds no info for, even while that session's own read is in flight: if
+  // the read fails, the listed snapshot is all there is. It also refreshes info that no current read covers, such as
+  // after a reconnect, including info whose read was still in flight when the reconnect overtook it. Info a current
+  // read covers is kept current by that read and by live events such as a rename, so an older listed snapshot must not
+  // replace it.
+  function unread(session: SessionInfo) {
+    return !store.session.info[session.id] || !sync.current(`session:${session.id}`)
+  }
+
+  // `generation` is the sync generation when the snapshot was requested. One requested before the latest full
+  // invalidation, such as a disconnect, may be older than what the reload brings: it only fills in sessions with no
+  // info, and leaves them unconfirmed so the reload still replaces them.
+  function publishSessions(sessions: SessionInfo[], generation: number) {
+    const stale = generation !== sync.generation()
+    const published = stale ? sessions.filter((session) => !store.session.info[session.id]) : sessions
+    batch(() => {
+      setStore(
+        "session",
+        "info",
+        produce((draft) => {
+          for (const session of published) draft[session.id] = session
+        }),
+      )
+      for (const session of published) {
+        if (!stale) sync.complete(`session:${session.id}`)
+        registerSession(session.id)
+      }
+    })
   }
 
   // Walk parentID upward through loaded session info to the family root. When a
@@ -1655,26 +1745,18 @@ export function createData(config: CreateDataInput) {
           throw error
         })
       },
+      /** With `children`, also loads every descendant session at any depth, so the family index is complete. */
       sync(sessionID: string, options?: { children?: boolean }) {
         return sync.run(options?.children ? `session.family:${sessionID}` : `session:${sessionID}`, async () => {
+          const generation = sync.generation()
           const [info, children] = await Promise.all([
             api().session.get({ sessionID }),
             options?.children ? listChildren({ parentID: sessionID, order: "desc", limit: CHILD_PAGE }) : [],
           ])
-          const sessions = [info, ...children]
-          batch(() => {
-            setStore(
-              "session",
-              "info",
-              produce((draft) => {
-                for (const session of sessions) draft[session.id] = session
-              }),
-            )
-            for (const session of sessions) {
-              sync.complete(`session:${session.id}`)
-              registerSession(session.id)
-            }
-          })
+          publishSessions([info, ...children.filter(unread)], generation)
+          // A walk that skipped a failed branch is not kept, so the next sync lists the tree again.
+          if (options?.children && !(await syncDescendants(children, new Set([sessionID]))))
+            sync.invalidate(`session.family:${sessionID}`)
         })
       },
       invalidate(sessionID: string) {

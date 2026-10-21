@@ -5,8 +5,8 @@ import type { Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import type { ShellCreateBefore } from "@opencode/plugin/effect/shell"
 import type { Tool } from "@opencode/schema/tool"
-import { Deferred, Effect, Schema, Scope } from "effect"
-import { Config } from "../../config.js"
+import { Deferred, Effect, Schema, Scope, Stream } from "effect"
+import { Config, reloadsSections } from "../../config.js"
 import { Environment } from "../../environment/index.js"
 import { Job } from "../../job.js"
 import { FileAccess } from "../../file-access.js"
@@ -116,7 +116,24 @@ export const Plugin = {
     const compatibleShell = shellSelect.resolve({ priority: "compat" })
     const permission = yield* Permission.Service
     const config = yield* Config.Service
-    const defaultTimeout = Config.latest(yield* config.entries(), "experimental")?.shell_timeout ?? DEFAULT_TIMEOUT_MS
+    // The timeout description is rendered from this value when the tool registry
+    // rebuilds, so keep it current: execute already re-reads the config on every
+    // call, and the advertised default must not keep the boot-time value after a
+    // mid-session shell_timeout edit.
+    let defaultTimeout = DEFAULT_TIMEOUT_MS
+    const refreshDefaultTimeout = Effect.fnUntraced(function* () {
+      const next = Config.latest(yield* config.entries(), "experimental")?.shell_timeout ?? DEFAULT_TIMEOUT_MS
+      if (next === defaultTimeout) return
+      defaultTimeout = next
+      yield* ctx.tool.reload()
+    })
+    // Subscribed before the first read so an edit racing activation is not missed.
+    yield* ctx.event.subscribe().pipe(
+      Stream.filter((event) => reloadsSections(event, ["experimental"])),
+      Stream.runForEach(() => refreshDefaultTimeout()),
+      Effect.forkScoped({ startImmediately: true }),
+    )
+    yield* refreshDefaultTimeout()
 
     const prepare = Effect.fn("ShellTool.prepare")(function* (invocation: ShellCreateBefore, context: Tool.Context) {
       const source = {

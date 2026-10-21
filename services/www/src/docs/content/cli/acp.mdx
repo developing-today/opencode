@@ -310,9 +310,10 @@ OpenCode knows the model's context size. `cost` is the session's total cost in U
 
 ### Child sessions
 
-While a prompt runs, OpenCode sends updates from its child sessions as `session/update` notifications on the prompt's
-session. Each update carries `_meta["opencode/child-session"]`. OpenCode prefixes tool call IDs with
-`<childSessionId>:`. It prefixes tool call titles with the child session's title if the child session has one.
+While a prompt runs, OpenCode sends updates from the prompt's child sessions, at any depth, as `session/update`
+notifications on the prompt's session. That includes a child session continued from an earlier prompt. Each update
+carries `_meta["opencode/child-session"]`. OpenCode prefixes tool call IDs with `<childSessionId>:`. It prefixes tool
+call titles with the child session's title if the child session has one.
 
 ```json
 {
@@ -332,8 +333,33 @@ session. Each update carries `_meta["opencode/child-session"]`. OpenCode prefixe
 | `depth`    | `number` | 1 for a child of the prompt's session, 2 for a child of that child session, and so on. |
 | `title`    | `string` | The child session's title. OpenCode omits it when the child session has no title.      |
 
-Permission requests from a child session carry the same key on `toolCall._meta`. After the prompt ends, OpenCode stops
-sending child session updates. Permission requests and questions from child sessions still reach the client.
+Permission requests from a child session carry the same key on `toolCall._meta`.
+
+### Asks outside a prompt
+
+Permission requests and questions reach the client from the session and every session below it, even when no prompt
+is running. This request comes from a child session that a background result woke after its prompt ended:
+
+```json
+{
+  "sessionId": "ses_123",
+  "toolCall": {
+    "toolCallId": "ses_child:per_1",
+    "title": "Explore the codebase: src/app.ts",
+    "_meta": { "opencode/child-session": { "id": "ses_child", "parentID": "ses_123", "depth": 1 } }
+  },
+  "options": [{ "optionId": "once", "kind": "allow_once", "name": "Allow once" }]
+}
+```
+
+| When                                              | What OpenCode does                                                                                                                      |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| A prompt ends                                     | Keeps following the session until its next prompt or `session/close`. Asks still reach the client; `session/update` notifications stop. |
+| A prompt starts                                   | Asks the pending permission requests and questions in the session's tree before it sends the prompt.                                    |
+| After `session/load` or `session/resume` responds | Asks the tree's pending permission requests and questions, then follows the session as after a prompt.                                  |
+
+When a prompt starts while the client still shows a request from between prompts, OpenCode cancels that request with
+`$/cancel_request` and asks it again.
 
 ### Retry status
 

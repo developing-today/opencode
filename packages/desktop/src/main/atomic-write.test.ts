@@ -1,0 +1,96 @@
+import { describe, expect, spyOn, test } from "bun:test"
+import fs, { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { renameSyncWithRetry, writeFileSyncAtomic } from "./atomic-write"
+
+const dir = () => mkdtempSync(path.join(tmpdir(), "opencode-atomic-write-"))
+
+const transient = (code: string) => Object.assign(new Error(`rename failed: ${code}`), { code })
+
+describe("renameSyncWithRetry", () => {
+  test("retries EPERM, EACCES and EBUSY until the rename lands", () => {
+    for (const code of ["EPERM", "EACCES", "EBUSY"]) {
+      const root = dir()
+      const source = path.join(root, "source")
+      const destination = path.join(root, "destination")
+      fs.writeFileSync(source, "content")
+      const rename = fs.renameSync
+      let calls = 0
+
+      const spy = spyOn(fs, "renameSync").mockImplementation((from, to) => {
+        calls += 1
+
+        if (calls < 3) throw transient(code)
+        rename(from, to)
+      })
+
+      try {
+        renameSyncWithRetry(source, destination)
+        expect(calls).toBe(3)
+        expect(readFileSync(destination, "utf8")).toBe("content")
+      } finally {
+        spy.mockRestore()
+      }
+    }
+  })
+
+  test("a non-transient error throws on the first attempt", () => {
+    let calls = 0
+
+    const spy = spyOn(fs, "renameSync").mockImplementation(() => {
+      calls += 1
+      throw transient("ENOENT")
+    })
+
+    try {
+      expect(() => renameSyncWithRetry("source", "destination")).toThrow("rename failed: ENOENT")
+      expect(calls).toBe(1)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("a transient error that never clears throws after five attempts", () => {
+    let calls = 0
+
+    const spy = spyOn(fs, "renameSync").mockImplementation(() => {
+      calls += 1
+      throw transient("EPERM")
+    })
+
+    try {
+      expect(() => renameSyncWithRetry("source", "destination")).toThrow("rename failed: EPERM")
+      expect(calls).toBe(5)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+describe("writeFileSyncAtomic", () => {
+  test("writes the content and leaves no temp file", () => {
+    const root = dir()
+    const file = path.join(root, "nested", "state.json")
+    writeFileSyncAtomic(file, '{"ready":true}')
+    expect(readFileSync(file, "utf8")).toBe('{"ready":true}')
+    expect(readdirSync(path.dirname(file))).toEqual(["state.json"])
+  })
+
+  test("a rename that keeps failing throws and leaves no temp file", () => {
+    const root = dir()
+    const file = path.join(root, "state.json")
+
+    const spy = spyOn(fs, "renameSync").mockImplementation(() => {
+      throw transient("EPERM")
+    })
+
+    try {
+      expect(() => writeFileSyncAtomic(file, "{}")).toThrow("rename failed: EPERM")
+      expect(existsSync(file)).toBe(false)
+      expect(readdirSync(root)).toEqual([])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})

@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test"
+import path from "node:path"
 import { Agent } from "@opencode/schema/agent"
 import { Location } from "@opencode/schema/location"
 import { Project } from "@opencode/schema/project"
@@ -19,15 +20,22 @@ const context: Tool.Context = {
   progress: () => Effect.void,
 }
 
+// Fixture paths are built with the platform path module: `absolute` and
+// `external` are native paths by contract, so a POSIX literal only matches
+// on POSIX hosts. `resource` values are forward-slash normalized by the
+// source and keep their literal form in the expectations below.
+const root = path.resolve("/work/repo")
+const outside = path.join(path.parse(root).root, "tmp", "out")
+
 const make = () => {
   const asserted: Array<{ action: string; resources: ReadonlyArray<string> }> = []
   const files = GitHubFiles.make({
     location: new Location.Info({
-      directory: AbsolutePath.make("/work/repo/packages/app"),
+      directory: AbsolutePath.make(path.join(root, "packages", "app")),
       project: {
         id: Project.ID.global,
-        directory: AbsolutePath.make("/work/repo"),
-        canonical: AbsolutePath.make("/work/repo"),
+        directory: AbsolutePath.make(root),
+        canonical: AbsolutePath.make(root),
       },
     }),
     permission: {
@@ -42,7 +50,10 @@ describe("GitHubFiles", () => {
     Effect.gen(function* () {
       const { files, asserted } = make()
       const sibling = yield* files.resolve({ path: "../lib/shot.png", kind: "file" })
-      expect(sibling).toEqual({ absolute: "/work/repo/packages/lib/shot.png", resource: "../lib/shot.png" })
+      expect(sibling).toEqual({
+        absolute: path.join(root, "packages", "lib", "shot.png"),
+        resource: "../lib/shot.png",
+      })
       yield* files.authorizeRead("assets/shot.png", context)
       expect(asserted).toEqual([{ action: "read", resources: ["assets/shot.png"] }])
     }),
@@ -51,8 +62,9 @@ describe("GitHubFiles", () => {
   it.live("a directory named ..cache at the project root is inside the project, not above it", () =>
     Effect.gen(function* () {
       const { files, asserted } = make()
-      const file = yield* files.authorizeRead("/work/repo/..cache/file", context)
-      expect(file).toEqual({ absolute: "/work/repo/..cache/file", resource: "../../..cache/file" })
+      const cached = path.join(root, "..cache", "file")
+      const file = yield* files.authorizeRead(cached, context)
+      expect(file).toEqual({ absolute: cached, resource: "../../..cache/file" })
       expect(asserted).toEqual([{ action: "read", resources: ["../../..cache/file"] }])
     }),
   )
@@ -60,14 +72,16 @@ describe("GitHubFiles", () => {
   it.live("paths outside the project need external-directory approval for their directory first", () =>
     Effect.gen(function* () {
       const { files, asserted } = make()
-      const file = yield* files.authorizeRead("/tmp/out/shot.png", context)
-      expect(file).toEqual({ absolute: "/tmp/out/shot.png", resource: "/tmp/out/shot.png", external: "/tmp/out" })
-      const directory = yield* files.resolve({ path: "/tmp/downloads", kind: "directory" })
+      const shot = path.join(outside, "shot.png")
+      const downloads = path.join(path.parse(root).root, "tmp", "downloads")
+      const file = yield* files.authorizeRead(shot, context)
+      expect(file).toEqual({ absolute: shot, resource: shot.replaceAll("\\", "/"), external: outside })
+      const directory = yield* files.resolve({ path: downloads, kind: "directory" })
       yield* files.authorizeExternal([directory], context)
       expect(asserted).toEqual([
-        { action: "external_directory", resources: ["/tmp/out/*"] },
-        { action: "read", resources: ["/tmp/out/shot.png"] },
-        { action: "external_directory", resources: ["/tmp/downloads/*"] },
+        { action: "external_directory", resources: [`${outside.replaceAll("\\", "/")}/*`] },
+        { action: "read", resources: [shot.replaceAll("\\", "/")] },
+        { action: "external_directory", resources: [`${downloads.replaceAll("\\", "/")}/*`] },
       ])
     }),
   )

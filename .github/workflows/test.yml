@@ -1,16 +1,21 @@
 name: test
+# RUNNER-SWITCH (2026-10-18): runners in this workflow were switched from Blacksmith to
+# GitHub-hosted at Drew's direction. To switch back, grep the repo for RUNNER-SWITCH and
+# swap each commented Blacksmith line back in for the active line under it. To choose per
+# run instead, use an expression on runs-on, e.g. ${{ vars.RUNNER_UBUNTU || 'ubuntu-24.04' }},
+# or gate individual steps with if: on the runner.
 
 on:
   push:
     branches:
-      - dev
+      - main
   pull_request:
   workflow_dispatch:
 
 concurrency:
-  # Keep every run on dev so cancelled checks do not pollute the default branch
+  # Keep every run on main so cancelled checks do not pollute the default branch
   # commit history. PRs and other branches still share a group and cancel stale runs.
-  group: ${{ case(github.ref == 'refs/heads/dev', format('{0}-{1}', github.workflow, github.run_id), format('{0}-{1}', github.workflow, github.event.pull_request.number || github.ref)) }}
+  group: ${{ case(github.ref == 'refs/heads/main', format('{0}-{1}', github.workflow, github.run_id), format('{0}-{1}', github.workflow, github.event.pull_request.number || github.ref)) }}
   cancel-in-progress: true
 
 permissions:
@@ -22,16 +27,22 @@ env:
 
 jobs:
   affected:
+    timeout-minutes: 15
     name: affected packages
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     outputs:
-      e2e: ${{ steps.packages.outputs.app == 'true' && github.ref_name != 'dev' && github.head_ref != 'dev' }}
+      # Suppress e2e only on pushes to the default branch. Keying this on
+      # head_ref instead would also suppress e2e for any pull request whose
+      # source branch is named main (on pull_request events ref_name is
+      # '<number>/merge', so head_ref was the only term that could fire).
+      e2e: ${{ steps.packages.outputs.app == 'true' && (github.event_name == 'pull_request' || github.ref_name != 'main') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Pull requests diff against the merge's first parent; pushes diff against the previous dev head.
+          # Pull requests diff against the merge's first parent; pushes diff against the previous main head.
           fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 0 }}
 
       - name: Setup Bun
@@ -54,15 +65,18 @@ jobs:
           bun -e 'const result = await Bun.file("affected.json").json(); console.log(`app=${result.packages.count > 0}`)' >> "$GITHUB_OUTPUT"
 
   unit:
+    timeout-minutes: 20
     name: unit (${{ matrix.settings.name }})
     strategy:
       fail-fast: false
       matrix:
         settings:
           - name: linux
-            host: blacksmith-4vcpu-ubuntu-2404
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-ubuntu-2404
+            host: ubuntu-24.04
           - name: windows
-            host: blacksmith-4vcpu-windows-2025
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-windows-2025
+            host: windows-2025
     runs-on: ${{ matrix.settings.host }}
     defaults:
       run:
@@ -72,7 +86,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Pull requests diff against the merge's first parent; pushes diff against the previous dev head.
+          # Pull requests diff against the merge's first parent; pushes diff against the previous main head.
           fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 0 }}
 
       - name: Setup Node
@@ -83,6 +97,43 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
 
+      - name: Install ripgrep
+        run: |
+          # Unit tests drive a real rg binary (ripgrep, search tools) and
+          # the test harness forbids RipgrepBinary's download fallback, so
+          # unit cannot depend on whether the runner image ships one (#72).
+          # Pin the same release src/ripgrep/binary.ts resolves: 15.1.0.
+          version=15.1.0
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64) platform="x86_64-unknown-linux-musl"; extension="tar.gz" ;;
+            Linux-ARM64) platform="aarch64-unknown-linux-gnu"; extension="tar.gz" ;;
+            Windows-X64) platform="x86_64-pc-windows-msvc"; extension="zip" ;;
+            Windows-ARM64) platform="aarch64-pc-windows-msvc"; extension="zip" ;;
+            *) echo "no ripgrep asset for runner ${{ runner.os }}-${{ runner.arch }}" >&2; exit 1 ;;
+          esac
+          archive="${RUNNER_TEMP}/ripgrep-${version}-${platform}.${extension}"
+          dest="${RUNNER_TEMP}/ripgrep-${version}"
+          mkdir -p "$dest"
+          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${version}/ripgrep-${version}-${platform}.${extension}" -o "$archive"
+          if [ "$extension" = "zip" ]; then
+            # Git's GNU tar cannot read zip; use the bsdtar in System32,
+            # the same tool src/ripgrep/binary.ts extracts zips with.
+            "/c/Windows/System32/tar.exe" -xf "$archive" -C "$dest"
+          else
+            tar -xzf "$archive" -C "$dest"
+          fi
+          bin_dir="$dest/ripgrep-${version}-${platform}"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          export PATH="$bin_dir:$PATH"
+          rg --version
+
+      - name: Test lint rules
+        # The main ast-grep rules (script/ast-grep/rules) have their own
+        # test suite (test:lint-rules) that nothing ran (#153); the
+        # effect-simplification suite below was already wired up.
+        if: runner.os == 'Linux'
+        run: bun run test:lint-rules
+
       - name: Test Effect simplification rules
         if: runner.os == 'Linux'
         run: bun run test:effect-simplification-rules
@@ -90,6 +141,21 @@ jobs:
       - name: Check Effect simplifications
         if: runner.os == 'Linux'
         run: bun run lint:effect-simplifications
+
+      - name: Test mcpx-cleanup script
+        # script/ is not a workspace, so turbo test never picks up
+        # script/mcpx-cleanup.test.ts, and the root bunfig test root
+        # deliberately blocks running tests from the repo root (#138).
+        # Run the file explicitly from its own directory instead.
+        working-directory: script
+        run: bun test mcpx-cleanup.test.ts
+
+      - name: Check turbo.json for duplicate keys
+        # Turbo silently keeps the last definition of a repeated task key
+        # (#145); the script-level test scans turbo.json duplicate-aware.
+        # Same script/ wiring as the mcpx-cleanup step above.
+        working-directory: script
+        run: bun test turbo-json.test.ts
 
       - name: Configure git identity
         run: |
@@ -106,7 +172,7 @@ jobs:
           fi
           GITHUB_ACTIONS=false bun turbo test --affected --concurrency=3
         env:
-          OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: ${{ runner.os == 'Windows' && 'true' || 'false' }}
+          OPENCODE_DISABLE_FILEWATCHER: ${{ runner.os == 'Windows' && 'true' || 'false' }}
           TURBO_SCM_BASE: ${{ github.event_name == 'pull_request' && format('{0}^1', github.sha) || github.event.before }}
           TURBO_SCM_HEAD: ${{ github.sha }}
 
@@ -139,15 +205,18 @@ jobs:
         run: bun run check:generated
 
   build:
+    timeout-minutes: 20
     name: build (${{ matrix.settings.name }})
     strategy:
       fail-fast: false
       matrix:
         settings:
           - name: linux
-            host: blacksmith-4vcpu-ubuntu-2404
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-ubuntu-2404
+            host: ubuntu-24.04
           - name: windows
-            host: blacksmith-4vcpu-windows-2025
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-windows-2025
+            host: windows-2025
     runs-on: ${{ matrix.settings.host }}
     defaults:
       run:
@@ -157,7 +226,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Pull requests diff against the merge's first parent; pushes diff against the previous dev head.
+          # Pull requests diff against the merge's first parent; pushes diff against the previous main head.
           fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 0 }}
 
       - name: Setup Bun
@@ -205,6 +274,7 @@ jobs:
           bun run script/service-smoke.ts --node
 
   e2e-suite:
+    timeout-minutes: 30
     name: e2e (${{ matrix.settings.name }}, ${{ matrix.suite.id }})
     needs: affected
     if: needs.affected.outputs.e2e == 'true'
@@ -213,9 +283,11 @@ jobs:
       matrix:
         settings:
           - name: linux
-            host: blacksmith-4vcpu-ubuntu-2404
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-ubuntu-2404
+            host: ubuntu-24.04
           - name: windows
-            host: blacksmith-4vcpu-windows-2025
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-windows-2025
+            host: windows-2025
         # Playwright splits whole spec files across shards by test count, not duration. Every app-N
         # entry must use the same total, and the entries must cover 1..total. The service worker suite
         # reuses shard 2's production build. Each component suite runs once per OS in its own leg, so the
@@ -316,6 +388,7 @@ jobs:
   # Branch rules require one e2e check per OS. These keep those names and pass only when every
   # leg above passed, or when no leg was needed; a failing leg on either OS fails both checks.
   e2e:
+    timeout-minutes: 20
     name: e2e (${{ matrix.os }})
     needs: [affected, e2e-suite]
     if: ${{ !cancelled() }}
@@ -323,7 +396,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [linux, windows]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - name: Check browser test results
         env:

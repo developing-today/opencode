@@ -1,4 +1,9 @@
 name: publish
+# RUNNER-SWITCH (2026-10-18): runners in this workflow were switched from Blacksmith to
+# GitHub-hosted at Drew's direction. To switch back, grep the repo for RUNNER-SWITCH and
+# swap each commented Blacksmith line back in for the active line under it. To choose per
+# run instead, use an expression on runs-on, e.g. ${{ vars.RUNNER_UBUNTU || 'ubuntu-24.04' }},
+# or gate individual steps with if: on the runner.
 run-name: "${{ format('release {0}', inputs.bump) }}"
 
 on:
@@ -40,10 +45,12 @@ env:
 
 jobs:
   version:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     if: github.repository == 'anomalyco/opencode'
     steps:
-      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
 
@@ -77,11 +84,12 @@ jobs:
 
   build-cli:
     needs: version
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     if: github.repository == 'anomalyco/opencode'
     steps:
-      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-tags: true
 
@@ -139,12 +147,13 @@ jobs:
       version: ${{ needs.version.outputs.version }}
 
   sign-cli-macos:
+    timeout-minutes: 30
     needs: build-cli
     runs-on: macos-26
     # Beta publishes only the desktop app, which signs the CLI it bundles.
     if: github.repository == 'anomalyco/opencode' && github.ref_name != 'beta'
     steps:
-      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - uses: apple-actions/import-codesign-certs@8f3fb608891dd2244cdab3d69cd68c0d37a7fe93 # v2.0.0
         with:
@@ -195,11 +204,12 @@ jobs:
 
   build-node-app-archive:
     needs: version
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     if: github.repository == 'anomalyco/opencode' && github.ref_name != 'beta' && !(github.ref_name == 'dev' && (inputs.bump || inputs.version))
     steps:
-      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - uses: ./.github/actions/setup-bun
 
@@ -216,6 +226,7 @@ jobs:
           if-no-files-found: error
 
   build-node-cli:
+    timeout-minutes: 60
     needs:
       - version
       - build-node-app-archive
@@ -225,22 +236,26 @@ jobs:
       matrix:
         settings:
           - target: linux-arm64
-            host: blacksmith-4vcpu-ubuntu-2404-arm
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-ubuntu-2404-arm
+            host: ubuntu-24.04-arm
           - target: linux-x64
-            host: blacksmith-4vcpu-ubuntu-2404
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-ubuntu-2404
+            host: ubuntu-24.04
           - target: darwin-arm64
             host: macos-26
           - target: windows-arm64
-            host: blacksmith-4vcpu-windows-2025
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-windows-2025
+            host: windows-2025
             bun_install_flags: --cpu=*
           - target: windows-x64
-            host: blacksmith-4vcpu-windows-2025
+            # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): host: blacksmith-4vcpu-windows-2025
+            host: windows-2025
     runs-on: ${{ matrix.settings.host }}
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - uses: ./.github/actions/setup-bun
         with:
@@ -274,9 +289,11 @@ jobs:
           if-no-files-found: error
 
   sign-cli-windows:
+    timeout-minutes: 30
     needs:
       - sign-cli-macos
-    runs-on: blacksmith-4vcpu-windows-2025
+    # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: windows-2025
     if: github.repository == 'anomalyco/opencode' && github.ref_name == 'dev'
     env:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -286,7 +303,7 @@ jobs:
       AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}
       AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
     steps:
-      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -343,6 +360,7 @@ jobs:
           if-no-files-found: error
 
   build-electron:
+    timeout-minutes: 90
     # Desktop packaging re-signs the bundled CLI on macOS and Windows, so it starts from the unsigned build.
     needs:
       - version
@@ -373,18 +391,21 @@ jobs:
             target: aarch64-pc-windows-msvc
             platform_flag: --win --arm64
             bun_install_flags: --cpu=*
-          - host: "blacksmith-4vcpu-windows-2025"
+          # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): - host: "blacksmith-4vcpu-windows-2025"
+          - host: "windows-2025"
             target: x86_64-pc-windows-msvc
             platform_flag: --win
-          - host: "blacksmith-4vcpu-ubuntu-2404"
+          # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): - host: "blacksmith-4vcpu-ubuntu-2404"
+          - host: "ubuntu-24.04"
             target: x86_64-unknown-linux-gnu
             platform_flag: --linux
-          - host: "blacksmith-4vcpu-ubuntu-2404-arm"
+          # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): - host: "blacksmith-4vcpu-ubuntu-2404-arm"
+          - host: "ubuntu-24.04-arm"
             target: aarch64-unknown-linux-gnu
             platform_flag: --linux --arm64
     runs-on: ${{ matrix.settings.host }}
     steps:
-      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -540,6 +561,7 @@ jobs:
           path: packages/desktop/dist/latest*.yml
 
   publish:
+    timeout-minutes: 30
     needs:
       - version
       - build-cli
@@ -549,9 +571,10 @@ jobs:
       - sign-cli-windows
       - build-electron
     if: always() && !failure() && !cancelled()
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - uses: ./.github/actions/setup-bun
 
@@ -661,11 +684,13 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   notify-discord-v2:
+    timeout-minutes: 10
     needs:
       - version
       - publish
     if: ${{ !cancelled() && github.repository == 'anomalyco/opencode' && github.ref_name == 'dev' && needs.version.outputs.release && needs.publish.result == 'success' }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       # Unlike dev, V2 publishes a tag rather than a GitHub Release event.
       - name: Announce V2 release in Discord

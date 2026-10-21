@@ -51,7 +51,7 @@ for (const entrypoint of ["create", "layer"] as const) {
           _tag: "SessionNotFoundError",
         })
         expect(yield* client.sessions.get({ sessionID: missing }).pipe(Effect.flip)).toMatchObject({
-          _tag: "Session.NotFoundError",
+          _tag: "SessionNotFoundError",
         })
         // Binding the SDK's transport must not change the caller's surrounding context.
         expect(yield* FetchHttpClient.Fetch).toBe(ambient)

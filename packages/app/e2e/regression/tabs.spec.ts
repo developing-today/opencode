@@ -121,6 +121,58 @@ test("inactive session attention dots share the close control without marking th
   await expectPath(page, sessionHref(a.id))
 })
 
+test("a background tab waiting on a subagent's ask lights up and reopens at its root to answer it", async ({
+  page,
+}) => {
+  const viewed = { id: "ses_tab_b_viewed", title: "Viewed subagent", parentID: b.id }
+  const asking = { id: "ses_tab_b_asking", title: "Asking subagent", parentID: b.id }
+  const replies: { sessionID: string; permissionID: string; body: unknown }[] = []
+  await mockWorkspace(page, {
+    name: "Tabs",
+    sessions: [a, b, viewed, asking],
+    // The subagent asked before the app loaded and keeps running while it waits.
+    sessionStatus: { [asking.id]: { type: "busy" } },
+    sessionPermissions: {
+      [asking.id]: [
+        {
+          id: "permission-subagent",
+          sessionID: asking.id,
+          action: "shell",
+          resources: ["git push"],
+          metadata: {},
+          save: [],
+        },
+      ],
+    },
+    onPermissionReply: (reply) => replies.push(reply),
+    seed: { tabs: [a.id, b.id] },
+  })
+
+  // Tab B shows another subagent, whose view cannot show this ask, before the tab moves to the background.
+  await page.goto(sessionHref(viewed.id))
+
+  const tabB = page.locator("[data-titlebar-tab-slot]", {
+    has: page.locator('[data-slot="tab-title"]', { hasText: b.title }),
+  })
+
+  const link = tabB.locator("[data-titlebar-tab-link]")
+  await expect(link).toHaveAttribute("href", sessionHref(viewed.id))
+  await page.locator(`[data-titlebar-tab-link][href="${sessionHref(a.id)}"]`).click()
+  await expectPath(page, sessionHref(a.id))
+  await page.mouse.move(0, 0)
+  await expect(tabB.locator('[data-slot="tab-unread-dot"]')).toBeVisible()
+  await expect(link).toHaveAttribute("href", sessionHref(b.id))
+
+  await link.click()
+  await expectPath(page, sessionHref(b.id))
+  const permission = page.locator('[data-component="dock-prompt"][data-kind="permission"]')
+  await expect(permission.getByText("git push")).toBeVisible()
+  await permission.getByRole("button", { name: "Allow once" }).click()
+  await expect
+    .poll(() => replies)
+    .toEqual([{ sessionID: asking.id, permissionID: "permission-subagent", body: { decision: "once" } }])
+})
+
 test("a tab does not reopen its title editor while a rename is saving", async ({ page }) => {
   await mockWorkspace(page, { name: "Tabs", sessions: [a, b] })
   await page.goto(sessionHref(a.id))

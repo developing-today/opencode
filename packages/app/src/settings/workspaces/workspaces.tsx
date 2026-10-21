@@ -30,6 +30,7 @@ import {
   inspectWorkspaceDeletion,
   managedWorkspaceDirectories,
   mergeWorkspaceSessionInventory,
+  nestWorkspaceSessions,
   removeWorkspacesSequentially,
   sessionsForWorkspace,
   type WorkspaceDeleteInspection,
@@ -519,11 +520,11 @@ export const SettingsWorkspaces: Component<{
                       </div>
                       <Show when={linked().length > 0}>
                         <div class="settings-workspaces-sessions">
-                          <For each={linked()}>
-                            {(session) => (
-                              <div class="settings-workspaces-session">
-                                <span>{sessionLabel(session)}</span>
-                                <Show when={linked().length > 1 ? sessionTime(session) : undefined}>
+                          <For each={nestWorkspaceSessions(linked())}>
+                            {(row) => (
+                              <div class="settings-workspaces-session" style={{ "--session-depth": row.depth }}>
+                                <span>{sessionLabel(row.session)}</span>
+                                <Show when={linked().length > 1 ? sessionTime(row.session) : undefined}>
                                   {(time) => <span class="settings-workspaces-session-time">{time()}</span>}
                                 </Show>
                               </div>

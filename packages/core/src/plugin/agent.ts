@@ -89,10 +89,7 @@ export const Plugin = define({
         item.description =
           "General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."
         item.mode = "subagent"
-        item.permissions.push(
-          { action: "question", resource: "*", effect: "deny" },
-          { action: "subagent", resource: "*", effect: "deny" },
-        )
+        item.permissions.push({ action: "question", resource: "*", effect: "deny" })
       })
 
       editor.update(Agent.ID.make("explore"), (item) => {

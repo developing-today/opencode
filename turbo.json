@@ -45,6 +45,14 @@
       "dependsOn": ["transit"],
       "outputs": []
     },
+    "@opencode/changelog#test": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
+    "@opencode/update#test": {
+      "dependsOn": ["transit"],
+      "outputs": []
+    },
     "@opencode/codemode#test": {
       "dependsOn": ["transit"],
       "outputs": []
@@ -144,49 +152,20 @@
       "dependsOn": ["transit"],
       "outputs": []
     },
-    "@opencode/util#test": {
+    "@opencode/console-app#test": {
       "dependsOn": ["transit"],
       "outputs": []
     },
-    "@opencode/client#test": {
-      "dependsOn": ["^build"],
+    "@opencode/stats-app#test": {
+      "dependsOn": ["transit"],
       "outputs": []
     },
-    "@opencode/gui-extensions#test": {
-      "dependsOn": ["^build"],
-      "outputs": []
-    },
-    "@opencode/http-recorder#test": {
-      "outputs": []
-    },
-    "@opencode/merman#test": {
-      "dependsOn": ["^build"],
-      "outputs": []
-    },
-    "@opencode/plugin#test": {
-      "dependsOn": ["^build"],
-      "outputs": []
-    },
-    "@opencode/plugin-browser#test": {
-      "dependsOn": ["^build"],
-      "outputs": []
-    },
-    "@opencode/plugin-github#test": {
-      "dependsOn": ["^build"],
-      "outputs": []
-    },
-    "@opencode/sdk#test": {
-      "dependsOn": ["^build"],
-      "outputs": []
-    },
-    "@opencode/simulation#test": {
-      "dependsOn": ["^build"],
-      "outputs": []
-    },
-    "@opencode/theme#test": {
+    "@opencode/stats-core#test": {
+      "dependsOn": ["transit"],
       "outputs": []
     },
     "@opencode/util#test": {
+      "dependsOn": ["transit"],
       "outputs": []
     },
     "@opencode/sdk#verify:package": {

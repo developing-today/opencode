@@ -1,4 +1,9 @@
 name: deploy
+# RUNNER-SWITCH (2026-10-18): runners in this workflow were switched from Blacksmith to
+# GitHub-hosted at Drew's direction. To switch back, grep the repo for RUNNER-SWITCH and
+# swap each commented Blacksmith line back in for the active line under it. To choose per
+# run instead, use an expression on runs-on, e.g. ${{ vars.RUNNER_UBUNTU || 'ubuntu-24.04' }},
+# or gate individual steps with if: on the runner.
 
 on:
   push:
@@ -8,7 +13,10 @@ on:
       - beta
   workflow_dispatch:
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
@@ -16,11 +24,13 @@ permissions:
 
 jobs:
   deploy:
+    timeout-minutes: 30
     if: github.repository == 'anomalyco/opencode' && (github.ref_name == 'dev' || github.ref_name == 'production' || github.ref_name == 'beta')
-    runs-on: ${{ github.ref_name == 'dev' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+    # RUNNER-SWITCH: Blacksmith (commented out 2026-10-18): runs-on: ${{ github.ref_name == 'dev' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
+    runs-on: ${{ github.ref_name == 'dev' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     environment: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - uses: ./.github/actions/setup-bun
 
