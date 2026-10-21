@@ -310,9 +310,10 @@ export function weightRulesAcross(schedules: readonly ConfigModelRoutes.GlobalSc
 }
 
 /** One route's targets and selection tree, with what the pool's author should hear about it. Targets come
- * from `definitions`; models that matching keys add come through `candidate`, which returns the model as
- * it can be used now, or undefined when its provider is not connected. Declared `levels` are applied
- * here: a target that cannot run one of them sits it out. */
+ * from `definitions`; `candidate` returns a model as it can be used now, or undefined when its provider is not
+ * connected. Models that matching keys add come only through `candidate`, and a target uses it when it has
+ * the model, so configured variants count. The route's declared `levels` are applied here: a target that
+ * cannot run one of them sits it out. A nested pool's are applied where it is collected. */
 export function expand(
   id: string,
   routes: ReadonlyMap<string, ConfigModelRoutes.Route>,
@@ -332,14 +333,7 @@ export function expand(
   const levels = routes.get(id)?.levels
   if (levels === undefined || collected.leaves.length === 0)
     return { leaves: collected.leaves, nodes: collected.nodes, diagnostics: collected.diagnostics }
-  const leaves = collected.leaves.map((leaf) => {
-    const missing = levels.filter((level) => !runs(leaf, level) && leaf.variantMap?.[level] !== false)
-    if (missing.length === 0) return leaf
-    return {
-      ...leaf,
-      variantMap: { ...leaf.variantMap, ...Object.fromEntries(missing.map((level) => [level, false] as const)) },
-    }
-  })
+  const leaves = collected.leaves.map((leaf) => keptTo(leaf, levels, false))
   return {
     leaves,
     nodes: collected.nodes,
@@ -425,6 +419,13 @@ function collect(
     }
     const current = routes.get(routeID)
     if (!current) return
+    // A pool pinned at a level it does not declare offers its members nowhere there.
+    if (inheritedVariant !== undefined && current.levels !== undefined && !current.levels.includes(inheritedVariant)) {
+      diagnostics.push(
+        `pool ${routeID} is pinned at level ${inheritedVariant}, which it does not declare, so it adds nothing`,
+      )
+      return
+    }
     const nextTrail = new Set(trail).add(routeID)
     // The config loader skips a pool with a malformed matching key, so this fails only for a pool that
     // never went through it; such a pool contributes nothing rather than part of what it says.
@@ -457,14 +458,22 @@ function collect(
       node.children.push(child)
       node.weights.push(ModelRouteAutonomy.usesRules(current.autonomy) ? (current.weights?.[key] ?? 1) : 1)
     }
+    // The rules of every pool on the way in, outermost first, then the target's own remap.
+    const levelMap = (
+      candidate: ModelRouteMatch.Candidate,
+      model: Model.Info,
+      variants: Readonly<Record<string, string | false>> = {},
+    ) => effort(model, [...rules.filter((rule) => rule.applies(candidate)).map((rule) => rule.map), variants])
+    // A pool pinned at a level leaves out each member that sits that level out, as selecting it there would.
+    const sitsOutPin = (variantMap: Readonly<Record<string, Model.VariantID | false>>) =>
+      inheritedVariant !== undefined && variantMap[inheritedVariant] === false
+    const first = result.length
     const place = (
       resolved: Model.Ref,
       model: Model.Info,
       fixedVariant: boolean,
-      spec: {
-        readonly defaultVariant?: string
-        readonly variants?: Readonly<Record<string, string | false>>
-      } = {},
+      variantMap: Readonly<Record<string, Model.VariantID | false>>,
+      defaultVariantSpec?: string,
     ) => {
       const key = `${resolved.providerID}/${resolved.id}${resolved.variant ? `#${resolved.variant}` : ""}`
       if (seen.has(key)) return
@@ -472,16 +481,9 @@ function collect(
       const leafKey = `${resolved.providerID}/${resolved.id}`
       placed.add(leafKey)
       const defaultVariant =
-        spec.defaultVariant && model.variants.some((item) => item.id === spec.defaultVariant)
-          ? Model.VariantID.make(spec.defaultVariant)
+        defaultVariantSpec && model.variants.some((item) => item.id === defaultVariantSpec)
+          ? Model.VariantID.make(defaultVariantSpec)
           : undefined
-      // The rules of every pool on the way in, outermost first, then the target's own remap.
-      const variantMap = effort(model, [
-        ...rules
-          .filter((rule) => rule.applies({ providerID: resolved.providerID, id: resolved.id }))
-          .map((rule) => rule.map),
-        spec.variants ?? {},
-      ])
       attach({ leaf: result.length }, leafKey)
       // Budgets belong to the target: the outermost route that declares one wins, wherever the
       // target was first reached.
@@ -509,15 +511,24 @@ function collect(
         continue
       }
       if (spec.until !== undefined && Date.now() >= spec.until) continue
-      for (const [id, model] of matchingModels(ref.id, definitions.get(ref.providerID))) {
+      for (const [id, definition] of matchingModels(ref.id, definitions.get(ref.providerID))) {
+        // The model as it can be used now, which carries the variants configured for it, else its definition.
+        const model = shared.candidate(ref.providerID, id) ?? definition
         if (!model.enabled || excluded({ providerID: ref.providerID, id })) continue
         const variant = ref.variant ?? inheritedVariant
         if (variant && !model.variants.some((item) => item.id === variant)) continue
+        const variantMap = levelMap({ providerID: ref.providerID, id }, model, spec.variants)
+        if (ref.variant === undefined && sitsOutPin(variantMap)) {
+          // Matching keys must not bring back a model its own target sits out.
+          placed.add(`${ref.providerID}/${id}`)
+          continue
+        }
         place(
           Model.Ref.make({ providerID: ref.providerID, id, ...(variant ? { variant } : {}) }),
           model,
           ref.variant !== undefined || inheritedVariant !== undefined,
-          spec,
+          variantMap,
+          spec.defaultVariant,
         )
       }
     }
@@ -530,6 +541,8 @@ function collect(
         const model = shared.candidate(entry.providerID, entry.id)
         if (!model?.enabled) continue
         if (inheritedVariant && !model.variants.some((item) => item.id === inheritedVariant)) continue
+        const variantMap = levelMap(entry, model)
+        if (sitsOutPin(variantMap)) continue
         place(
           Model.Ref.make({
             providerID: entry.providerID,
@@ -538,8 +551,14 @@ function collect(
           }),
           model,
           inheritedVariant !== undefined,
+          variantMap,
         )
       }
+    // A nested pool that declares levels keeps its members to them, so the pools above it see what it
+    // offers: each member sits out the declared levels it cannot run and every other level it knows.
+    const declared = current.levels
+    if (declared !== undefined && routeID !== id)
+      result.splice(first, result.length - first, ...result.slice(first).map((leaf) => keptTo(leaf, declared, true)))
     return node.children.length > 0 ? nodeIndex : undefined
   }
 
@@ -610,6 +629,22 @@ function runs(target: SourceModel, level: string) {
   const mapped = target.variantMap?.[level]
   if (mapped === false) return false
   return target.fixedVariant || mapped !== undefined || target.model.variants.some((item) => item.id === level)
+}
+
+/** A member of a pool that declares `levels`, kept to them: it sits out each declared level it cannot run,
+ * and with `others` also each other level it has a variant or a remap for. */
+function keptTo(target: SourceModel, levels: readonly string[], others: boolean): SourceModel {
+  const declared = new Set(levels)
+  const known = [...target.model.variants.map((variant) => String(variant.id)), ...Object.keys(target.variantMap ?? {})]
+  const off = [
+    ...[...declared].filter((level) => !runs(target, level)),
+    ...(others ? known.filter((level) => !declared.has(level)) : []),
+  ].filter((level) => target.variantMap?.[level] !== false)
+  if (off.length === 0) return target
+  return {
+    ...target,
+    variantMap: { ...target.variantMap, ...Object.fromEntries(off.map((level) => [level, false] as const)) },
+  }
 }
 
 /** The levels a route offers. Declared `levels` are offered when at least one target runs them. Without

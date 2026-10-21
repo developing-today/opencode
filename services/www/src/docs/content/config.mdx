@@ -455,10 +455,16 @@ Which levels a pool offers:
   not sit it out still keeps that level from the whole pool.
 - With `levels`, the pool offers exactly those levels. A target that cannot run
   one of them sits it out. A declared level that no target can run is left out,
-  with a warning in the log.
+  with a warning in the log. Nested in another pool, the pool keeps its `levels`:
+  its members sit out every other level, so the outer pool offers a level through
+  them only where the nested pool does.
 - A pool with a target pinned as `provider/model#variant`, or a nested pool pinned
   as `opencode-route/<id>#<level>`, offers no levels unless it declares `levels`.
   With `levels`, the pinned target runs each of them at its pin.
+- A nested pool pinned as `opencode-route/<id>#<level>` brings each member that has
+  that variant, at that variant. A member that sits the level out is left out, and
+  a pool pinned at a level it does not declare adds nothing, with a warning in the
+  log.
 
 `variantRules` apply in order, and a later rule overrides an earlier one level by
 level. A target's own `variants` override every rule, and a remap to a variant the

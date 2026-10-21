@@ -235,7 +235,7 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
   levels: Schema.Array(Schema.String)
     .annotate({
       description:
-        'The levels (variants) the route offers, e.g. ["low", "medium", "high"]. Each target runs a level through its remap, else its own variant of that name, else sits the level out. A level no target can run is left out and logged. Unset, the route offers each level that at least one target runs and every other target runs or sits out, and none when a target is pinned with #variant.',
+        'The levels (variants) the route offers, e.g. ["low", "medium", "high"]. Each target runs a level through its remap, else its own variant of that name, else sits the level out. A level no target can run is left out and logged. Nested in another route, the route keeps its levels: its members sit out every other level. Unset, the route offers each level that at least one target runs and every other target runs or sits out, and none when a target is pinned with #variant.',
     })
     .pipe(optional),
   variantRules: Schema.Array(VariantRule)

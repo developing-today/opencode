@@ -116,7 +116,11 @@ model `opencode-route/<id>`.
   - `levels`: `["low", "medium", "high"]` makes the pool offer exactly those. A
     target that cannot run one sits it out; a level no target can run is dropped
     and logged. Without `levels`, a level is offered when every target runs it or
-    sits it out.
+    sits it out. Nested in another pool, a pool keeps its `levels`: its members sit
+    out every other level.
+  - A nested pool pinned as `opencode-route/<id>#<level>` brings each member that
+    has that variant, at that variant. A member that sits the level out is left
+    out, and a pool pinned at a level it does not declare adds nothing.
 - `selection`: `ordered` (the default), `round-robin`, or `weighted`.
 - `weights`: relative ratios keyed by target. A target not listed weighs 1. Models
   from matching keys are keyed by `provider/model` too.

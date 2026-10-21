@@ -377,4 +377,81 @@ describe("pool effort levels", () => {
     expect(remaps("pinned", routes)).toEqual({ "openai/luna-6": {}, "anthropic/claude-haiku-5": { medium: false } })
     expect(offered("pinned", routes)).toEqual(["low", "medium"])
   })
+
+  test("a nested pool keeps its declared levels, so the pool above it offers what it does", () => {
+    const routes = pools({
+      // luna-6 runs every level, and this pool offers it at low only.
+      "low-only": { targets: ["openai/luna-6"], levels: ["low"] },
+      "low-outer": { targets: ["opencode-route/low-only"] },
+      // mythos cannot run low, and this pool still offers low through haiku.
+      both: { targets: ["anthropic/claude-haiku-5", "anthropic/claude-mythos-1"], levels: ["low", "high"] },
+      "both-outer": { targets: ["opencode-route/both"] },
+    })
+    expect(offered("low-only", routes)).toEqual(["low"])
+    expect(offered("low-outer", routes)).toEqual(["low"])
+    expect(remaps("low-outer", routes)).toEqual({
+      "openai/luna-6": { medium: false, high: false, xhigh: false, max: false },
+    })
+    expect(offered("both", routes)).toEqual(["low", "high"])
+    expect(offered("both-outer", routes)).toEqual(["low", "high"])
+    expect(remaps("both-outer", routes)).toEqual({
+      "anthropic/claude-haiku-5": {},
+      "anthropic/claude-mythos-1": { low: false },
+    })
+  })
+
+  test("a nested pool pinned at a level leaves out the members that sit that level out", () => {
+    const routes = pools({
+      remapped: { targets: [{ model: "openai/luna-6", variants: { max: false } }, "anthropic/claude-opus-6.1"] },
+      ruled: {
+        include: ["openai/luna-6", "anthropic/claude-opus-6.1"],
+        variantRules: [{ match: "*luna*", map: { max: false } }],
+      },
+      // The target sits max out, so the include that also matches it does not bring it back.
+      both: { targets: [{ model: "openai/luna-6", variants: { max: false } }], include: ["openai/luna-6"] },
+      outer: { targets: ["opencode-route/remapped#max", "opencode-route/ruled#max", "opencode-route/both#max"] },
+    })
+    expect(refs("outer", routes)).toEqual(["anthropic/claude-opus-6.1#max"])
+    // Selected without a pin, each pool still has both members, and luna-6 sits max out there too.
+    expect(refs("remapped", routes)).toEqual(["openai/luna-6", "anthropic/claude-opus-6.1"])
+    expect(refs("ruled", routes)).toEqual(["anthropic/claude-opus-6.1", "openai/luna-6"])
+  })
+
+  test("a nested pool pinned at a level it does not declare adds nothing, and says so", () => {
+    const routes = pools({
+      "low-only": { targets: ["openai/luna-6"], levels: ["low"] },
+      outer: { targets: ["opencode-route/low-only#max", "anthropic/claude-opus-6.1"] },
+    })
+    const result = expand("outer", routes, catalog)
+    expect(refs("outer", routes)).toEqual(["anthropic/claude-opus-6.1"])
+    expect(result.diagnostics).toEqual([
+      "pool low-only is pinned at level max, which it does not declare, so it adds nothing",
+    ])
+  })
+
+  test("a target uses the model as it can be used now, so a configured variant counts", () => {
+    // The definition of argon has low, medium and high; the configuration gives it a turbo variant too,
+    // which only the model as it can be used now carries.
+    const [, configured] = model("openai", "argon", ["low", "medium", "high", "turbo"])
+    const candidate = (providerID: Provider.ID, modelID: Model.ID) =>
+      String(providerID) === "openai" && String(modelID) === "argon"
+        ? configured
+        : catalog.get(providerID)?.get(modelID)
+    const routes = pools({
+      declared: { targets: ["openai/argon"], levels: ["high", "turbo"] },
+      ruled: { targets: ["openai/argon"], variantRules: [{ match: "*", map: { max: "turbo" } }] },
+    })
+    const declared = expand("declared", routes, catalog, candidate)
+    expect(routeVariants(declared.leaves, ["high", "turbo"]).map((variant) => String(variant.id))).toEqual([
+      "high",
+      "turbo",
+    ])
+    expect(declared.leaves[0].variantMap).toBeUndefined()
+    expect(declared.diagnostics).toEqual([])
+    expect(expand("ruled", routes, catalog, candidate).leaves[0].variantMap).toEqual({
+      max: Model.VariantID.make("turbo"),
+    })
+    // Without the configured model the definition is all there is, as when the provider is not connected.
+    expect(expand("declared", routes, catalog).leaves[0].variantMap).toEqual({ turbo: false })
+  })
 })
