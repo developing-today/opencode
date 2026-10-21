@@ -15,7 +15,34 @@ updates:
     # server depend exactly on the matching core version, a split bump
     # resolves two copies of MCP core, and the version-keyed client patch
     # in patches/ must be re-based in the same PR (see #196/#199/#201).
+    # A group covers only one update type: with no applies-to, mcp-sdk
+    # defaults to version updates, so the security group below is a
+    # separate, separately named group with the same patterns (#210).
     groups:
       mcp-sdk:
+        patterns:
+          - "@modelcontextprotocol/*"
+      mcp-sdk-security:
+        applies-to: "security-updates"
+        patterns:
+          - "@modelcontextprotocol/*"
+  # Security updates for JavaScript manifests do not run under the bun
+  # entry above: they arrive as npm_and_yarn jobs scoped to the manifest's
+  # directory (e.g. PR #200, dependabot/npm_and_yarn/packages/desktop/…),
+  # so a bun-only group would never match one. This entry covers the one
+  # directory that pins @modelcontextprotocol/* (packages/core) and exists
+  # for security updates only — open-pull-requests-limit: 0 disables
+  # version updates for it, so weekly version bumps keep flowing through
+  # the bun entry and regenerate bun.lock (see #196). Group rules in this
+  # file override the repository/organization "grouped security updates"
+  # setting for the directories configured here.
+  - package-ecosystem: "npm"
+    directory: "/packages/core"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    groups:
+      mcp-sdk-security:
+        applies-to: "security-updates"
         patterns:
           - "@modelcontextprotocol/*"
