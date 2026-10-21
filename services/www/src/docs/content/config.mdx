@@ -532,8 +532,8 @@ schedule says; the schedule steers new sessions and the fallback order.
 
 | Field         | Meaning                                                                                                                       |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `daysOfWeek`  | Day names (`mon`, `tuesday`) or 0 (Sunday) to 6 (Saturday). Unset means every day.                                              |
-| `daysOfMonth` | 1 to 31, or -1 for the last day of the month. Unset means every day.                                                            |
+| `daysOfWeek`  | Day names (`mon`, `tuesday`) or 0 (Sunday) to 6 (Saturday). Empty or unset means every day.                                     |
+| `daysOfMonth` | 1 to 31, or -1 for the last day of the month. Empty or unset means every day.                                                   |
 | `start`, `end` | Local `HH:mm` bounds; `end` is exclusive. Unset bounds mean from/to the edge of the day. A start later than the end runs past midnight into the following morning. |
 | `timezone`    | IANA name such as `America/Chicago`. Unset means the host's local timezone.                                                     |
 | `from`, `until` | Optional epoch-millisecond bounds for the whole schedule, e.g. a promotion that ends.                                          |
@@ -543,6 +543,30 @@ When both day fields are set the date has to match both, so `daysOfMonth:
 empty `when` means all the time. The same window shape is understood by
 `route_adjust` (the agent tool), so "weekdays 9 to 5 downweight deepseek" can be
 recorded as one adjustment instead of a config edit.
+
+A schedule OpenCode cannot apply still loads, the router skips it, and a config
+warning names the pool, the schedule and the field. That happens for:
+
+- a `start` or `end` that is not `HH:mm`
+- a `timezone` the runtime does not know
+- a `from` that is not before `until`
+- a schedule with neither `factor` nor `weight`
+
+A key OpenCode does not know, anywhere in a pool, its targets or its schedules,
+is reported the same way and then ignored.
+
+```jsonc
+"schedules": [
+  { "id": "monday", "when": { "dayOfWeek": ["mon"] }, "factor": 0.5 },
+  { "id": "peak", "when": { "start": "9am", "end": "17:00" }, "factor": 0.5 },
+]
+```
+
+In a pool named `coding`, this logs `omitted unknown setting` at
+`experimental.model_routes.coding.schedules.0.when.dayOfWeek`. The key is
+`daysOfWeek`, so until it is fixed `monday` applies every day. It also logs
+`skipped schedule peak: start "9am" is not HH:mm` at
+`experimental.model_routes.coding.schedules.1.when.start`.
 
 Routes nest. Every route is a group with its own `selection` and `weights`: a
 parent picks a nested route as one unit (key it as `"opencode-route/<id>"` in

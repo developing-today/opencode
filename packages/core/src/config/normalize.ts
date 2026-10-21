@@ -2,7 +2,7 @@ export * as ConfigNormalize from "./normalize.js"
 
 import { isDeepStrictEqual } from "node:util"
 import { isRecord } from "@opencode/ai/utils/record"
-import { Option, Schema } from "effect"
+import { Option, Result, Schema } from "effect"
 import { Info } from "@opencode/schema/config"
 import { ConfigAgent } from "@opencode/schema/config/agent"
 import { ConfigCommand } from "@opencode/schema/config/command"
@@ -27,6 +27,7 @@ import { ConfigPluginV1 } from "../v1/config/plugin.js"
 import { ConfigProviderV1 } from "../v1/config/provider.js"
 import { ConfigMigrateV1 } from "../v1/config/migrate.js"
 import { ModelRouteMatch } from "../model-route-match.js"
+import { ModelRouteSchedule } from "../model-route-schedule.js"
 import { PositiveInt } from "../schema.js"
 
 export interface Diagnostic {
@@ -538,7 +539,7 @@ function normalizeExperimental(
           ConfigModelRoutes.GlobalSchedule,
           ["experimental", "model_route_schedules"],
           diagnostics,
-          decodeEncoded,
+          decodeGlobalSchedule,
         )
         if (value.length || Array.isArray(experimental.model_route_schedules))
           result.model_route_schedules = value
@@ -804,7 +805,8 @@ function decodeEncoded<S extends Schema.Codec<unknown, unknown, never, never>>(
 }
 
 /** A pool is skipped whole when nothing could ever join it or a matching key is malformed. Dropping only
- * the bad key could widen the pool, for an exclude that no longer applies. */
+ * the bad key could widen the pool, for an exclude that no longer applies. Keys the decode drops and
+ * schedules the router will skip are reported too, though the pool still loads with them. */
 function decodeRoute(
   schema: typeof ConfigModelRoutes.Route,
   value: unknown,
@@ -812,6 +814,12 @@ function decodeRoute(
   diagnostics: Diagnostic[],
 ) {
   const decoded = Schema.decodeUnknownOption(schema, options)(value)
+  if (Option.isSome(decoded)) {
+    droppedKeys(value, decoded.value, path, diagnostics)
+    decoded.value.schedules?.forEach((schedule, index) =>
+      scheduleProblems(schedule, [...path, "schedules", String(index)], diagnostics),
+    )
+  }
   const problems = Option.isSome(decoded) ? ModelRouteMatch.problems(decoded.value) : []
   if (problems.length === 0) return decodeEncoded(schema, value, path, diagnostics)
   problems.forEach((problem) =>
@@ -822,6 +830,57 @@ function decodeRoute(
     }),
   )
   return undefined
+}
+
+function decodeGlobalSchedule(
+  schema: typeof ConfigModelRoutes.GlobalSchedule,
+  value: unknown,
+  path: string[],
+  diagnostics: Diagnostic[],
+) {
+  const decoded = Schema.decodeUnknownOption(schema, options)(value)
+  if (Option.isSome(decoded)) {
+    droppedKeys(value, decoded.value, path, diagnostics)
+    scheduleProblems(decoded.value, path, diagnostics)
+  }
+  return decodeEncoded(schema, value, path, diagnostics)
+}
+
+/** routeWeightRules and weightRulesAcross drop a schedule with nothing to change or a window they cannot
+ * read, and log nothing, so the reason is reported here, where the config file is known. */
+function scheduleProblems(
+  schedule: Pick<ConfigModelRoutes.Schedule, "id" | "when" | "factor" | "weight">,
+  path: string[],
+  diagnostics: Diagnostic[],
+) {
+  const skipped = schedule.id ? `skipped schedule ${schedule.id}` : "skipped schedule"
+  if (schedule.factor === undefined && schedule.weight === undefined)
+    diagnostics.push({ kind: "invalid", path, message: `${skipped}: it has neither factor nor weight` })
+  const window = ModelRouteSchedule.read(schedule.when)
+  if (Result.isFailure(window))
+    window.failure.forEach((problem) =>
+      diagnostics.push({
+        kind: "invalid",
+        path: [...path, "when", ...problem.path],
+        message: `${skipped}: ${problem.message}`,
+      }),
+    )
+}
+
+/** The decode drops keys it does not know, at any depth, so a misspelled `dayOfWeek` would turn a Monday
+ * schedule into an every-day one without a word. Each dropped key is reported where it was written; the
+ * rest of the value still loads. */
+function droppedKeys(raw: unknown, decoded: unknown, path: string[], diagnostics: Diagnostic[]) {
+  if (Array.isArray(raw) && Array.isArray(decoded)) {
+    raw.forEach((item, index) => droppedKeys(item, decoded[index], [...path, String(index)], diagnostics))
+    return
+  }
+  if (!isRecord(raw) || !isRecord(decoded)) return
+  Object.entries(raw).forEach(([key, item]) => {
+    if (own(decoded, key)) return droppedKeys(item, decoded[key], [...path, key], diagnostics)
+    if (item === undefined) return
+    diagnostics.push({ kind: "invalid", path: [...path, key], message: "omitted unknown setting" })
+  })
 }
 
 function canonical<S extends Schema.Codec<unknown, unknown, never, never>>(schema: S, value: unknown) {

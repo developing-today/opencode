@@ -151,6 +151,18 @@ describe("pool weight schedules", () => {
     ).toEqual([])
   })
 
+  test("a schedule with an empty day list applies every day instead of being dropped", () => {
+    expect(
+      routeWeightRules({
+        targets: [],
+        schedules: [{ id: "daily", targets: ["*"], when: { daysOfWeek: [], start: "09:00" }, factor: 2 }],
+      } as unknown as ConfigModelRoutes.Route),
+    ).toEqual([{ id: "daily", match: { targets: ["*"] }, window: { start: "09:00" }, factor: 2 }])
+    expect(
+      weightRulesAcross([{ when: { daysOfMonth: [] }, weight: 3 }] as unknown as ConfigModelRoutes.GlobalSchedule[]),
+    ).toEqual([{ window: {}, weight: 3 }])
+  })
+
   test("a global schedule keeps its matchers, including the route filter", () => {
     expect(
       weightRulesAcross([

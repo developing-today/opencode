@@ -257,7 +257,8 @@ function configuredSchedules(entries: readonly Entry[]) {
 }
 
 /** The schedule rules a route declares for its own targets, in a shape the runtime can judge. An
- * entry with an unreadable window, or with nothing to change, is dropped rather than applied. */
+ * entry with an unreadable window, or with nothing to change, is dropped rather than applied; the
+ * config loader has already reported it (scheduleProblems in config/normalize.ts). */
 export function routeWeightRules(route: ConfigModelRoutes.Route): ModelRoute.WeightRule[] {
   return (route.schedules ?? []).flatMap((schedule) => {
     if (schedule.factor === undefined && schedule.weight === undefined) return []
@@ -278,7 +279,8 @@ export function routeWeightRules(route: ConfigModelRoutes.Route): ModelRoute.Wei
 }
 
 /** The global schedule rules in a shape the runtime can judge. The route filter stays in the match,
- * so one list serves every route and nested route. An entry with nothing to change is dropped. */
+ * so one list serves every route and nested route. An entry with nothing to change, or with an
+ * unreadable window, is dropped; the config loader has already reported it. */
 export function weightRulesAcross(schedules: readonly ConfigModelRoutes.GlobalSchedule[]): ModelRoute.WeightRule[] {
   return schedules.flatMap((schedule) => {
     if (schedule.factor === undefined && schedule.weight === undefined) return []

@@ -128,8 +128,10 @@ model `opencode-route/<id>`.
 - `health`, `budgets`, `attempts`, `hedgeAfterMs`: see routing-review, section 1.
 
 A malformed pattern, regular expression or expression skips the whole pool, and a
-pool with none of `targets`, `include`, `contains` and `match` is skipped too. The
-config warning names the key. Check the log after editing a pool.
+pool with none of `targets`, `include`, `contains` and `match` is skipped too. A
+schedule whose `when` cannot be read, or that has neither `factor` nor `weight`, is
+skipped on its own, and an unknown key anywhere in a pool is ignored. Each gets a
+config warning that names the key. Check the log after editing a pool.
 
 Common changes:
 
@@ -174,6 +176,7 @@ Common changes:
 - `when` fields: `daysOfWeek` (`mon`..`sun`, or 0 to 6), `daysOfMonth` (1 to 31, or
   -1 for the last day), `start` and `end` as `HH:mm` (`end` exclusive; a start after
   the end runs past midnight), `timezone` (IANA), and `from` and `until` (epoch ms).
+  A day list that is empty or unset means every day.
 - A temporary fact ("credits expire Friday") belongs in `route_adjust`, not in config.
   It needs approval. It expires on its own only when it has `hours`: one made with a
   recurring window and no `hours` stays in force until `route_adjust` removes it.

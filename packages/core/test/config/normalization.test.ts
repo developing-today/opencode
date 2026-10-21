@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Arbitrary, Duration, Effect, Schema } from "effect"
 import { ConfigNormalize } from "@opencode/core/config/normalize"
+import { routeWeightRules, weightRulesAcross } from "@opencode/core/config/plugin/model-routes"
 import { ModelRouteMatch } from "@opencode/core/model-route-match"
 import { ModelRouteTuning } from "@opencode/core/model-route-tuning"
 import { Info } from "@opencode/schema/config"
@@ -955,5 +956,106 @@ describe("model route pools", () => {
       },
     ])
     expect(Object.keys(routesOf(result.encoded) ?? {})).toEqual(["ok", "explicit"])
+  })
+
+  // These schedules load and the router then drops them in routeWeightRules and weightRulesAcross, which
+  // log nothing; this is the only place the reason reaches the user.
+  test("a schedule the router would skip is reported at load, naming the pool, the schedule and the field", () => {
+    const result = normalized({
+      experimental: {
+        model_routes: {
+          coding: {
+            targets: ["deepseek/deepseek-chat"],
+            schedules: [
+              { id: "peak", when: { start: "9am", end: "17:00", timezone: "America/Chicgo" }, factor: 0.5 },
+              { when: { from: 2_000, until: 1_000 }, weight: 2 },
+              { id: "noop", when: { daysOfWeek: ["mon"] } },
+              { id: "daily", when: { daysOfWeek: [], start: "09:00" }, factor: 2 },
+            ],
+          },
+        },
+        model_route_schedules: [{ id: "late", when: { end: "24:00" }, factor: 2 }],
+      },
+    })
+    const path = (...rest: string[]) => ["experimental", ...rest]
+    const schedule = (index: number, ...rest: string[]) =>
+      path("model_routes", "coding", "schedules", String(index), ...rest)
+    expect(result.diagnostics).toEqual([
+      {
+        kind: "invalid",
+        path: schedule(0, "when", "start"),
+        message: 'skipped schedule peak: start "9am" is not HH:mm',
+      },
+      {
+        kind: "invalid",
+        path: schedule(0, "when", "timezone"),
+        message: 'skipped schedule peak: timezone "America/Chicgo" is not a known IANA timezone',
+      },
+      {
+        kind: "invalid",
+        path: schedule(1, "when", "until"),
+        message: "skipped schedule: until is not after from, so the window never opens",
+      },
+      { kind: "invalid", path: schedule(2), message: "skipped schedule noop: it has neither factor nor weight" },
+      {
+        kind: "invalid",
+        path: path("model_route_schedules", "0", "when", "end"),
+        message: 'skipped schedule late: end "24:00" is not HH:mm',
+      },
+    ])
+    // The schedules still load, and the ones reported are exactly the ones the router drops.
+    const coding = routesOf(result.encoded)?.coding
+    expect(coding?.schedules).toHaveLength(4)
+    expect(routeWeightRules(coding!).map((rule) => rule.id)).toEqual(["daily"])
+    const experimental = Schema.decodeUnknownSync(Info, options)(result.encoded).experimental
+    expect(weightRulesAcross(experimental?.model_route_schedules ?? [])).toEqual([])
+  })
+
+  test("an unknown key anywhere in a pool or a schedule is reported where it was written, and the pool still loads", () => {
+    const result = normalized({
+      experimental: {
+        model_routes: {
+          coding: {
+            targets: [
+              "deepseek/deepseek-chat",
+              { model: "anthropic/claude-opus-5", untill: 1 },
+              // An object with providerID is the explicit model form, which has no until.
+              { providerID: "openai", model: "gpt-6-luna", until: 1 },
+            ],
+            selction: "weighted",
+            health: { cooldownMS: 5_000 },
+            budgets: { "deepseek/deepseek-chat": { requestPerDay: 10 } },
+            variantRules: [{ match: "*", map: { max: "high" }, maps: {} }],
+            schedules: [
+              { id: "monday", targets: ["deepseek/*"], when: { dayOfWeek: ["mon"] }, factor: 0.5, wieght: 2 },
+            ],
+          },
+        },
+        model_route_schedules: [{ when: { dayOfMonth: [1] }, factor: 2, route: ["coding"] }],
+      },
+    })
+    const unknown = (...path: string[]) => ({
+      kind: "invalid" as const,
+      path: ["experimental", ...path],
+      message: "omitted unknown setting",
+    })
+    const coding = (...path: string[]) => unknown("model_routes", "coding", ...path)
+    expect(result.diagnostics).toEqual([
+      coding("targets", "1", "untill"),
+      coding("targets", "2", "until"),
+      coding("selction"),
+      coding("health", "cooldownMS"),
+      coding("budgets", "deepseek/deepseek-chat", "requestPerDay"),
+      coding("variantRules", "0", "maps"),
+      coding("schedules", "0", "when", "dayOfWeek"),
+      coding("schedules", "0", "wieght"),
+      unknown("model_route_schedules", "0", "when", "dayOfMonth"),
+      unknown("model_route_schedules", "0", "route"),
+    ])
+    // The keys are still ignored: the misspelled day list leaves an every-day window, as before.
+    const routes = routesOf(result.encoded)
+    expect(Object.keys(routes ?? {})).toEqual(["coding"])
+    expect(Object.keys(routes?.coding.schedules?.[0].when ?? { missing: true })).toEqual([])
+    expect(routes?.coding.targets).toHaveLength(3)
   })
 })
