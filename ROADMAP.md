@@ -77,6 +77,7 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ROADMAP Done table records the #201 and #210 completions         | 2026-10-21 | #213     |
 | MCP security updates grouped into one Dependabot PR              | 2026-10-21 | #211     |
 | `@modelcontextprotocol/*` updates grouped into one Dependabot PR | 2026-10-21 | #207     |
 | MCP SDK bumped to 2.3.0, client patch re-based                   | 2026-10-21 | #205     |
