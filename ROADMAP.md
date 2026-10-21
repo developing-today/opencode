@@ -4,7 +4,7 @@ This is the roadmap for the fork. It is grouped by area. Each area lists its ite
 
 A row here records intent. It does not settle a product question and it is not a go-ahead to build.
 
-Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](README.md), and the merged PRs of 2026-10-20.
+Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](README.md), and the merged PRs of 2026-10-20 and 2026-10-21.
 
 ## Areas
 
@@ -77,6 +77,7 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| `opencode run` stdin EOF behaviour documented (#193 docs)        | 2026-10-21 | #219     |
 | Vite bumped to 8.2.4 in app and desktop, patch rebased           | 2026-10-21 | #214     |
 | ROADMAP Done table records the #201 and #210 completions         | 2026-10-21 | #213     |
 | MCP security updates grouped into one Dependabot PR              | 2026-10-21 | #211     |
