@@ -1823,16 +1823,26 @@ it.live("an escalated route races its next target at once, without a configured 
 
 describe("the route log and pool health time the model's response, not the step after it", () => {
   // Real time, because the step reads performance.now(): TestClock cannot make a tool run long or a stream
-  // slow. WAIT_MS is how long the tool, the pause in the stream or the compaction takes. The thresholds sit
-  // below it and well above what a TestLLM response takes when nothing waits.
+  // slow. WAIT_MS is how long the tool, the pause in the stream or the compaction takes. A slow stream must
+  // be slow by both thresholds, so they sit below WAIT_MS. Nothing asserts how fast a fast reply is: those
+  // tests compare the response with the step's own span, so a loaded runner cannot fail them.
   const WAIT_MS = 300
   const MAX_RESPONSE_MS = 200
   const OUTPUT_TOKENS = 1_000
   // 1,000 output tokens over 300ms or more is at most 3,333 tokens per second.
   const MIN_TOKENS_PER_SECOND = 5_000
+  // `slow` is what pool health makes of the attempt the route log recorded, by that one threshold.
   const thresholds = [
-    { name: "maxResponseTimeMs", health: { maxResponseTimeMs: MAX_RESPONSE_MS } },
-    { name: "minOutputTokensPerSecond", health: { minOutputTokensPerSecond: MIN_TOKENS_PER_SECOND } },
+    {
+      name: "maxResponseTimeMs",
+      health: { maxResponseTimeMs: MAX_RESPONSE_MS },
+      slow: (attempt: ModelRouteLog.Attempt) => (attempt.response_ms ?? Number.NaN) > MAX_RESPONSE_MS,
+    },
+    {
+      name: "minOutputTokensPerSecond",
+      health: { minOutputTokensPerSecond: MIN_TOKENS_PER_SECOND },
+      slow: (attempt: ModelRouteLog.Attempt) => (attempt.tokens_per_second ?? Number.NaN) < MIN_TOKENS_PER_SECOND,
+    },
   ] as const
 
   /** Runs one routed step whose first slow sample cools its target, and returns the attempt it recorded. */
@@ -1928,7 +1938,7 @@ describe("the route log and pool health time the model's response, not the step 
     })
 
   for (const threshold of thresholds) {
-    it.live(`a fast reply followed by a long tool run is not slow by ${threshold.name}`, () =>
+    it.live(`a long tool run after a fast reply does not count against the model by ${threshold.name}`, () =>
       Effect.gen(function* () {
         const step = yield* timedStep({
           health: threshold.health,
@@ -1938,13 +1948,18 @@ describe("the route log and pool health time the model's response, not the step 
           ),
           tool: Effect.sleep(WAIT_MS),
         })
+        const response = step.attempt.response_ms ?? Number.NaN
 
         expect(Exit.isSuccess(step.result) ? step.result.value._tag : undefined).toBe("Completed")
-        expect(ModelRoute.coolingDown(step.target)).toBe(false)
-        expect(step.attempt.response_ms).toBeLessThan(MAX_RESPONSE_MS)
-        expect(step.attempt.tokens_per_second).toBeGreaterThan(MIN_TOKENS_PER_SECOND)
-        // The step's own span still includes the tool run.
-        expect(step.attempt.time_ended - step.attempt.time_started).toBeGreaterThanOrEqual(WAIT_MS - 5)
+        // The step's span still holds the tool run, and the response time ends before most of it. Half the
+        // wait leaves room for the part of the tool run that overlaps the end of the stream.
+        expect(step.attempt.time_ended - step.attempt.time_started - response).toBeGreaterThanOrEqual(WAIT_MS / 2)
+        // Speed is measured over the response, so its output time fits inside the response time.
+        expect((OUTPUT_TOKENS * 1_000) / (step.attempt.tokens_per_second ?? Number.NaN)).toBeLessThanOrEqual(
+          response + 1,
+        )
+        // Pool health judged the same measurement the route log recorded.
+        expect(ModelRoute.coolingDown(step.target)).toBe(threshold.slow(step.attempt))
       }),
     )
 
@@ -1990,8 +2005,10 @@ describe("the route log and pool health time the model's response, not the step 
 
       expect(Exit.isSuccess(step.result) ? step.result.value._tag : undefined).toBe("Compacted")
       expect(step.attempt).toMatchObject({ outcome: "failure", error_tag: "ContextOverflow" })
-      expect(step.attempt.response_ms).toBeLessThan(MAX_RESPONSE_MS)
-      expect(step.attempt.time_ended - step.attempt.time_started).toBeGreaterThanOrEqual(WAIT_MS - 5)
+      // The compaction starts after the stream has ended, so all of it lies between the two ends.
+      expect(
+        step.attempt.time_ended - step.attempt.time_started - (step.attempt.response_ms ?? Number.NaN),
+      ).toBeGreaterThanOrEqual(WAIT_MS / 2)
     }),
   )
 })
