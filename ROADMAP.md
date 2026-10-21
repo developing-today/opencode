@@ -77,6 +77,8 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ROADMAP Done table records the #250 completion                   | 2026-10-21 | #251     |
+| ROADMAP Done table records the #244 completion                   | 2026-10-21 | #245     |
 | ROADMAP Done table records the #197 and #232 completions         | 2026-10-21 | #249     |
 | Editor SSE and IDE lock-file ports parsed strictly               | 2026-10-21 | #247     |
 | restart-driver OC_PORT validation pinned by tests                | 2026-10-21 | #248     |
