@@ -27,9 +27,10 @@ approves the specific change.
   picker, and pool targets that use it cannot be reached.
 - Allow-list: `"enabled_providers": ["<providerID>", ...]` turns off every provider
   it does not name. Use it only when the user asks for an allow-list.
-- The same thing as policies, in `experimental.policies`:
+- The same thing as policies, in the top-level `policies` list:
   `{ "action": "provider.use", "resource": "<providerID>", "effect": "deny" }`, or
-  `"allow"` to switch a denied provider back on.
+  `"allow"` to switch a denied provider back on. `experimental.policies` is the
+  deprecated name for that list: it still loads, but write new rules in `policies`.
 - In OpenChamber, Settings → Providers has an on/off control. `/connect` in OpenCode
   connects a provider. Never edit credential files by hand.
 
@@ -120,8 +121,10 @@ model `opencode-route/<id>`.
 - `weights`: relative ratios keyed by target. A target not listed weighs 1. Models
   from matching keys are keyed by `provider/model` too.
 - `autonomy`: `fixed`, `rules`, `adaptive`, `predictive`, or `agent`. Each level
-  includes the ones before it. `agent` also exposes `route_stats`, `route_usage` and
-  `route_adjust` to the model.
+  includes the ones before it. Every session gets `route_usage` whenever any pool
+  exists, and gets `route_stats` and `route_adjust` once any pool is `agent` or has
+  no `autonomy`, whatever model the session runs. `route_stats` reports on every
+  pool, and a `route_adjust` adjustment applies to every pool that is not `fixed`.
 - `health`, `budgets`, `attempts`, `hedgeAfterMs`: see routing-review, section 1.
 
 A malformed pattern, regular expression or expression skips the whole pool, and a
@@ -135,8 +138,10 @@ Common changes:
 - Add a member: append it to `targets`, or widen `include`, and give it a `weights`
   entry if it should not weigh 1.
 - Remove a member for good: delete it from `targets` and `weights`, or add it to
-  `exclude`. For a temporary removal, give it an `until` instead, or use
-  `route_adjust` skip.
+  `exclude`. For a temporary removal, use `route_adjust` skip with `hours`, which
+  ends on its own. A target's `until` does not fit: the target leaves only when the
+  pools are next rebuilt after that time, such as on a config reload or a restart,
+  and it stays out until the config changes.
 - Keep a member out of one level: map that level to `false` in its `variants`, or in
   a `variantRules` entry that matches it.
 - A new pool: add a new key under `model_routes`. Then point a category at
@@ -170,7 +175,8 @@ Common changes:
   -1 for the last day), `start` and `end` as `HH:mm` (`end` exclusive; a start after
   the end runs past midnight), `timezone` (IANA), and `from` and `until` (epoch ms).
 - A temporary fact ("credits expire Friday") belongs in `route_adjust`, not in config.
-  It needs approval and it expires on its own.
+  It needs approval. It expires on its own only when it has `hours`: one made with a
+  recurring window and no `hours` stays in force until `route_adjust` removes it.
 
 ## Tuning and notes
 

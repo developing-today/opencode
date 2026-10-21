@@ -235,7 +235,7 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
   levels: Schema.Array(Schema.String)
     .annotate({
       description:
-        'The levels (variants) the route offers, e.g. ["low", "medium", "high"]. Each target runs a level through its remap, else its own variant of that name, else sits the level out. A level no target can run is left out and logged. Unset, the route offers each level that every target can run or sits out.',
+        'The levels (variants) the route offers, e.g. ["low", "medium", "high"]. Each target runs a level through its remap, else its own variant of that name, else sits the level out. A level no target can run is left out and logged. Unset, the route offers each level that at least one target runs and every other target runs or sits out, and none when a target is pinned with #variant.',
     })
     .pipe(optional),
   variantRules: Schema.Array(VariantRule)
@@ -259,17 +259,17 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
   }),
   autonomy: Schema.Literals(["fixed", "rules", "adaptive", "predictive", "agent"]).pipe(optional).annotate({
     description:
-      "How much the route may decide for itself; each level includes the ones before it. fixed: configured order with failover only. rules: adds selection modes, weights, budgets and provider rate-limit holds. adaptive: adds the scheduled review that skips or down-weights targets from recent history. predictive: adds time-of-day and error-text prediction. agent: adds route_stats and route_adjust so the model can inspect and steer routing. Unset keeps the behavior from before levels existed.",
+      "How much the route may decide for itself; each level includes the ones before it. fixed: failover only, starting from the configured order; schedules, the user's prefer and avoid rules and quota demotion still apply. rules: adds selection modes, weights, budgets and provider rate-limit holds. adaptive: adds the scheduled review that skips or down-weights targets from recent history. predictive: adds time-of-day and error-text prediction. agent: adds route_stats and route_adjust so the model can inspect and steer routing; once any route is agent or unset, every session gets them, and they cover every route. Unset keeps the behavior from before levels existed.",
   }),
   selection: Schema.Literals(["ordered", "round-robin", "weighted"]).pipe(optional).annotate({
     description:
-      "How a session picks its target: ordered uses the configured order (default), round-robin rotates per new session, weighted draws by weights. Either way the choice is sticky for the session and failover falls through the remaining targets in order.",
+      "How a session picks its target: ordered (default) takes the heaviest ready target, in configured order when weights are equal; round-robin rotates per new session in proportion to weight; weighted draws by weight. Either way the choice is sticky for the session, and failover picks again the same way among the targets not yet tried.",
   }),
   weights: Schema.Record(Schema.String, Schema.Finite.check(Schema.isGreaterThan(0)))
     .pipe(optional)
     .annotate({
       description:
-        'Relative ratios for the weighted selection mode, keyed by target model reference, e.g. { "openai/gpt-6-luna": 3, "github-copilot/gpt-6-luna": 1 } sends about 3/4 of new sessions to the first target. Targets without a weight count as 1. A nested route is keyed as "opencode-route/<id>" and is chosen as one unit by this route; it then picks among its own members using its own selection and weights.',
+        'Relative weights keyed by target model reference. They rank targets in every selection mode, failover included: ordered tries the heaviest first, round-robin rotates in proportion, and weighted draws in proportion, so { "openai/gpt-6-luna": 3, "github-copilot/gpt-6-luna": 1 } sends about 3/4 of new weighted sessions to the first target. Targets without a weight count as 1, and a fixed route ignores weights. A nested route is keyed as "opencode-route/<id>" and is chosen as one unit by this route; it then picks among its own members using its own selection and weights.',
     }),
   schedules: Schema.Array(Schedule).pipe(optional).annotate({
     description:

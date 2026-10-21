@@ -305,13 +305,14 @@ target. `"round-robin"` gives each new session the next target in rotation and
 `"weighted"` draws one by `weights`, roughly `weights[a] : weights[b]` across
 new sessions. The drawn choice is sticky for the session, so prompt caches stay
 warm; only failure, cooldown expiry, or a re-draw when the sticky target is
-cooling moves a session to another target, and failover still walks the
-remaining targets in order.
+cooling moves a session to another target.
 
 Weights order every selection mode: at each decision the targets are ranked by
 their effective weight, and equal weights keep their configured relative order.
 With no other configuration every weight is 1, so `ordered` routes keep their
-order exactly.
+order exactly. Failover is another such decision, among the targets not yet
+tried: an `ordered` route moves to the heaviest of them, and `round-robin` and
+`weighted` routes rotate or draw again by weight.
 
 ### Choosing pool members by pattern
 
@@ -455,9 +456,9 @@ Which levels a pool offers:
 - With `levels`, the pool offers exactly those levels. A target that cannot run
   one of them sits it out. A declared level that no target can run is left out,
   with a warning in the log.
-- A pool with a target pinned as `provider/model#variant` offers no levels unless
-  it declares `levels`. With `levels`, the pinned target runs each of them at its
-  pin.
+- A pool with a target pinned as `provider/model#variant`, or a nested pool pinned
+  as `opencode-route/<id>#<level>`, offers no levels unless it declares `levels`.
+  With `levels`, the pinned target runs each of them at its pin.
 
 `variantRules` apply in order, and a later rule overrides an earlier one level by
 level. A target's own `variants` override every rule, and a remap to a variant the
@@ -556,20 +557,30 @@ includes the ones before it:
 
 | Level        | The route may                                                                              |
 | ------------ | ------------------------------------------------------------------------------------------ |
-| `fixed`      | Use the configured order and fail over on errors. Weights, budgets and holds are ignored.  |
+| `fixed`      | Fail over on errors. Configured weights, selection modes, budgets and holds are ignored.   |
 | `rules`      | Also use selection modes, weights, budgets and provider rate-limit holds.                  |
 | `adaptive`   | Also be reviewed on a schedule: failing or slow targets are skipped or down-weighted.      |
 | `predictive` | Also learn hours of the day when a target is unreliable, and read reset times from errors. |
-| `agent`      | Also expose `route_stats` and `route_adjust`, so the model can inspect and steer routing.  |
+| `agent`      | Also give every session `route_stats` and `route_adjust`, which cover all routes.          |
 
-A route with no `autonomy` keeps every rule on and offers the agent tools, as before
-levels existed. Each route takes only what its own level reaches. The scheduled
+A route with no `autonomy` keeps every rule on, as before levels existed. Each route
+takes only what its own level reaches, except the agent tools: once any route is
+`agent` or has no `autonomy`, every session is offered `route_stats` and
+`route_adjust`. `route_stats` then reports on every route, and an adjustment made
+with `route_adjust` applies to every route that is not `fixed`. The scheduled
 review's skips and down-weights apply to `adaptive` and higher routes, and to `rules`
 routes when `model_route_tuning.enabled` is true. Time-of-day and error-text
 prediction apply to `predictive` and higher routes. A route with no `autonomy` takes
 all of it. The review runs when tuning is enabled or any route is `adaptive` or
 higher. Real failures always cool a target down, at every level, so a `fixed` route
 still fails over.
+
+A `fixed` route starts from its configured order, and these still change it:
+
+- Schedules, the route's own and `model_route_schedules`.
+- The user's prefer and avoid rules in `route-overrides.json`, which OpenChamber
+  writes. An avoided target is used only when nothing else is available.
+- Quota demotion: a target with repeated quota errors drops to the end.
 
 Set `attempts` to the total number of requests made to a target before the route
 moves on. The default is 2, so one transient failure is retried on the same target
@@ -633,16 +644,17 @@ cooling, the whole provider is demoted to last resort until they recover. When
 three or more unrelated providers fail within 30 seconds, the cause is more
 likely your network than any one target, so no target is cooled.
 
-While routes are configured, the `route_stats` tool lets the agent read how targets
-have performed: attempts, failures, first-output latency, speed, current cooldowns
-and usage, and failures grouped by exact error code and HTTP status with the latest
-provider message. For each pool it also sets the configuration beside what happened:
-how often each member was offered and chosen, how often its new-session draws matched
-the share its weight promised, why it was left out (cooldown, provider limit, budget,
-user skip), and its request sizes. Pass `route` to narrow that to one pool. It
-suggests adjustments from that history (a high failure rate, repeated quota errors,
-unusually slow first output); with `apply` they are put in force for 30 minutes, only
-ever lowering a target's share or skipping it.
+While any route is `agent` or has no `autonomy`, the `route_stats` tool lets the
+agent read how targets have performed: attempts, failures, first-output latency,
+speed, current cooldowns and usage, and failures grouped by exact error code and
+HTTP status with the latest provider message. For each pool it also sets the
+configuration beside what happened: how often each member was offered and chosen,
+how often its new-session draws matched the share its weight promised, why it was
+left out (cooldown, provider limit, budget, user skip), and its request sizes. Pass
+`route` to narrow that to one pool. It suggests adjustments from that history (a
+high failure rate, repeated quota errors, unusually slow first output); with
+`apply` they are put in force for 30 minutes, only ever lowering a target's share
+or skipping it.
 
 To review pools, weights and plan use together, run `/routing-review`. It loads the
 `routing-review` skill, which explains what each signal means and the thresholds for

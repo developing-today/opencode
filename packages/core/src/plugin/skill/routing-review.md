@@ -54,8 +54,9 @@ configured `targets` as members until the history has offered the matched ones.
   (60000), `quotaCooldownMs` (900000). A target that fails goes on cooldown.
 - `budgets`: per target, `requestsPerMinute`, `requestsPerDay`, `tokensPerMinute`,
   `tokensPerDay`, `softLimit` (default 0.9). A target at its soft limit is passed over.
-- `attempts`: tries per target before failover (default 1); retries only before any
-  output.
+- `attempts`: requests per target before failover (default 2, so one retry).
+  Retries happen only before any output, and a rate limit or quota error moves on
+  at once.
 - `hedgeAfterMs`: after this many milliseconds without output, the next target gets
   the same request, and the first answer wins. It costs a duplicate request.
 - `autonomy`: `fixed`, `rules`, `adaptive`, `predictive` or `agent`, each including
