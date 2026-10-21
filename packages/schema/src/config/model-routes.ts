@@ -22,17 +22,17 @@ const TargetObject = Schema.Struct({
     description: "Provider/model reference. A route may reference another route.",
   }),
   defaultVariant: Schema.String.pipe(optional).annotate({
-    description: "Variant used when the route is selected without an explicit variant.",
+    description: "Variant used when the route is selected without an explicit variant. A nested route ignores it.",
   }),
   variants: Schema.Record(Schema.String, VariantChoice)
     .annotate({
       description:
-        'Remaps a route-level variant to this target\'s variant, e.g. { "low": "high" } runs this target at high when the route is selected at low. false makes the target sit that level out, e.g. { "max": false }: it is never used at that level, not even as a last resort, and on a nested route the whole route sits it out. Overrides the route\'s variantRules level by level.',
+        'Remaps a route-level variant to this target\'s variant, e.g. { "low": "high" } runs this target at high when the route is selected at low. false makes the target sit that level out, e.g. { "max": false }: it is never used at that level, not even as a last resort. Overrides the route\'s variantRules level by level. On a nested route only false applies, and the whole route sits that level out; a string remap, defaultVariant and until are ignored there, with a config warning.',
     })
     .pipe(optional),
   until: PositiveInt.pipe(optional).annotate({
     description:
-      "Epoch milliseconds after which this target leaves the route. Used for time-limited pool membership; takes effect when the configuration reloads.",
+      "Epoch milliseconds after which this target leaves the route. Used for time-limited pool membership; takes effect when the configuration reloads. A nested route ignores it.",
   }),
 })
 export const Target = Schema.Union([ConfigModel.Selection, TargetObject]).annotate({
@@ -241,7 +241,7 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
   variantRules: Schema.Array(VariantRule)
     .annotate({
       description:
-        "Level remaps for the route's models chosen by pattern, applied in order. They reach models of nested routes too, where the nested route's own rules come later. A target's own variants override them.",
+        "Level remaps for the route's models chosen by pattern, applied in order. They reach models of nested routes too, where the nested route's own rules come later. A target's own variants override them. A route nested as opencode-route/<id>#<level> runs only at that level, so its rules decide only whether a member sits that level out.",
     })
     .pipe(optional),
   health: Health.pipe(optional),

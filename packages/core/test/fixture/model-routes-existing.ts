@@ -6,8 +6,9 @@ import { Schema } from "effect"
 /** A configuration written before pools had matching keys, effort levels or `false` remaps, with a
  * catalog that exercises every older expansion rule: globs inside one provider, case-sensitive ids,
  * disabled models, pinned and inherited variants, remaps to variants a model lacks, nested and
- * self-referencing pools, time-limited targets, weights, budgets and schedules. The expansion test
- * pins what this produced before the new keys existed. */
+ * self-referencing pools, a pinned nested pool whose members remap levels, time-limited targets,
+ * weights, budgets and schedules. The expansion test pins what this produced before the new keys
+ * existed. */
 
 const FUTURE = Date.parse("2100-01-01T00:00:00Z")
 const PAST = Date.parse("2020-01-01T00:00:00Z")
@@ -88,6 +89,8 @@ const raw = {
   },
   self: { targets: ["opencode-route/self", "openai/gpt-6-luna-mini", "opencode-route/missing"] },
   nothing: { targets: ["anthropic/*mistral*"] },
+  // luna-stack's members remap levels, and pinned at high they keep those remaps and default variants.
+  "pinned-stack": { targets: ["opencode-route/luna-stack#high", "anthropic/claude-sonnet-4-5"] },
 }
 
 /** Decoded the way the config loader decodes each pool, so the shapes match production. */

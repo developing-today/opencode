@@ -816,6 +816,7 @@ function decodeRoute(
   const decoded = Schema.decodeUnknownOption(schema, options)(value)
   if (Option.isSome(decoded)) {
     droppedKeys(value, decoded.value, path, diagnostics)
+    nestedPoolKeys(decoded.value, path, diagnostics)
     decoded.value.schedules?.forEach((schedule, index) =>
       scheduleProblems(schedule, [...path, "schedules", String(index)], diagnostics),
     )
@@ -865,6 +866,30 @@ function scheduleProblems(
         message: `${skipped}: ${problem.message}`,
       }),
     )
+}
+
+/** expand() in config/plugin/model-routes.ts reads only false from the remap of a nested pool's target object,
+ * so a string remap, defaultVariant or until there changes nothing and is reported where it was written. The
+ * pool provider id is spelled out because ModelRoute, which defines it, loads the routing database. */
+function nestedPoolKeys(route: ConfigModelRoutes.Route, path: string[], diagnostics: Diagnostic[]) {
+  const ignored = (route.targets ?? []).flatMap((target, index) => {
+    if ("providerID" in target || target.model.providerID !== "opencode-route") return []
+    const at = [...path, "targets", String(index)]
+    return [
+      ...(target.defaultVariant === undefined ? [] : [[...at, "defaultVariant"]]),
+      ...Object.entries(target.variants ?? {}).flatMap(([level, to]) =>
+        to === false ? [] : [[...at, "variants", level]],
+      ),
+      ...(target.until === undefined ? [] : [[...at, "until"]]),
+    ]
+  })
+  ignored.forEach((key) =>
+    diagnostics.push({
+      kind: "unsupported",
+      path: key,
+      message: "ignored on a nested pool, which takes only false in variants",
+    }),
+  )
 }
 
 /** The decode drops keys it does not know, at any depth, so a misspelled `dayOfWeek` would turn a Monday

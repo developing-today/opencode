@@ -15890,7 +15890,7 @@
             "items": {
               "$ref": "#/components/schemas/Config.ModelRoute.VariantRuleEncoded"
             },
-            "description": "Level remaps for the route's models chosen by pattern, applied in order. They reach models of nested routes too, where the nested route's own rules come later. A target's own variants override them."
+            "description": "Level remaps for the route's models chosen by pattern, applied in order. They reach models of nested routes too, where the nested route's own rules come later. A target's own variants override them. A route nested as opencode-route/<id>#<level> runs only at that level, so its rules decide only whether a member sits that level out."
           },
           "health": {
             "type": "object",
@@ -16040,7 +16040,7 @@
                     }
                   ]
                 },
-                "description": "Remaps a route-level variant to this target's variant, e.g. { \"low\": \"high\" } runs this target at high when the route is selected at low. false makes the target sit that level out, e.g. { \"max\": false }: it is never used at that level, not even as a last resort, and on a nested route the whole route sits it out. Overrides the route's variantRules level by level."
+                "description": "Remaps a route-level variant to this target's variant, e.g. { \"low\": \"high\" } runs this target at high when the route is selected at low. false makes the target sit that level out, e.g. { \"max\": false }: it is never used at that level, not even as a last resort. Overrides the route's variantRules level by level. On a nested route only false applies, and the whole route sits that level out; a string remap, defaultVariant and until are ignored there, with a config warning."
               },
               "until": {
                 "type": "integer",

@@ -262,5 +262,58 @@
       }
     ],
     "variants": []
+  },
+  "pinned-stack": {
+    "leaves": [
+      {
+        "ref": "openai/gpt-6-luna#high",
+        "fixedVariant": true,
+        "defaultVariant": "max",
+        "variantMap": {
+          "low": "high",
+          "medium": "high"
+        }
+      },
+      {
+        "ref": "github-copilot/gpt-6-luna#high",
+        "fixedVariant": true,
+        "defaultVariant": "medium"
+      },
+      {
+        "ref": "anthropic/claude-sonnet-4-5",
+        "fixedVariant": false
+      }
+    ],
+    "nodes": [
+      {
+        "routeID": "pinned-stack",
+        "selection": "ordered",
+        "weights": [1, 1],
+        "schedules": [],
+        "children": [
+          {
+            "node": 1
+          },
+          {
+            "leaf": 2
+          }
+        ]
+      },
+      {
+        "routeID": "luna-stack",
+        "selection": "ordered",
+        "weights": [1, 1],
+        "schedules": [],
+        "children": [
+          {
+            "leaf": 0
+          },
+          {
+            "leaf": 1
+          }
+        ]
+      }
+    ],
+    "variants": []
   }
 }

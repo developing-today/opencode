@@ -110,18 +110,24 @@ model `opencode-route/<id>`.
   - `variants` on a target object remaps a level, `{ "xhigh": "high" }`; `false`
     makes the target sit that level out, `{ "max": false }`. A target that sits out
     a level is never used at it, not even as a last resort. On a nested pool's
-    target object, `false` makes the whole nested pool sit that level out.
+    target object only `false` applies, and the whole nested pool sits that level
+    out; a string remap, `defaultVariant` or `until` there is ignored and logged.
   - `variantRules`: `[{ "match": "*argon*", "map": { "xhigh": "high", "max": false } }]`.
     `match` takes a pattern, pool name or expression. Later rules override earlier
     ones per level; a target's own `variants` override every rule.
   - `levels`: `["low", "medium", "high"]` makes the pool offer exactly those. A
     target that cannot run one sits it out; a level no target can run is dropped
     and logged. Without `levels`, a level is offered when every target runs it or
-    sits it out. Nested in another pool, a pool keeps its `levels`: its members sit
-    out every other level.
-  - A nested pool pinned as `opencode-route/<id>#<level>` brings each member that
-    has that variant, at that variant. A member that sits the level out is left
-    out, and a pool pinned at a level it does not declare adds nothing.
+    sits it out and at least one target runs it. Nested in another pool, a pool
+    keeps its `levels`: its members sit out every other level.
+  - A nested pool pinned as `opencode-route/<id>#<level>` runs only at that level
+    and brings each member that has that variant, at that variant. A remap or rule
+    applies to the levels of the pool that declares it, so those of the pinned pool
+    and the pools nested in it decide only whether a member sits the pin out. Such a
+    member is left out, and nothing else in the pinned pool brings it back. The
+    others run at the pin at every level of the pools above, unless one of those
+    sits them out of a level. A pool pinned at a level it does not declare adds
+    nothing.
 - `selection`: `ordered` (the default), `round-robin`, or `weighted`.
 - `weights`: relative ratios keyed by target. A target not listed weighs 1. Models
   from matching keys are keyed by `provider/model` too.
@@ -135,7 +141,8 @@ model `opencode-route/<id>`.
 A malformed pattern, regular expression or expression skips the whole pool, and a
 pool with none of `targets`, `include`, `contains` and `match` is skipped too. A
 schedule whose `when` cannot be read, or that has neither `factor` nor `weight`, is
-skipped on its own, and an unknown key anywhere in a pool is ignored. Each gets a
+skipped on its own, and an unknown key anywhere in a pool is ignored, as is a string
+remap, `defaultVariant` or `until` on a nested pool's target object. Each gets a
 config warning that names the key. Check the log after editing a pool.
 
 Common changes:

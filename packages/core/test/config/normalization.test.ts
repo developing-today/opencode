@@ -1058,4 +1058,39 @@ describe("model route pools", () => {
     expect(Object.keys(routes?.coding.schedules?.[0].when ?? { missing: true })).toEqual([])
     expect(routes?.coding.targets).toHaveLength(3)
   })
+
+  // expand() reads only false from a nested pool's target object; this is the only place the rest is reported.
+  test("a nested pool's target object reports each key it ignores, a string remap, defaultVariant or until", () => {
+    const result = normalized({
+      experimental: {
+        model_routes: {
+          outer: {
+            targets: [
+              {
+                model: "opencode-route/lunas",
+                defaultVariant: "high",
+                variants: { max: false, low: "high" },
+                until: 1_900_000_000_000,
+              },
+              { model: "opencode-route/claude#high", variants: { xhigh: false } },
+              // A model target takes all of them.
+              { model: "openai/argon", defaultVariant: "high", variants: { max: "high" }, until: 1_900_000_000_000 },
+            ],
+          },
+        },
+      },
+    })
+    const target = (...path: string[]) => ({
+      kind: "unsupported" as const,
+      path: ["experimental", "model_routes", "outer", "targets", ...path],
+      message: "ignored on a nested pool, which takes only false in variants",
+    })
+    expect(result.diagnostics).toEqual([
+      target("0", "defaultVariant"),
+      target("0", "variants", "low"),
+      target("0", "until"),
+    ])
+    // The pool loads as written.
+    expect(routesOf(result.encoded)?.outer.targets).toHaveLength(3)
+  })
 })

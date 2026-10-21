@@ -37,8 +37,9 @@ const route = (targets: (string | { model: string; until?: number; variants?: Re
 
 describe("pool targets", () => {
   // The expected file was captured from this expansion at 1668a0350b, before pools had matching keys,
-  // effort levels or `false` remaps. It is the only check that those additions leave an older
-  // configuration exactly as it was; regenerate it from that commit, never from the current code.
+  // effort levels or `false` remaps; the pinned-stack entry came later from dc951d46de, whose expansion code
+  // is the same. It is the only check that those additions leave an older configuration exactly as it was;
+  // regenerate it from one of those commits, never from the current code.
   test("a configuration without the new keys expands exactly as it did before they existed", () => {
     const expanded = Object.fromEntries(
       [...existingRoutes.keys()].map((id) => {
@@ -59,7 +60,7 @@ describe("pool targets", () => {
         ]
       }),
     )
-    expect(Object.keys(expanded)).toHaveLength(7)
+    expect(Object.keys(expanded)).toHaveLength(8)
     // The expected file is JSON, so the expansion is compared in its JSON form.
     expect(JSON.parse(JSON.stringify(expanded))).toEqual(existingExpansion)
   })

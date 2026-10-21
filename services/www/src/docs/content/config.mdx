@@ -421,7 +421,8 @@ A remap to `false` makes the target sit that level out. A target that sits out
 the requested level is never used at it, not even as a last resort when every
 other target is cooling down. A nested pool written as a target object, such as
 `{ "model": "opencode-route/<id>", "variants": { "max": false } }`, sits that level
-out as a whole.
+out as a whole. Only `false` applies to a nested pool: a string remap,
+`defaultVariant` or `until` on it is ignored, with a config warning.
 
 ```jsonc
 {
@@ -462,16 +463,38 @@ Which levels a pool offers:
   them only where the nested pool does.
 - A pool with a target pinned as `provider/model#variant`, or a nested pool pinned
   as `opencode-route/<id>#<level>`, offers no levels unless it declares `levels`.
-  With `levels`, the pinned target runs each of them at its pin.
-- A nested pool pinned as `opencode-route/<id>#<level>` brings each member that has
-  that variant, at that variant. A member that sits the level out is left out, and
-  a pool pinned at a level it does not declare adds nothing, with a warning in the
-  log.
+  With `levels`, the pinned target runs each of them at its pin, except a level the
+  pool sits it out of.
+- A nested pool pinned as `opencode-route/<id>#<level>` runs only at that level, and
+  brings each member that has that variant, at that variant. A pool pinned at a
+  level it does not declare adds nothing, with a warning in the log.
+
+A remap or a rule applies to the levels of the pool that declares it. A pinned pool
+runs only at its pin, so its remaps and rules, and those of the pools nested in it,
+decide only whether a member sits the pin out. Such a member is left out, and
+nothing else in the pinned pool brings it back. Every other member runs at the pin
+at each level of the pools above, unless one of them sits it out of that level.
+
+```jsonc
+"inner": {
+  "targets": [
+    { "model": "openai/luna-6", "variants": { "low": false } },
+    { "model": "anthropic/claude-opus-5", "variants": { "max": false } },
+  ],
+},
+"outer": { "targets": ["opencode-route/inner#max", "openai/argon"], "levels": ["low", "high"] },
+```
+
+`inner#max` leaves Opus out, because Opus sits `max` out. Luna runs at `max` at both
+of `outer`'s levels: `inner` never runs at `low`, so its `low: false` does not apply.
+To keep Luna out of `outer` at `low`, put the remap on `outer`'s target:
+`{ "model": "opencode-route/inner#max", "variants": { "low": false } }`.
 
 `variantRules` apply in order, and a later rule overrides an earlier one level by
 level. A target's own `variants` override every rule, and a remap to a variant the
 model does not have is ignored for that model. Rules reach the members of nested
-pools too; the nested pool's own rules come later, so they win.
+pools too; the nested pool's own rules come later, so they win. In a pinned pool
+they decide only whether a member sits the pin out, as above.
 
 ```jsonc
 "variantRules": [

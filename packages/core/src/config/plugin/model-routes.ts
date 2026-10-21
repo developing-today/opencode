@@ -35,8 +35,24 @@ type SourceModel = {
 type Enclosing = {
   /** The exclusions of every pool on the way in. */
   readonly excludes: readonly ModelRouteMatch.Predicate[]
-  /** The variantRules of every pool on the way in, outermost first. */
+  /** The variantRules of the pools on the way in above any pin, outermost first. They apply to the levels the
+   * expanded pool is selected at, so a member keeps what they say. */
   readonly rules: readonly ModelRouteMatch.Rule[]
+  /** Each pin on the way in, outermost first. */
+  readonly pins: readonly Pin[]
+}
+
+/** A nested pool entered as `opencode-route/<id>#<level>`, with the pools nested in it that have no pin of their
+ * own. They run only at that level, so their remaps and rules decide only whether a member sits it out, and such
+ * a member is left out. */
+type Pin = {
+  readonly level: Model.VariantID
+  /** The variantRules of the pools at this pin, outermost first. */
+  readonly rules: readonly ModelRouteMatch.Rule[]
+  /** The members left out here, as a later target names one (`provider/model`, with that target's own
+   * `#variant`) and as a model. Nothing later at this pin brings one back, as a member placed here would stop
+   * it; a pool above the pin may still take the model on its own terms. */
+  readonly leftOut: { readonly targets: Set<string>; readonly models: Set<string> }
 }
 
 const POOL_PREFIX = `${ModelRoute.PROVIDER_ID}/`
@@ -314,7 +330,9 @@ export function weightRulesAcross(schedules: readonly ConfigModelRoutes.GlobalSc
  * connected. Models that matching keys add come only through `candidate`, and a target uses it when it has
  * the model, so configured variants count. The route's declared `levels` are applied here: a target that
  * cannot run one of them sits it out. A nested pool's are applied where it is collected, and here its members
- * sit out every other level. */
+ * sit out every other level. A nested pool pinned as `opencode-route/<id>#<level>` runs only at that level, so
+ * its remaps and rules decide only whether a member sits the pin out; such a member is left out, and the rest
+ * run at the pin at every level of the pools above, which may still sit them out. */
 export function expand(
   id: string,
   routes: ReadonlyMap<string, ConfigModelRoutes.Route>,
@@ -431,23 +449,18 @@ function collect(
 
   // Each route becomes a group node with its own selection mode and weights, so a weighted route
   // nested in another is chosen as one unit and then splits among its own members.
-  const visit = (
-    routeID: string,
-    inheritedVariant: Model.VariantID | undefined,
-    trail: ReadonlySet<string>,
-    enclosing: Enclosing,
-  ): number | undefined => {
+  const visit = (routeID: string, trail: ReadonlySet<string>, enclosing: Enclosing): number | undefined => {
     if (trail.has(routeID)) {
       cut = true
       return
     }
     const current = routes.get(routeID)
     if (!current) return
+    // The pin this pool runs at, when a pool on the way in was entered at one: the last such pin.
+    const pin = enclosing.pins.at(-1)
     // A pool pinned at a level it does not declare offers its members nowhere there.
-    if (inheritedVariant !== undefined && current.levels !== undefined && !current.levels.includes(inheritedVariant)) {
-      diagnostics.push(
-        `pool ${routeID} is pinned at level ${inheritedVariant}, which it does not declare, so it adds nothing`,
-      )
+    if (pin !== undefined && current.levels !== undefined && !current.levels.includes(pin.level)) {
+      diagnostics.push(`pool ${routeID} is pinned at level ${pin.level}, which it does not declare, so it adds nothing`)
       return
     }
     const nextTrail = new Set(trail).add(routeID)
@@ -461,7 +474,12 @@ function collect(
       return
     }
     const excludes = [...enclosing.excludes, compiled.success.excludes]
-    const rules = [...enclosing.rules, ...compiled.success.rules]
+    // A remap or rule applies to the levels of the pool that declares it: above any pin, every level the expanded
+    // pool is selected at; at a pin, that one level.
+    const own = compiled.success.rules
+    const rules = pin === undefined ? [...enclosing.rules, ...own] : enclosing.rules
+    const pins =
+      pin === undefined ? enclosing.pins : [...enclosing.pins.slice(0, -1), { ...pin, rules: [...pin.rules, ...own] }]
     const excluded = (candidate: ModelRouteMatch.Candidate) => excludes.some((test) => test(candidate))
     const nodeIndex = nodes.length
     const node: {
@@ -482,18 +500,38 @@ function collect(
       node.children.push(child)
       node.weights.push(ModelRouteAutonomy.usesRules(current.autonomy) ? (current.weights?.[key] ?? 1) : 1)
     }
-    // The rules of every pool on the way in, outermost first, then the target's own remap.
+    const applying = (list: readonly ModelRouteMatch.Rule[], candidate: ModelRouteMatch.Candidate) =>
+      list.filter((rule) => rule.applies(candidate)).map((rule) => rule.map)
+    // What a member keeps: the rules above any pin, outermost first, then the target's own remap. At a pin the
+    // remap applies only to the pin, which a member pinned here runs at whatever the level: its remaps to a
+    // variant stay, as they always have, its false entries only decide whether it is left out, and the rules
+    // above come last, so a pool above may still sit it out.
     const levelMap = (
       candidate: ModelRouteMatch.Candidate,
       model: Model.Info,
       variants: Readonly<Record<string, string | false>> = {},
-    ) => effort(model, [...rules.filter((rule) => rule.applies(candidate)).map((rule) => rule.map), variants])
-    // A pool pinned at a level leaves out each member that sits that level out, as selecting it there would.
-    const sitsOutPin = (variantMap: Readonly<Record<string, Model.VariantID | false>>) =>
-      inheritedVariant !== undefined && variantMap[inheritedVariant] === false
-    // Models this pool's own targets sit out at its pin, so its matching keys do not bring them back. Kept to
-    // this pool: a pool above it may still take the model on its own terms.
-    const satOut = new Set<string>()
+    ) =>
+      effort(
+        model,
+        pin === undefined
+          ? [...applying(rules, candidate), variants]
+          : [
+              Object.fromEntries(Object.entries(variants).filter(([, to]) => to !== false)),
+              ...applying(rules, candidate),
+            ],
+      )
+    // Whether a member sits out a pin it is under: each pin's rules, and at the last one the target's own remap.
+    const sitsOutPin = (
+      candidate: ModelRouteMatch.Candidate,
+      model: Model.Info,
+      variants: Readonly<Record<string, string | false>> = {},
+    ) =>
+      pins.some(
+        (each, index) =>
+          effort(model, [...applying(each.rules, candidate), ...(index === pins.length - 1 ? [variants] : [])])[
+            each.level
+          ] === false,
+      )
     const first = result.length
     const place = (
       resolved: Model.Ref,
@@ -502,9 +540,7 @@ function collect(
       variantMap: Readonly<Record<string, Model.VariantID | false>>,
       defaultVariantSpec?: string,
     ) => {
-      const key = `${resolved.providerID}/${resolved.id}${resolved.variant ? `#${resolved.variant}` : ""}`
-      if (seen.has(key)) return
-      seen.add(key)
+      seen.add(`${resolved.providerID}/${resolved.id}${resolved.variant ? `#${resolved.variant}` : ""}`)
       const leafKey = `${resolved.providerID}/${resolved.id}`
       placed.add(leafKey)
       const defaultVariant =
@@ -533,11 +569,29 @@ function collect(
       const spec = targetSpec(target)
       const ref = targetRef(spec.model)
       if (ref.providerID === ModelRoute.PROVIDER_ID) {
-        const start = result.length
-        const child = visit(ref.id, ref.variant ?? inheritedVariant, nextTrail, { excludes, rules })
-        // A nested pool written as a target object sits out, as a whole, each level its remap sets to false.
+        // The levels this target object's remap sets to false. The config loader reports any other key it has.
         const off = Object.entries(spec.variants ?? {}).flatMap(([level, to]) => (to === false ? [level] : []))
-        if (off.length > 0)
+        // At a pin, a nested pool that sits the pin out does so as a whole: it is left out, with each model it
+        // brings.
+        if (pin !== undefined && off.includes(pin.level)) {
+          membersOf(ref.id, nextTrail).forEach((member) => {
+            pin.leftOut.targets.add(member)
+            pin.leftOut.models.add(member)
+          })
+          continue
+        }
+        const start = result.length
+        const child = visit(ref.id, nextTrail, {
+          excludes,
+          rules,
+          pins:
+            ref.variant === undefined
+              ? pins
+              : [...pins, { level: ref.variant, rules: [], leftOut: { targets: new Set(), models: new Set() } }],
+        })
+        // Above any pin, a nested pool written as a target object sits out, as a whole, each level its remap sets
+        // to false. At a pin no other level is asked for.
+        if (pin === undefined && off.length > 0)
           result.slice(start).forEach((leaf, offset) => {
             result[start + offset] = sitOut(leaf, off)
           })
@@ -546,21 +600,26 @@ function collect(
       }
       if (spec.until !== undefined && Date.now() >= spec.until) continue
       for (const [id, definition] of matchingModels(ref.id, definitions.get(ref.providerID))) {
+        const variant = ref.variant ?? pin?.level
+        // A member already placed, here or in another pool, is not placed again. This comes first: looking a
+        // model up may copy it, and a pool nested along many paths reaches the same models again and again.
+        if (seen.has(`${ref.providerID}/${id}${variant ? `#${variant}` : ""}`)) continue
+        const named = `${ref.providerID}/${id}${ref.variant ? `#${ref.variant}` : ""}`
+        if (pin?.leftOut.targets.has(named)) continue
         // The model as it can be used now, which carries the variants configured for it, else its definition.
         const model = shared.candidate(ref.providerID, id) ?? definition
         if (!model.enabled || excluded({ providerID: ref.providerID, id })) continue
-        const variant = ref.variant ?? inheritedVariant
         if (variant && !model.variants.some((item) => item.id === variant)) continue
-        const variantMap = levelMap({ providerID: ref.providerID, id }, model, spec.variants)
-        if (ref.variant === undefined && sitsOutPin(variantMap)) {
-          satOut.add(`${ref.providerID}/${id}`)
+        if (pin !== undefined && sitsOutPin({ providerID: ref.providerID, id }, model, spec.variants)) {
+          pin.leftOut.targets.add(named)
+          pin.leftOut.models.add(`${ref.providerID}/${id}`)
           continue
         }
         place(
           Model.Ref.make({ providerID: ref.providerID, id, ...(variant ? { variant } : {}) }),
           model,
-          ref.variant !== undefined || inheritedVariant !== undefined,
-          variantMap,
+          variant !== undefined,
+          levelMap({ providerID: ref.providerID, id }, model, spec.variants),
           spec.defaultVariant,
         )
       }
@@ -571,21 +630,20 @@ function collect(
     if (selects)
       for (const entry of shared.models()) {
         const key = `${entry.providerID}/${entry.id}`
-        if (placed.has(key) || satOut.has(key) || !selects(entry) || excluded(entry)) continue
+        if (placed.has(key) || pin?.leftOut.models.has(key) || !selects(entry) || excluded(entry)) continue
         const model = shared.candidate(entry.providerID, entry.id)
         if (!model?.enabled) continue
-        if (inheritedVariant && !model.variants.some((item) => item.id === inheritedVariant)) continue
-        const variantMap = levelMap(entry, model)
-        if (sitsOutPin(variantMap)) continue
+        if (pin !== undefined && !model.variants.some((item) => item.id === pin.level)) continue
+        if (pin !== undefined && sitsOutPin(entry, model)) {
+          pin.leftOut.targets.add(key)
+          pin.leftOut.models.add(key)
+          continue
+        }
         place(
-          Model.Ref.make({
-            providerID: entry.providerID,
-            id: entry.id,
-            ...(inheritedVariant ? { variant: inheritedVariant } : {}),
-          }),
+          Model.Ref.make({ providerID: entry.providerID, id: entry.id, ...(pin ? { variant: pin.level } : {}) }),
           model,
-          inheritedVariant !== undefined,
-          variantMap,
+          pin !== undefined,
+          levelMap(entry, model),
         )
       }
     // A nested pool that declares levels keeps its members to them: each sits out the declared levels it
@@ -593,7 +651,7 @@ function collect(
     // pool entered at a pin is left alone: its members run that pin at every level, and the pin was checked
     // against the declaration above.
     const declared = current.levels
-    if (declared !== undefined && routeID !== id && inheritedVariant === undefined)
+    if (declared !== undefined && routeID !== id && pin === undefined)
       result.slice(first).forEach((leaf, offset) => {
         const index = first + offset
         result[index] = keptTo(leaf, declared)
@@ -602,7 +660,7 @@ function collect(
     return node.children.length > 0 ? nodeIndex : undefined
   }
 
-  visit(id, undefined, trail, { excludes: [], rules: [] })
+  visit(id, trail, { excludes: [], rules: [], pins: [] })
   return { leaves: result, nodes, diagnostics, cut, allowed }
 }
 
