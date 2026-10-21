@@ -4858,6 +4858,35 @@ describe("SessionRunnerLLM", () => {
     expect(s.requests[0]?.promptCacheKey).toBe(parentID)
   })
 
+  scenario("uses root cache affinity for grandchild model requests", function* (s) {
+    const rootID = Session.ID.make("ses_runner_root")
+    const childID = Session.ID.make("ses_runner_child")
+    yield* insertSession(childID)
+    yield* s.db
+      .update(SessionTable)
+      .set({ parent_id: rootID })
+      .where(eq(SessionTable.id, childID))
+      .run()
+      .pipe(Effect.orDie)
+    yield* s.db
+      .update(SessionTable)
+      .set({ parent_id: childID })
+      .where(eq(SessionTable.id, sessionID))
+      .run()
+      .pipe(Effect.orDie)
+    yield* s.runPrompt("Run grandchild request")
+
+    expect(s.requests[0]?.http?.headers).toMatchObject({
+      "x-opencode-session-id": sessionID,
+      "x-opencode-parent-session-id": childID,
+      "x-session-affinity": rootID,
+      "X-Session-Id": rootID,
+      "x-parent-session-id": childID,
+      "x-opencode-session": rootID,
+    })
+    expect(s.requests[0]?.promptCacheKey).toBe(rootID)
+  })
+
   scenario("runs different sessions concurrently", function* (s) {
     yield* insertSession(otherSessionID)
     yield* s.admit("Run first")
