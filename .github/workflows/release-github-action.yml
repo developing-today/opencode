@@ -5,12 +5,28 @@ name: release-github-action
 # run instead, use an expression on runs-on, e.g. ${{ vars.RUNNER_UBUNTU || 'ubuntu-24.04' }},
 # or gate individual steps with if: on the runner.
 
+# FORK BEHAVIOUR (#197, decision 2026-10-21 — deliberate releases only): the
+# inherited trigger targeted upstream's `dev` branch, which this fork does not
+# have, so this workflow never ran here (1 run ever, a cancelled 2026-10-11
+# `dev` push; publish-github-action has 0 runs ever) and no `github-v*` tag
+# could ever be cut from this fork. The trigger was NOT retargeted to `main`:
+# cutting a release is publishing — it creates a `github-v*` tag and, via
+# publish, moves the `latest` tag — so it stays a deliberate maintainer
+# action, like the containers push in #172. Dispatch this workflow manually
+# (choose `minor` for a minor bump; the release script's baseline was
+# sanity-checked 2026-10-21: latest `github-v*` by committer date is
+# github-v1.2.25, so a patch dispatch cuts github-v1.2.26 and a minor
+# dispatch cuts github-v1.3.0). Afterwards, dispatch publish-github-action
+# manually too: tags pushed with the default GITHUB_TOKEN do not trigger
+# other workflows, so publish's tag trigger does not fire from this run.
+
 on:
-  push:
-    branches:
-      - dev
-    paths:
-      - "github/**"
+  workflow_dispatch:
+    inputs:
+      minor:
+        description: "Bump the minor version instead of the patch version"
+        type: boolean
+        default: false
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -33,4 +49,8 @@ jobs:
         run: |
           git config --global user.email "opencode@sst.dev"
           git config --global user.name "opencode"
-          ./github/script/release
+          if [ "${{ inputs.minor }}" = "true" ]; then
+            ./github/script/release --minor
+          else
+            ./github/script/release
+          fi
