@@ -15844,7 +15844,53 @@
             "items": {
               "$ref": "#/components/schemas/Config.ModelRoute.Target"
             },
-            "description": "Ordered provider/model references. A route may include another route reference."
+            "description": "Ordered provider/model references. A route may include another route reference. A * in the model matches within that one provider and is case-sensitive. Optional when include, contains or match supply the models."
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Patterns whose models join the route after its targets, in provider order. Only models of connected providers are matched, so connecting a provider adds its matching models. * matches any run of characters, re: starts a regular expression, and case never matters. A pattern with / is tested against provider/model, one without against the model id in every provider. A route name, or opencode-route/<name>, stands for that route's models. E.g. [\"*luna*\", \"anthropic/*haiku*\", \"small\"]."
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Patterns, written as in include, whose models are removed from the route, including those its targets and nested routes bring. E.g. [\"*-mini\", \"frontier-direct\"]."
+          },
+          "contains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Text whose models join the route: found anywhere in the model id, or in provider/model when the text has a /. Case never matters, and only models of connected providers are matched. E.g. [\"haiku\", \"sonnet\", \"opus\"]."
+          },
+          "notContains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Text, written as in contains, whose models are removed from the route."
+          },
+          "match": {
+            "type": "string",
+            "description": "One expression whose models join the route: patterns and route names joined by and, or, not and parentheses, e.g. \"(*luna* or *haiku*) and not *-mini\". Quote a term that has spaces or parentheses, such as 're:gpt-(5|6)$'. There is no xor."
+          },
+          "levels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The levels (variants) the route offers, e.g. [\"low\", \"medium\", \"high\"]. Each target runs a level through its remap, else its own variant of that name, else sits the level out. A level no target can run is left out and logged. Unset, the route offers each level that at least one target runs and every other target runs or sits out, and none when a target is pinned with #variant."
+          },
+          "variantRules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Config.ModelRoute.VariantRuleEncoded"
+            },
+            "description": "Level remaps for the route's models chosen by pattern, applied in order. They reach models of nested routes too, where the nested route's own rules come later. A target's own variants override them."
           },
           "health": {
             "type": "object",
@@ -15932,7 +15978,6 @@
             }
           }
         },
-        "required": ["targets"],
         "additionalProperties": false
       },
       "Config.ModelRoute.ScheduleEncoded": {
@@ -15982,8 +16027,17 @@
               "variants": {
                 "type": "object",
                 "additionalProperties": {
-                  "type": "string"
-                }
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean",
+                      "enum": [false]
+                    }
+                  ]
+                },
+                "description": "Remaps a route-level variant to this target's variant, e.g. { \"low\": \"high\" } runs this target at high when the route is selected at low. false makes the target sit that level out, e.g. { \"max\": false }: it is never used at that level, not even as a last resort. Overrides the route's variantRules level by level."
               },
               "until": {
                 "type": "integer",
@@ -15994,6 +16048,32 @@
             "additionalProperties": false
           }
         ]
+      },
+      "Config.ModelRoute.VariantRuleEncoded": {
+        "type": "object",
+        "properties": {
+          "match": {
+            "type": "string",
+            "description": "Which models the rule covers: a pattern, a route name, or an expression of them with and, or, not and parentheses, as in the route's match, e.g. \"*argon*\" or \"claude and not *haiku*\"."
+          },
+          "map": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "boolean",
+                  "enum": [false]
+                }
+              ]
+            },
+            "description": "Route-level variant to the variant the model runs it at, or false to sit that level out, e.g. { \"xhigh\": \"high\", \"max\": false }. A later rule overrides an earlier one level by level, and a target's own variants override every rule."
+          }
+        },
+        "required": ["match", "map"],
+        "additionalProperties": false
       },
       "Config.ModelRoute.WindowEncoded": {
         "type": "object",
