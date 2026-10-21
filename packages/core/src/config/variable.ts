@@ -22,11 +22,16 @@ type SubstituteInput = ParseSource & {
   env?: Record<string, string>
 }
 
-/** Apply {env:VAR} and {file:path} substitutions to config text. */
+/** Apply {env:VAR}, {env:VAR:-fallback} and {file:path} substitutions to config text. */
 export const substitute = Effect.fn("ConfigVariable.substitute")(function* (input: SubstituteInput) {
   const env = (escape: boolean) =>
-    input.text.replace(/\{env:([^}]+)\}/g, (_, name: string) => {
-      const value = (input.env?.[name] ?? process.env[name]) || ""
+    input.text.replace(/\{env:([^}]+)\}/g, (_, token: string) => {
+      // Shell-style default: {env:VAR:-fallback} resolves to the fallback when VAR is unset
+      // or empty, so a config can name a working default instead of silently substituting "".
+      const separator = token.indexOf(":-")
+      const name = separator === -1 ? token : token.slice(0, separator)
+      const fallback = separator === -1 ? "" : token.slice(separator + 2)
+      const value = (input.env?.[name] ?? process.env[name]) || fallback
       return escape ? JSON.stringify(value).slice(1, -1) : value
     })
   // Escape only when raw values break the JSON (e.g. Windows paths), so configs that parse today keep their meaning.

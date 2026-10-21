@@ -912,6 +912,21 @@ Use `{env:VARIABLE_NAME}` to substitute environment variables:
 
 If the environment variable is not set, it will be replaced with an empty string.
 
+Add a default with `{env:VARIABLE_NAME:-fallback}` to substitute a fallback value instead when the variable is unset or empty:
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "openai-codex": {
+      "options": {
+        "baseURL": "http://127.0.0.1:{env:CODEX_PROXY_PORT:-18744}/v1"
+      }
+    }
+  }
+}
+```
+
 ---
 
 ### Files
