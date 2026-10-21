@@ -1481,6 +1481,33 @@ describe("Config", () => {
     }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
   )
 
+  it.effect("uses the :- fallback when an env variable is unset or empty", () =>
+    Effect.gen(function* () {
+      const text = yield* ConfigVariable.substitute({
+        type: "virtual",
+        source: "test",
+        dir: "/",
+        text: [
+          "{",
+          '  "set": "http://127.0.0.1:{env:OPENCODE_TEST_PORT:-18744}/v1",',
+          '  "unset": "http://127.0.0.1:{env:OPENCODE_TEST_MISSING_PORT:-18744}/v1",',
+          '  "empty": "http://127.0.0.1:{env:OPENCODE_TEST_EMPTY_PORT:-18744}/v1",',
+          '  "plain": "user-{env:OPENCODE_TEST_MISSING_PORT}",',
+          '  "url": "{env:OPENCODE_TEST_MISSING_URL:-http://127.0.0.1:18744/v1}"',
+          "}",
+        ].join("\n"),
+        env: { OPENCODE_TEST_PORT: "9999", OPENCODE_TEST_EMPTY_PORT: "" },
+      })
+      expect(JSON.parse(text)).toEqual({
+        set: "http://127.0.0.1:9999/v1",
+        unset: "http://127.0.0.1:18744/v1",
+        empty: "http://127.0.0.1:18744/v1",
+        plain: "user-",
+        url: "http://127.0.0.1:18744/v1",
+      })
+    }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
+  )
+
   it.live("does not load legacy config.json files", () =>
     Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
       Effect.flatMap((tmp) =>
