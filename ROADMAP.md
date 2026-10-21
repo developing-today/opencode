@@ -77,6 +77,8 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| MCP SDK bumped to 2.3.0, client patch re-based                   | 2026-10-21 | #205     |
+| Dependabot set up for bun; vite bump landed with lockfile        | 2026-10-20 | #198     |
 | mcpx daemon autostart fail-open branches covered by tests        | 2026-10-20 | #186     |
 | Stale node_modules FOD hashes, `nix-hashes` updater fixed       | 2026-10-20 | #189     |
 | turbo.json `#test` tasks deduplicated, with a guard test         | 2026-10-20 | #183     |
