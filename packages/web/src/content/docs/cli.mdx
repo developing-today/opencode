@@ -350,6 +350,12 @@ This is useful for scripting, automation, or when you want a quick answer withou
 opencode run Explain the use of context in Go
 ```
 
+When stdin is not a terminal, `opencode run` reads stdin until end-of-file and appends whatever it receives to the message argument — this is how `cat context.txt | opencode run "Summarize this"` works. The command does not start until stdin closes, so in automation environments that keep stdin open without ever closing it (some CI runners, `ssh` without a terminal, agent tool harnesses), `opencode run` appears to hang with no output. Redirect stdin from `/dev/null` when you are not piping input:
+
+```bash
+opencode run "Explain async/await in JavaScript" < /dev/null
+```
+
 You can also attach to a running `opencode serve` instance to avoid MCP server cold boot times on every run:
 
 ```bash
