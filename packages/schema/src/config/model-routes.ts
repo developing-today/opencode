@@ -57,10 +57,12 @@ export class Health extends Schema.Class<Health>("Config.ModelRoute.Health")({
         "Fail over if the target produces no response output within this many milliseconds. Defaults to 10000.",
     }),
   maxResponseTimeMs: BoundedPositiveInt.pipe(optional).annotate({
-    description: "Count a completed response as slow when it exceeds this many milliseconds.",
+    description:
+      "Count a completed response as slow when it exceeds this many milliseconds, measured to the end of the model's response. Tools that the step runs afterwards do not count.",
   }),
   minOutputTokensPerSecond: PositiveFinite.pipe(optional).annotate({
-    description: "Count a completed response as slow when output throughput falls below this rate.",
+    description:
+      "Count a completed response as slow when output throughput, from the model's first output to the end of its response, falls below this rate.",
   }),
   sampleWindow: SampleCount.pipe(optional).annotate({
     description: "Number of completed requests in the rolling performance window. Defaults to 5.",

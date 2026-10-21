@@ -2,6 +2,7 @@ import { describe, expect } from "bun:test"
 import {
   AIError,
   HttpRateLimitDetails,
+  InvalidRequestError,
   LanguageModel,
   LLM,
   LLMEvent,
@@ -34,7 +35,7 @@ import { ModelRouteAutonomy } from "@opencode/core/model-route-autonomy"
 import { ModelRouteLog } from "@opencode/core/model-route-log"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { asc, eq } from "drizzle-orm"
-import { Effect, Exit, Layer } from "effect"
+import { Effect, Exit, Layer, Stream } from "effect"
 import { testEffect } from "./lib/effect"
 
 const it = testEffect(
@@ -1819,3 +1820,195 @@ it.live("an escalated route races its next target at once, without a configured 
     expect(String(requests[1].model.id)).toBe("backup")
   }),
 )
+
+describe("the route log and pool health time the model's response, not the step after it", () => {
+  // Real time, because the step reads performance.now(): TestClock cannot make a tool run long or a stream
+  // slow. WAIT_MS is how long the tool, the pause in the stream or the compaction takes. A slow stream must
+  // be slow by both thresholds, so they sit below WAIT_MS. Nothing asserts how fast a fast reply is: those
+  // tests compare the response with the step's own span, so a loaded runner cannot fail them.
+  const WAIT_MS = 300
+  const MAX_RESPONSE_MS = 200
+  const OUTPUT_TOKENS = 1_000
+  // 1,000 output tokens over 300ms or more is at most 3,333 tokens per second.
+  const MIN_TOKENS_PER_SECOND = 5_000
+  // `slow` is what pool health makes of the attempt the route log recorded, by that one threshold.
+  const thresholds = [
+    {
+      name: "maxResponseTimeMs",
+      health: { maxResponseTimeMs: MAX_RESPONSE_MS },
+      slow: (attempt: ModelRouteLog.Attempt) => (attempt.response_ms ?? Number.NaN) > MAX_RESPONSE_MS,
+    },
+    {
+      name: "minOutputTokensPerSecond",
+      health: { minOutputTokensPerSecond: MIN_TOKENS_PER_SECOND },
+      slow: (attempt: ModelRouteLog.Attempt) => (attempt.tokens_per_second ?? Number.NaN) < MIN_TOKENS_PER_SECOND,
+    },
+  ] as const
+
+  /** Runs one routed step whose first slow sample cools its target, and returns the attempt it recorded. */
+  const timedStep = (input: {
+    readonly health: { readonly maxResponseTimeMs?: number; readonly minOutputTokensPerSecond?: number }
+    readonly response: TestLLM.Response
+    /** What the step's tool call does before it returns. */
+    readonly tool?: Effect.Effect<void>
+    readonly recoverOverflow?: Effect.Effect<boolean>
+  }) =>
+    Effect.gen(function* () {
+      ModelRoute.resetHealth()
+      const db = (yield* Database.Service).db
+      const llm = yield* TestLLM.Test
+      const logged: ModelRouteLog.Event[] = []
+      ModelRouteLog.setSink((event) => void logged.push(event))
+      yield* Effect.addFinalizer(() => Effect.sync(() => ModelRouteLog.setSink(undefined)))
+      const sessionID = Session.ID.create()
+      const steps = yield* SessionStep.make.pipe(
+        Effect.provide(
+          Layer.mock(Snapshot.Service)({
+            capture: () => Effect.succeed(undefined),
+            files: () => Effect.succeed([]),
+          }),
+        ),
+      )
+      yield* db
+        .insert(ProjectTable)
+        .values({ id: Project.ID.global, worktree: AbsolutePath.make("/project"), sandboxes: [] })
+        .run()
+      yield* db
+        .insert(SessionTable)
+        .values({
+          id: sessionID,
+          project_id: Project.ID.global,
+          slug: "route-timing",
+          directory: "/project",
+          version: "test",
+        })
+        .run()
+      const capabilities = { tools: true, input: ["text"], output: ["text"] } as const
+      const cost = [
+        {
+          input: Money.USDPerMillionTokens.make(1),
+          output: Money.USDPerMillionTokens.make(2),
+          cache: { read: Money.USDPerMillionTokens.make(0.1), write: Money.USDPerMillionTokens.make(0.5) },
+        },
+      ]
+      const limit = { context: 100_000, output: 1_000 }
+      const primary = SessionRunnerModel.resolved(
+        LanguageModel.make({ id: "primary", provider: "openai", route: OpenAIChat.route }),
+        { capabilities, cost, limit },
+      )
+      const model = SessionRunnerModel.resolved(primary.model, {
+        capabilities,
+        cost,
+        limit,
+        routing: {
+          routeID: Model.ID.make("timed"),
+          target: primary.ref,
+          attempts: 1,
+          policy: ModelRoute.policy({ firstTokenTimeoutMs: false, sampleWindow: 1, slowThreshold: 1, ...input.health }),
+          fallback: () => Effect.succeed(undefined),
+        },
+      })
+      yield* llm.push(input.response)
+
+      const result = yield* steps
+        .attempt({
+          isLocationClosed: () => false,
+          sessionID,
+          assistantMessageID: SessionMessage.ID.create(),
+          agent: Agent.defaultID,
+          model,
+          prepared: {
+            retry: () => Effect.void,
+            request: LLM.request({ model: model.model, prompt: "Build the project" }),
+            options: {},
+            executeTool: () =>
+              (input.tool ?? Effect.die("not used")).pipe(
+                Effect.as({ content: [{ type: "text" as const, text: "Build finished" }] }),
+              ),
+          },
+          retry: (_cause, _error, retry) =>
+            Effect.succeed(retry ? { retry: true, attempt: 1, delay: 0 } : { retry: false }),
+          recoverContinuation: true,
+          recoverOverflow: input.recoverOverflow ?? Effect.succeed(false),
+        })
+        .pipe(Effect.exit)
+      const attempts = logged.flatMap((event) => (event.kind === "attempt" ? [event.row] : []))
+      expect(attempts).toHaveLength(1)
+      return { result, attempt: attempts[0], target: primary.ref }
+    })
+
+  for (const threshold of thresholds) {
+    it.live(`a long tool run after a fast reply does not count against the model by ${threshold.name}`, () =>
+      Effect.gen(function* () {
+        const step = yield* timedStep({
+          health: threshold.health,
+          response: TestLLM.complete(
+            { reason: { normalized: "tool-calls" }, usage: { outputTokens: OUTPUT_TOKENS } },
+            LLMEvent.toolCall({ id: "call-build", name: "build", input: {} }),
+          ),
+          tool: Effect.sleep(WAIT_MS),
+        })
+        const response = step.attempt.response_ms ?? Number.NaN
+
+        expect(Exit.isSuccess(step.result) ? step.result.value._tag : undefined).toBe("Completed")
+        // The step's span still holds the tool run, and the response time ends before most of it. Half the
+        // wait leaves room for the part of the tool run that overlaps the end of the stream.
+        expect(step.attempt.time_ended - step.attempt.time_started - response).toBeGreaterThanOrEqual(WAIT_MS / 2)
+        // Speed is measured over the response, so its output time fits inside the response time.
+        expect((OUTPUT_TOKENS * 1_000) / (step.attempt.tokens_per_second ?? Number.NaN)).toBeLessThanOrEqual(
+          response + 1,
+        )
+        // Pool health judged the same measurement the route log recorded.
+        expect(ModelRoute.coolingDown(step.target)).toBe(threshold.slow(step.attempt))
+      }),
+    )
+
+    it.live(`a slow stream is slow by ${threshold.name}`, () =>
+      Effect.gen(function* () {
+        const reason = { normalized: "stop" } as const
+        const step = yield* timedStep({
+          health: threshold.health,
+          response: Stream.fromIterable([
+            LLMEvent.stepStart({ index: 0 }),
+            LLMEvent.textStart({ id: "t1" }),
+            LLMEvent.textDelta({ id: "t1", text: "A slow" }),
+          ]).pipe(
+            Stream.concat(Stream.fromEffect(Effect.sleep(WAIT_MS)).pipe(Stream.drain)),
+            Stream.concat(
+              Stream.fromIterable([
+                LLMEvent.textDelta({ id: "t1", text: " answer" }),
+                LLMEvent.textEnd({ id: "t1" }),
+                LLMEvent.stepFinish({ index: 0, reason, usage: { outputTokens: OUTPUT_TOKENS } }),
+                LLMEvent.finish({ reason }),
+              ]),
+            ),
+          ),
+        })
+
+        expect(Exit.isSuccess(step.result) ? step.result.value._tag : undefined).toBe("Completed")
+        expect(ModelRoute.coolingDown(step.target)).toBe(true)
+        expect(step.attempt.response_ms).toBeGreaterThanOrEqual(WAIT_MS - 5)
+        expect(step.attempt.tokens_per_second).toBeLessThan(MIN_TOKENS_PER_SECOND)
+      }),
+    )
+  }
+
+  it.live("an overflow attempt's response time leaves out the compaction it triggers", () =>
+    Effect.gen(function* () {
+      const step = yield* timedStep({
+        health: thresholds[0].health,
+        response: TestLLM.failAfter(
+          new AIError({ reason: new InvalidRequestError({ message: "Too long", classification: "context-overflow" }) }),
+        ),
+        recoverOverflow: Effect.sleep(WAIT_MS).pipe(Effect.as(true)),
+      })
+
+      expect(Exit.isSuccess(step.result) ? step.result.value._tag : undefined).toBe("Compacted")
+      expect(step.attempt).toMatchObject({ outcome: "failure", error_tag: "ContextOverflow" })
+      // The compaction starts after the stream has ended, so all of it lies between the two ends.
+      expect(
+        step.attempt.time_ended - step.attempt.time_started - (step.attempt.response_ms ?? Number.NaN),
+      ).toBeGreaterThanOrEqual(WAIT_MS / 2)
+    }),
+  )
+})
