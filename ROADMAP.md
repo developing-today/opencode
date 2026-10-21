@@ -78,6 +78,8 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
 | Route attempts timed to the end of the model's response          | 2026-10-21 | #234     |
+| Config substitution supports `{env:VAR:-fallback}` defaults      | 2026-10-21 | #232     |
+| Release is deliberate dispatch only; dead `dev` trigger dropped  | 2026-10-21 | #229     |
 | Containers build on main pushes; GHCR push is a dispatch input   | 2026-10-21 | #226     |
 | `docs-update` gated to upstream; dead fork cron dropped          | 2026-10-21 | #225     |
 | Provider session grouping walks to the root session              | 2026-10-21 | #220     |
