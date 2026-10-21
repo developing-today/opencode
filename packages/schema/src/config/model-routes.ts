@@ -257,20 +257,24 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
     description:
       "Total requests to make against one target before failing over to the next, so 2 allows one retry. Defaults to 2. Retries only happen before any response output, so no tool call ever runs twice.",
   }),
-  autonomy: Schema.Literals(["fixed", "rules", "adaptive", "predictive", "agent"]).pipe(optional).annotate({
-    description:
-      "How much the route may decide for itself; each level includes the ones before it. fixed: failover only, starting from the configured order; schedules, the user's prefer and avoid rules and quota demotion still apply. rules: adds selection modes, weights, budgets and provider rate-limit holds. adaptive: adds the scheduled review that skips or down-weights targets from recent history. predictive: adds time-of-day and error-text prediction. agent: adds route_stats and route_adjust so the model can inspect and steer routing; once any route is agent or unset, every session gets them, and they cover every route. Unset keeps the behavior from before levels existed.",
-  }),
-  selection: Schema.Literals(["ordered", "round-robin", "weighted"]).pipe(optional).annotate({
-    description:
-      "How a session picks its target: ordered (default) takes the heaviest ready target, in configured order when weights are equal; round-robin rotates per new session in proportion to weight; weighted draws by weight. Either way the choice is sticky for the session, and failover picks again the same way among the targets not yet tried.",
-  }),
+  autonomy: Schema.Literals(["fixed", "rules", "adaptive", "predictive", "agent"])
+    .annotate({
+      description:
+        "How much the route may decide for itself; each level includes the ones before it. fixed: failover only, starting from the configured order; schedules, the user's prefer and avoid rules and quota demotion still apply. rules: adds selection modes, weights, budgets and provider rate-limit holds. adaptive: adds the scheduled review that skips or down-weights targets from recent history. predictive: adds time-of-day and error-text prediction. agent: adds route_stats and route_adjust so the model can inspect and steer routing; once any route is agent or unset, every session gets them, and they cover every route. Unset keeps the behavior from before levels existed.",
+    })
+    .pipe(optional),
+  selection: Schema.Literals(["ordered", "round-robin", "weighted"])
+    .annotate({
+      description:
+        "How a session picks its target: ordered (default) takes the heaviest ready target, in configured order when weights are equal; round-robin rotates per new session in proportion to weight; weighted draws by weight. Either way the choice is sticky for the session, and failover picks again the same way among the targets not yet tried.",
+    })
+    .pipe(optional),
   weights: Schema.Record(Schema.String, Schema.Finite.check(Schema.isGreaterThan(0)))
-    .pipe(optional)
     .annotate({
       description:
         'Relative weights keyed by target model reference. They rank targets in every selection mode, failover included: ordered tries the heaviest first, round-robin rotates in proportion, and weighted draws in proportion, so { "openai/gpt-6-luna": 3, "github-copilot/gpt-6-luna": 1 } sends about 3/4 of new weighted sessions to the first target. Targets without a weight count as 1, and a fixed route ignores weights. A nested route is keyed as "opencode-route/<id>" and is chosen as one unit by this route; it then picks among its own members using its own selection and weights.',
-    }),
+    })
+    .pipe(optional),
   schedules: Schema.Array(Schedule).pipe(optional).annotate({
     description:
       "Time-bound weight changes for this route's targets, e.g. peak hours that make a provider lighter. Weights order every selection mode: inside an active window the targets are ranked by effective weight, and equal weights keep their configured order.",

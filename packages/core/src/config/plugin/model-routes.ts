@@ -313,7 +313,8 @@ export function weightRulesAcross(schedules: readonly ConfigModelRoutes.GlobalSc
  * from `definitions`; `candidate` returns a model as it can be used now, or undefined when its provider is not
  * connected. Models that matching keys add come only through `candidate`, and a target uses it when it has
  * the model, so configured variants count. The route's declared `levels` are applied here: a target that
- * cannot run one of them sits it out. A nested pool's are applied where it is collected. */
+ * cannot run one of them sits it out. A nested pool's are applied where it is collected, and here its members
+ * sit out every other level. */
 export function expand(
   id: string,
   routes: ReadonlyMap<string, ConfigModelRoutes.Route>,
@@ -331,9 +332,30 @@ export function expand(
     members: new Map(),
   })
   const levels = routes.get(id)?.levels
-  if (levels === undefined || collected.leaves.length === 0)
-    return { leaves: collected.leaves, nodes: collected.nodes, diagnostics: collected.diagnostics }
-  const leaves = collected.leaves.map((leaf) => keptTo(leaf, levels, false))
+  // A nested pool's declared levels rule out every other level for its members. They become sit-outs here,
+  // where every level this pool can be asked for is known: each one a member has a variant or a remap for,
+  // and each one this pool declares.
+  const asked = [
+    ...new Set([
+      ...collected.leaves.flatMap((leaf) => [
+        ...leaf.model.variants.map((variant) => String(variant.id)),
+        ...Object.keys(leaf.variantMap ?? {}),
+      ]),
+      ...(levels ?? []),
+    ]),
+  ]
+  const opened = collected.leaves.map((leaf, index) => {
+    const allowed = collected.allowed.get(index)
+    return allowed === undefined
+      ? leaf
+      : sitOut(
+          leaf,
+          asked.filter((level) => !allowed.has(level)),
+        )
+  })
+  if (levels === undefined || opened.length === 0)
+    return { leaves: opened, nodes: collected.nodes, diagnostics: collected.diagnostics }
+  const leaves = opened.map((leaf) => keptTo(leaf, levels))
   return {
     leaves,
     nodes: collected.nodes,
@@ -372,6 +394,8 @@ function collect(
   // `provider/model` of every target placed so far, whatever its variant: matching keys add a model once.
   const placed = new Set<string>()
   const diagnostics: string[] = []
+  // Leaf index to the levels the nested pools above it declare, kept only for leaves under such a pool.
+  const allowed = new Map<number, ReadonlySet<string>>()
   // Set when a pool already on the way in is reached again, here or in a pool named below.
   let cut = false
 
@@ -554,16 +578,22 @@ function collect(
           variantMap,
         )
       }
-    // A nested pool that declares levels keeps its members to them, so the pools above it see what it
-    // offers: each member sits out the declared levels it cannot run and every other level it knows.
+    // A nested pool that declares levels keeps its members to them: each sits out the declared levels it
+    // cannot run, and expand() sits it out of every other level once all the levels in play are known. A
+    // pinned member runs its pin at every level, and the pin was checked against the declaration above.
     const declared = current.levels
     if (declared !== undefined && routeID !== id)
-      result.splice(first, result.length - first, ...result.slice(first).map((leaf) => keptTo(leaf, declared, true)))
+      result.slice(first).forEach((leaf, offset) => {
+        if (leaf.fixedVariant) return
+        const index = first + offset
+        result[index] = keptTo(leaf, declared)
+        allowed.set(index, new Set(declared.filter((level) => allowed.get(index)?.has(level) ?? true)))
+      })
     return node.children.length > 0 ? nodeIndex : undefined
   }
 
   visit(id, undefined, trail, { excludes: [], rules: [] })
-  return { leaves: result, nodes, diagnostics, cut }
+  return { leaves: result, nodes, diagnostics, cut, allowed }
 }
 
 /** A target's level remaps: each map in order, a later one overriding an earlier one level by level. A
@@ -631,15 +661,17 @@ function runs(target: SourceModel, level: string) {
   return target.fixedVariant || mapped !== undefined || target.model.variants.some((item) => item.id === level)
 }
 
-/** A member of a pool that declares `levels`, kept to them: it sits out each declared level it cannot run,
- * and with `others` also each other level it has a variant or a remap for. */
-function keptTo(target: SourceModel, levels: readonly string[], others: boolean): SourceModel {
-  const declared = new Set(levels)
-  const known = [...target.model.variants.map((variant) => String(variant.id)), ...Object.keys(target.variantMap ?? {})]
-  const off = [
-    ...[...declared].filter((level) => !runs(target, level)),
-    ...(others ? known.filter((level) => !declared.has(level)) : []),
-  ].filter((level) => target.variantMap?.[level] !== false)
+/** A member of a pool that declares `levels`, sitting out each declared level it cannot run. */
+function keptTo(target: SourceModel, levels: readonly string[]): SourceModel {
+  return sitOut(
+    target,
+    [...new Set(levels)].filter((level) => !runs(target, level)),
+  )
+}
+
+/** A target with `false` added for each of `levels` it does not already sit out. */
+function sitOut(target: SourceModel, levels: readonly string[]): SourceModel {
+  const off = levels.filter((level) => target.variantMap?.[level] !== false)
   if (off.length === 0) return target
   return {
     ...target,

@@ -400,6 +400,31 @@ describe("pool effort levels", () => {
     })
   })
 
+  test("a nested pool's members sit out a level only another member of the outer pool has", () => {
+    const routes = pools({
+      // haiku-5 has low and high, and this pool offers it at low only.
+      "low-only": { targets: ["anthropic/claude-haiku-5"], levels: ["low"] },
+      // luna-6 has every level, so the outer pool offers each of them, and only luna-6 runs the ones above low.
+      outer: { targets: ["opencode-route/low-only", "openai/luna-6"] },
+    })
+    // The levels follow the members' order, so only the set is compared.
+    expect(new Set(offered("outer", routes))).toEqual(new Set(ALL))
+    expect(remaps("outer", routes)).toEqual({
+      "anthropic/claude-haiku-5": { medium: false, high: false, xhigh: false, max: false },
+      "openai/luna-6": {},
+    })
+  })
+
+  test("a nested pool pinned at a level it declares runs its pin at each level of the outer pool", () => {
+    const routes = pools({
+      "high-only": { targets: ["anthropic/claude-haiku-5"], levels: ["high"] },
+      outer: { targets: ["opencode-route/high-only#high"], levels: ["low"] },
+    })
+    expect(refs("outer", routes)).toEqual(["anthropic/claude-haiku-5#high"])
+    expect(remaps("outer", routes)).toEqual({ "anthropic/claude-haiku-5": {} })
+    expect(offered("outer", routes)).toEqual(["low"])
+  })
+
   test("a nested pool pinned at a level leaves out the members that sit that level out", () => {
     const routes = pools({
       remapped: { targets: [{ model: "openai/luna-6", variants: { max: false } }, "anthropic/claude-opus-6.1"] },
