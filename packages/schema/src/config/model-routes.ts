@@ -27,7 +27,7 @@ const TargetObject = Schema.Struct({
   variants: Schema.Record(Schema.String, VariantChoice)
     .annotate({
       description:
-        'Remaps a route-level variant to this target\'s variant, e.g. { "low": "high" } runs this target at high when the route is selected at low. false makes the target sit that level out, e.g. { "max": false }: it is never used at that level, not even as a last resort. Overrides the route\'s variantRules level by level.',
+        'Remaps a route-level variant to this target\'s variant, e.g. { "low": "high" } runs this target at high when the route is selected at low. false makes the target sit that level out, e.g. { "max": false }: it is never used at that level, not even as a last resort, and on a nested route the whole route sits it out. Overrides the route\'s variantRules level by level.',
     })
     .pipe(optional),
   until: PositiveInt.pipe(optional).annotate({

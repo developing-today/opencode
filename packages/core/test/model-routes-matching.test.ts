@@ -425,6 +425,44 @@ describe("pool effort levels", () => {
     expect(offered("outer", routes)).toEqual(["low"])
   })
 
+  test("a member pinned inside a nested pool still keeps to that pool's levels", () => {
+    const routes = pools({
+      // luna-6 is pinned at high, and this pool offers it at low only.
+      "low-only": { targets: ["openai/luna-6#high"], levels: ["low"] },
+      outer: { targets: ["opencode-route/low-only"], levels: ["low", "max"] },
+    })
+    expect(remaps("outer", routes)).toEqual({
+      "openai/luna-6": { medium: false, high: false, xhigh: false, max: false },
+    })
+    expect(offered("outer", routes)).toEqual(["low"])
+    expect(expand("outer", routes, catalog).diagnostics).toEqual([
+      "pool outer declares level max, but none of its models can run it, so it is not offered",
+    ])
+  })
+
+  test("a nested pool written as a target object sits out, as a whole, the levels it maps to false", () => {
+    const routes = pools({
+      lunas: { targets: ["openai/luna-6", "openai/luna-6.1"] },
+      outer: {
+        targets: [{ model: "opencode-route/lunas", variants: { max: false } }, "anthropic/claude-sonnet-6"],
+      },
+    })
+    expect(remaps("outer", routes)).toEqual({
+      "openai/luna-6": { max: false },
+      "openai/luna-6.1": { max: false },
+      "anthropic/claude-sonnet-6": {},
+    })
+    expect(offered("outer", routes)).toEqual(ALL)
+  })
+
+  test("a model a pinned nested pool leaves out can still join the pool above it on that pool's terms", () => {
+    const routes = pools({
+      inner: { targets: [{ model: "openai/luna-6", variants: { max: false } }] },
+      outer: { targets: ["opencode-route/inner#max"], include: ["openai/luna-6"] },
+    })
+    expect(refs("outer", routes)).toEqual(["openai/luna-6"])
+  })
+
   test("a nested pool pinned at a level leaves out the members that sit that level out", () => {
     const routes = pools({
       remapped: { targets: [{ model: "openai/luna-6", variants: { max: false } }, "anthropic/claude-opus-6.1"] },

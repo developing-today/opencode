@@ -419,7 +419,9 @@ applies:
 
 A remap to `false` makes the target sit that level out. A target that sits out
 the requested level is never used at it, not even as a last resort when every
-other target is cooling down.
+other target is cooling down. A nested pool written as a target object, such as
+`{ "model": "opencode-route/<id>", "variants": { "max": false } }`, sits that level
+out as a whole.
 
 ```jsonc
 {

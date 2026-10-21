@@ -109,7 +109,8 @@ model `opencode-route/<id>`.
 - Effort levels (variants):
   - `variants` on a target object remaps a level, `{ "xhigh": "high" }`; `false`
     makes the target sit that level out, `{ "max": false }`. A target that sits out
-    a level is never used at it, not even as a last resort.
+    a level is never used at it, not even as a last resort. On a nested pool's
+    target object, `false` makes the whole nested pool sit that level out.
   - `variantRules`: `[{ "match": "*argon*", "map": { "xhigh": "high", "max": false } }]`.
     `match` takes a pattern, pool name or expression. Later rules override earlier
     ones per level; a target's own `variants` override every rule.
