@@ -241,6 +241,7 @@ export const OpenAIPlugin = define({
   effect: Effect.fn(function* (ctx) {
     const bus = yield* Bus.Service
     const loading = Semaphore.makeUnsafe(1)
+    const roots = SessionAffinity.rootCache()
     let chatgpt: Credential.OAuth | undefined
 
     const load = Effect.fn("OpenAIPlugin.load")(function* () {
@@ -322,8 +323,12 @@ export const OpenAIPlugin = define({
             .get({ sessionID: evt.sessionID })
             .pipe(Effect.orElseSucceed(() => undefined))
           evt.headers.originator = "opencode"
-          // ChatGPT routes its prompt cache on this header, so children share the parent's.
-          evt.headers["session-id"] = session ? SessionAffinity.get(session) : evt.sessionID
+          // ChatGPT routes its prompt cache on this header, so a Session tree shares its root's.
+          evt.headers["session-id"] = session
+            ? yield* SessionAffinity.resolveRoot(roots, session, (sessionID) =>
+                ctx.session.get({ sessionID }).pipe(Effect.orElseSucceed(() => undefined)),
+              )
+            : evt.sessionID
         }),
       { providerID: Provider.ID.openai },
     )

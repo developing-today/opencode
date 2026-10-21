@@ -212,6 +212,7 @@ export const ChatGPTPlugin = define({
     const bus = yield* Bus.Service
     const credentials = yield* Credential.Service
     const loading = Semaphore.makeUnsafe(1)
+    const roots = SessionAffinity.rootCache()
     let chatgpt: Credential.OAuth | undefined
     // let available: ReadonlyArray<RemoteModel> | undefined
     let source: Effect.Success<ReturnType<typeof ctx.integration.connection.active>>
@@ -275,7 +276,11 @@ export const ChatGPTPlugin = define({
             .get({ sessionID: evt.sessionID })
             .pipe(Effect.orElseSucceed(() => undefined))
           // Mirror the Codex client's session headers: ChatGPT derives prompt-cache affinity from session-id.
-          evt.headers["session-id"] = session ? SessionAffinity.get(session) : evt.sessionID
+          evt.headers["session-id"] = session
+            ? yield* SessionAffinity.resolveRoot(roots, session, (sessionID) =>
+                ctx.session.get({ sessionID }).pipe(Effect.orElseSucceed(() => undefined)),
+              )
+            : evt.sessionID
           evt.headers["thread-id"] = evt.sessionID
           evt.headers["x-client-request-id"] = evt.sessionID
         }),

@@ -162,6 +162,7 @@ export const GithubCopilotPlugin = define({
     const providers = yield* Provider.Service
     const bus = yield* Bus.Service
     const loading = Semaphore.makeUnsafe(1)
+    const roots = SessionAffinity.rootCache()
     const loaded: {
       baseURL?: string
       token?: string
@@ -308,7 +309,11 @@ export const GithubCopilotPlugin = define({
             .pipe(Effect.orElseSucceed(() => undefined))
           const interaction = interactionType(evt.kind, session?.parentID !== undefined)
           evt.headers["X-Interaction-Type"] = interaction
-          evt.headers["X-Interaction-Id"] = session ? SessionAffinity.get(session) : evt.sessionID
+          evt.headers["X-Interaction-Id"] = session
+            ? yield* SessionAffinity.resolveRoot(roots, session, (sessionID) =>
+                ctx.session.get({ sessionID }).pipe(Effect.orElseSucceed(() => undefined)),
+              )
+            : evt.sessionID
           if (interaction !== "conversation-agent") evt.headers["x-initiator"] = "agent"
         }),
       { providerID: Provider.ID.githubCopilot },
