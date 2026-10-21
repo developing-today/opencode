@@ -77,6 +77,8 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| MCP security updates grouped into one Dependabot PR              | 2026-10-21 | #211     |
+| `@modelcontextprotocol/*` updates grouped into one Dependabot PR | 2026-10-21 | #207     |
 | MCP SDK bumped to 2.3.0, client patch re-based                   | 2026-10-21 | #205     |
 | Dependabot set up for bun; vite bump landed with lockfile        | 2026-10-20 | #198     |
 | mcpx daemon autostart fail-open branches covered by tests        | 2026-10-20 | #186     |
