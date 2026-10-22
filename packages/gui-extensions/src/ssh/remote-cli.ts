@@ -41,18 +41,27 @@ fi
 
 // Adapters supply a quoted shell expression, including remote HOME or wslpath expansion.
 export function versionScript(command: string) {
-  return `if [ -x ${command} ]; then ${command} --version 2>/dev/null || true; fi\n`
+  return `if [ -x ${command} ]; then printf 'OPENCODE_CLI_VERSION_BEGIN\\n'; ${command} --version 2>/dev/null || true; printf 'OPENCODE_CLI_VERSION_END\\n'; fi\n`
 }
 
 export function parseVersion(output: string) {
   // The transport is a login shell (`sh -l -s`), so a banner, MOTD or profile echo can precede
-  // the version line on stdout, and a banner line can itself end in (or be) a version-shaped
-  // token. The version script runs after the login shell, so its line is the last line whose
-  // version candidate matches the shape requireVersion accepts.
-  const versions = output
-    .split(/\r?\n/)
-    .map((raw) => {
-      const line = raw.trim()
+  // the script's output, and a banner line can itself end in (or be) a version-shaped token.
+  // No ordering rule can tell such a banner line from the CLI's own line when the script prints
+  // nothing — the routine first-connect case (nothing staged yet) and the cannot-run case
+  // (--version fails) — so versionScript frames its output with markers, like the
+  // OPENCODE_SSH_REGISTRATION_BEGIN/END frame, and only framed lines are candidates. Within
+  // the frame, the version line is the last line whose version candidate matches the shape
+  // requireVersion accepts.
+  const lines = output.split(/\r?\n/).map((line) => line.trim())
+  const begin = lines.lastIndexOf("OPENCODE_CLI_VERSION_BEGIN")
+  const end = begin === -1 ? -1 : lines.indexOf("OPENCODE_CLI_VERSION_END", begin + 1)
+
+  if (end === -1) return null
+
+  const versions = lines
+    .slice(begin + 1, end)
+    .map((line) => {
       const marker = line.lastIndexOf(" v")
 
       return marker === -1 ? line : line.slice(marker + 2)
