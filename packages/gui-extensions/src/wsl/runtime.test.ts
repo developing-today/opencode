@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { discoverScript } from "./remote-cli"
-import { createWslRuntime, parseDiscoveredCli, parseProbeAnswer, wslArgs } from "./runtime"
+import { createWslRuntime, parseDiscoveredCli, parseProbeAnswer, probeScript, wslArgs } from "./runtime"
 
 test("parseProbeAnswer reads the probe script's answer line, not login-shell banner output", () => {
   expect(parseProbeAnswer("yes")).toBe("yes")
@@ -17,6 +17,46 @@ test("parseProbeAnswer reads the probe script's answer line, not login-shell ban
   expect(parseProbeAnswer("")).toBe(null)
   expect(parseProbeAnswer("\n \n")).toBe(null)
 })
+
+test("probeScript prints both answers with a leading newline", () => {
+  expect(probeScript("bash")).toContain(`printf '\\nyes\\n'`)
+  expect(probeScript("bash")).toContain(`printf '\\nno\\n'`)
+  expect(probeScript("curl")).toContain(`printf '\\nyes\\n'`)
+  expect(probeScript("curl")).toContain(`printf '\\nno\\n'`)
+})
+
+// Runs the real probeScript through `sh`, optionally after preceding login-shell
+// output (`precedingPrint` is a shell printf format string, so a test controls the
+// trailing newline), and reads the output with the real parseProbeAnswer.
+function runProbeScript(tool: string, precedingPrint?: string) {
+  const script = precedingPrint === undefined ? probeScript(tool) : `printf '${precedingPrint}'\n${probeScript(tool)}`
+
+  const result = spawnSync("sh", ["-s"], { input: script, encoding: "utf8" })
+
+  if (result.status !== 0) throw new Error(`probeScript exited ${result.status}: ${result.stderr}`)
+
+  return parseProbeAnswer(result.stdout)
+}
+
+test.skipIf(process.platform === "win32")(
+  "probeDistro answers survive preceding login-shell output with no trailing newline, through the real probeScript",
+  () => {
+    for (const tool of ["bash", "curl"]) {
+      expect(runProbeScript(tool)).toBe("yes")
+      expect(runProbeScript(tool, "welcome to dev box\\n")).toBe("yes")
+      expect(runProbeScript(tool, "welcome to dev box")).toBe("yes")
+    }
+
+    const missing = "opencode-definitely-missing-tool"
+
+    expect(runProbeScript(missing)).toBe("no")
+    expect(runProbeScript(missing, "welcome to dev box\\n")).toBe("no")
+    expect(runProbeScript(missing, "welcome to dev box")).toBe("no")
+    // A banner ending in `yes` must not become a false positive for a missing tool.
+    expect(runProbeScript(missing, "your tools say yes")).toBe("no")
+    expect(runProbeScript(missing, "yes")).toBe("no")
+  },
+)
 
 test("parseDiscoveredCli returns the discovered path, not a login-shell banner line", () => {
   expect(parseDiscoveredCli("/home/user/.opencode/bin/opencode\n")).toBe("/home/user/.opencode/bin/opencode")
