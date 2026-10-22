@@ -1,5 +1,17 @@
 import { expect, test } from "bun:test"
-import { createWslRuntime, parseDiscoveredCli, wslArgs } from "./runtime"
+import { createWslRuntime, parseDiscoveredCli, parseProbeAnswer, wslArgs } from "./runtime"
+
+test("parseProbeAnswer reads the probe script's answer line, not login-shell banner output", () => {
+  expect(parseProbeAnswer("yes")).toBe("yes")
+  expect(parseProbeAnswer("no")).toBe("no")
+  expect(parseProbeAnswer("Welcome to Ubuntu 24.04 LTS\nyes")).toBe("yes")
+  expect(
+    parseProbeAnswer("Last login: Thu Oct 22 00:01:02 2026\n * Documentation: https://help.ubuntu.com\nyes\n"),
+  ).toBe("yes")
+  expect(parseProbeAnswer("yes, your tools are ready\nno")).toBe("no")
+  expect(parseProbeAnswer("")).toBe(null)
+  expect(parseProbeAnswer("\n \n")).toBe(null)
+})
 
 test("parseDiscoveredCli returns the discovered path, not a login-shell banner line", () => {
   expect(parseDiscoveredCli("/home/user/.opencode/bin/opencode\n")).toBe("/home/user/.opencode/bin/opencode")
