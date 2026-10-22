@@ -1,5 +1,15 @@
 import { expect, test } from "bun:test"
-import { createWslRuntime, wslArgs } from "./runtime"
+import { createWslRuntime, parseDiscoveredCli, wslArgs } from "./runtime"
+
+test("parseDiscoveredCli returns the discovered path, not a login-shell banner line", () => {
+  expect(parseDiscoveredCli("/home/user/.opencode/bin/opencode\n")).toBe("/home/user/.opencode/bin/opencode")
+  expect(parseDiscoveredCli("Welcome to Ubuntu 24.04 LTS\n/home/user/.opencode/bin/opencode\n")).toBe(
+    "/home/user/.opencode/bin/opencode",
+  )
+  expect(parseDiscoveredCli("")).toBeNull()
+  expect(parseDiscoveredCli("Welcome to Ubuntu 24.04 LTS\n")).toBeNull()
+  expect(parseDiscoveredCli("opencode\n")).toBeNull()
+})
 
 test("wslArgs bypasses the distro default shell", () => {
   expect(wslArgs(["sh", "-lc", 'printf "%s\\n" "$HOME"'], "Debian")).toEqual([
