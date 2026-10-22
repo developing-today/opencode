@@ -16,7 +16,7 @@ Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](REA
 | [Routing, cost and plans](#routing-cost-and-plans)          | Feature requests for failover, cost display and cache use       |
 | [Plugin API](#plugin-api)                                   | Gaps found while building v2 plugins                            |
 | [CI and test health](#ci-and-test-health)                   | A main branch whose checks are green                            |
-| [Upstream sync](#upstream-sync)                             | Daily sync keeps failing                                        |
+| [Upstream sync](#upstream-sync)                             | Daily sync verified working                                     |
 
 ## Nested subsessions and their asks
 
@@ -69,14 +69,14 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 ## Upstream sync
 
-| Title                     | Horizon | Status   | Intent                                                                                             | Links |
-| ------------------------- | ------- | -------- | -------------------------------------------------------------------------------------------------- | ----- |
-| Daily upstream sync works | Now     | proposed | The Jules sync gets past setup, then dies in "Assemble Jules payload" with exit 126 and no output. | #41   |
+No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-21 after three consecutive scheduled successes; see Done.
 
 ## Done
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| models-snapshot refresh runs on this fork against main           | 2026-10-21 | #252     |
+| Daily upstream sync verified working — #41 was transient         | 2026-10-21 | #41      |
 | ROADMAP Done table records the #250 completion                   | 2026-10-21 | #251     |
 | ROADMAP Done table records the #244 completion                   | 2026-10-21 | #245     |
 | ROADMAP Done table records the #197 and #232 completions         | 2026-10-21 | #249     |
