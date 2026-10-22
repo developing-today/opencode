@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { parseVersion, quote, versionScript } from "./remote-cli"
+import { discoverScript, parseVersion, quote, versionScript } from "./remote-cli"
 
 // The output versionScript produces for a CLI that printed `versionOutput`: the frame
 // markers versionScript prints around the --version output. Both markers are printed
@@ -113,4 +113,8 @@ describe("WSL parseVersion", () => {
       expect(parseVersion(runVersionScript("2.1.0", "welcome to dev box"))).toBe("2.1.0")
     },
   )
+
+  test("discoverScript prints the discovered path with a leading newline", () => {
+    expect(discoverScript()).toContain(`printf '\\n%s\\n' "$cli"`)
+  })
 })

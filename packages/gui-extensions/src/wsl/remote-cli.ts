@@ -14,7 +14,7 @@ function requireVersion(version: string) {
 export function discoverScript() {
   return `cli=""
 if [ -z "$cli" ] && [ -x "$HOME/.opencode/bin/opencode" ]; then cli="$HOME/.opencode/bin/opencode"; fi
-if [ -n "$cli" ]; then printf '%s\\n' "$cli"; fi
+if [ -n "$cli" ]; then printf '\\n%s\\n' "$cli"; fi
 `
 }
 

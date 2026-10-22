@@ -7,7 +7,7 @@ import { RemoteCli } from "./remote-cli"
 // complete private discovery contract; no remote Python/Node runtime is needed.
 const registrationScript = `status=$("$cli" service status) || exit 0
 if [ "$status" = stopped ]; then exit 0; fi
-printf 'OPENCODE_SSH_STATUS=%s\\n' "$status"
+printf '\\nOPENCODE_SSH_STATUS=%s\\n' "$status"
 for file in "\${XDG_STATE_HOME:-$HOME/.local/state}"/opencode/service*.json; do
   if [ ! -f "$file" ]; then continue; fi
   printf 'OPENCODE_SSH_REGISTRATION_BEGIN\\n'
