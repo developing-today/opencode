@@ -46,19 +46,20 @@ export function versionScript(command: string) {
 
 export function parseVersion(output: string) {
   // The transport is a login shell (`sh -l -s`), so a banner, MOTD or profile echo can precede
-  // the version line on stdout. Scan for a line whose version candidate matches the shape
-  // requireVersion accepts instead of trusting the first non-empty line.
-  for (const raw of output.split(/\r?\n/)) {
-    const line = raw.trim()
+  // the version line on stdout, and a banner line can itself end in (or be) a version-shaped
+  // token. The version script runs after the login shell, so its line is the last line whose
+  // version candidate matches the shape requireVersion accepts.
+  const versions = output
+    .split(/\r?\n/)
+    .map((raw) => {
+      const line = raw.trim()
+      const marker = line.lastIndexOf(" v")
 
-    if (!line) continue
-    const marker = line.lastIndexOf(" v")
-    const version = marker === -1 ? line : line.slice(marker + 2)
+      return marker === -1 ? line : line.slice(marker + 2)
+    })
+    .filter((version) => version === "local" || /^[0-9][a-zA-Z0-9.+-]*$/.test(version))
 
-    if (version === "local" || /^[0-9][a-zA-Z0-9.+-]*$/.test(version)) return version
-  }
-
-  return null
+  return versions.at(-1) ?? null
 }
 
 export const probeScript = `set -eu
