@@ -17,6 +17,19 @@ describe("SSH parseVersion", () => {
     expect(RemoteCli.parseVersion("dev tools v3 loaded\nopencode v2.1.0\n")).toBe("2.1.0")
   })
 
+  test("prefers the CLI's version over a banner line ending in a version-shaped token", () => {
+    expect(RemoteCli.parseVersion("dev tools v3\nopencode v2.1.0\n")).toBe("2.1.0")
+    expect(RemoteCli.parseVersion("node v20.11.0\nopencode v2.1.0\n")).toBe("2.1.0")
+  })
+
+  test("prefers the CLI's version over a standalone version-shaped banner line", () => {
+    expect(RemoteCli.parseVersion("24.04\nopencode v2.1.0\n")).toBe("2.1.0")
+  })
+
+  test("does not accept a stale CLI when the banner version coincides with the expected one", () => {
+    expect(RemoteCli.parseVersion("tools v2.1.0\nopencode v1.0.0\n")).toBe("1.0.0")
+  })
+
   test("returns null when no line is a version", () => {
     expect(RemoteCli.parseVersion("")).toBeNull()
     expect(RemoteCli.parseVersion("  \n\n")).toBeNull()
