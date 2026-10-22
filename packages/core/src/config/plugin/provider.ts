@@ -196,12 +196,13 @@ export const Plugin = define({
             models.get(providerID, id)?.package !== source.base.package
           if (config.variants === undefined && config.capabilities?.reasoning === undefined && (!source?.base || repackaged))
             models.update(providerID, id, (model) => {
-              model.variants = [
-                ...Variant.resolve({
-                  ...model,
-                  package: model.package ?? models.provider.get(providerID)?.provider.package,
-                }),
-              ]
+              const pkg = model.package ?? models.provider.get(providerID)?.provider.package
+              // Without a package there is no protocol to respell for — Variant.resolve
+              // would return [] and destroy variants the model already carries, such as
+              // a route pool's routeVariants (pools deliberately have no package; their
+              // provider record carries the empty-string package of Provider.Info.empty).
+              if (!pkg) return
+              model.variants = [...Variant.resolve({ ...model, package: pkg })]
             })
         }
       }
