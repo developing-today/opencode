@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { RemoteCli } from "./remote-cli"
@@ -111,6 +111,92 @@ describe("SSH parseVersion", () => {
       expect(RemoteCli.parseVersion(runVersionScript("opencode v2.1.0\\n", "welcome to dev box"))).toBe("2.1.0")
       expect(RemoteCli.parseVersion(runVersionScript("2.1.0\\n", "welcome to dev box\\n"))).toBe("2.1.0")
       expect(RemoteCli.parseVersion(runVersionScript("2.1.0", "welcome to dev box"))).toBe("2.1.0")
+    },
+  )
+})
+
+// Runs the real probeScript through `sh`, optionally after preceding login-shell
+// output (`precedingPrint` is a shell printf format string, so a test controls the
+// trailing newline), and reads the target the way bootstrap does: the last line
+// starting with the marker.
+function runProbeScript(precedingPrint?: string) {
+  const script =
+    precedingPrint === undefined ? RemoteCli.probeScript : `printf '${precedingPrint}'\n${RemoteCli.probeScript}`
+
+  const result = spawnSync("sh", ["-s"], { input: script, encoding: "utf8" })
+
+  if (result.status !== 0) throw new Error(`probeScript exited ${result.status}: ${result.stderr}`)
+
+  return result.stdout
+    .split(/\r?\n/)
+    .findLast((line) => line.startsWith("OPENCODE_REMOTE_TARGET="))
+    ?.split("=")[1]
+}
+
+// Runs the real discoverScript through `sh` against a fake staged CLI, optionally
+// after preceding login-shell output, and returns the script's raw output.
+function runDiscoverScript(precedingPrint?: string) {
+  const home = mkdtempSync(path.join(tmpdir(), "ssh-discover-cli-"))
+
+  try {
+    const cli = path.join(home, ".opencode/bin/opencode")
+    mkdirSync(path.dirname(cli), { recursive: true })
+    writeFileSync(cli, "#!/bin/sh\n")
+    chmodSync(cli, 0o755)
+
+    const script =
+      precedingPrint === undefined
+        ? RemoteCli.discoverScript()
+        : `printf '${precedingPrint}'\n${RemoteCli.discoverScript()}`
+
+    const result = spawnSync("sh", ["-s"], {
+      input: script,
+      encoding: "utf8",
+      env: { ...process.env, HOME: home },
+    })
+
+    if (result.status !== 0) throw new Error(`discoverScript exited ${result.status}: ${result.stderr}`)
+
+    return { output: result.stdout, cli }
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+}
+
+describe("SSH probeScript and discoverScript", () => {
+  test("probeScript prints the target marker with a leading newline", () => {
+    expect(RemoteCli.probeScript).toContain(`printf '\\nOPENCODE_REMOTE_TARGET=%s\\n' "$target"`)
+  })
+
+  test.skipIf(process.platform === "win32")(
+    "reads the target when preceding login-shell output has no trailing newline, through the real probeScript",
+    () => {
+      const target = runProbeScript()
+
+      expect(target).toMatch(/^(linux|darwin)-(x64-baseline|arm64)(-musl)?$/)
+      expect(runProbeScript("welcome to dev box")).toBe(target)
+      expect(runProbeScript("welcome to dev box\\n")).toBe(target)
+    },
+  )
+
+  test("discoverScript prints the discovered path with a leading newline", () => {
+    expect(RemoteCli.discoverScript()).toContain(`printf '\\n%s\\n' "$cli"`)
+  })
+
+  test.skipIf(process.platform === "win32")(
+    "prints the discovered path on its own line when preceding login-shell output has no trailing newline, through the real discoverScript",
+    () => {
+      const unterminated = runDiscoverScript("welcome to dev box")
+
+      expect(unterminated.output.split(/\r?\n/)).toContain(unterminated.cli)
+
+      const terminated = runDiscoverScript("welcome to dev box\\n")
+
+      expect(terminated.output.split(/\r?\n/)).toContain(terminated.cli)
+
+      const clean = runDiscoverScript()
+
+      expect(clean.output.split(/\r?\n/)).toContain(clean.cli)
     },
   )
 })

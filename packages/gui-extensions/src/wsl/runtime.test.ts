@@ -1,4 +1,9 @@
 import { expect, test } from "bun:test"
+import { spawnSync } from "node:child_process"
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { discoverScript } from "./remote-cli"
 import { createWslRuntime, parseDiscoveredCli, parseProbeAnswer, wslArgs } from "./runtime"
 
 test("parseProbeAnswer reads the probe script's answer line, not login-shell banner output", () => {
@@ -22,6 +27,53 @@ test("parseDiscoveredCli returns the discovered path, not a login-shell banner l
   expect(parseDiscoveredCli("Welcome to Ubuntu 24.04 LTS\n")).toBeNull()
   expect(parseDiscoveredCli("opencode\n")).toBeNull()
 })
+
+// Runs the real discoverScript through `sh` against a fake installed CLI,
+// optionally after preceding login-shell output (`precedingPrint` is a shell
+// printf format string, so a test controls the trailing newline), and reads
+// the output with the real parseDiscoveredCli.
+function runDiscoverScript(precedingPrint?: string) {
+  const home = mkdtempSync(path.join(tmpdir(), "wsl-discover-cli-"))
+
+  try {
+    const cli = path.join(home, ".opencode/bin/opencode")
+
+    mkdirSync(path.dirname(cli), { recursive: true })
+    writeFileSync(cli, "#!/bin/sh\n")
+    chmodSync(cli, 0o755)
+
+    const script = precedingPrint === undefined ? discoverScript() : `printf '${precedingPrint}'\n${discoverScript()}`
+
+    const result = spawnSync("sh", ["-s"], {
+      input: script,
+      encoding: "utf8",
+      env: { ...process.env, HOME: home },
+    })
+
+    if (result.status !== 0) throw new Error(`discoverScript exited ${result.status}: ${result.stderr}`)
+
+    return { parsed: parseDiscoveredCli(result.stdout), cli }
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+}
+
+test.skipIf(process.platform === "win32")(
+  "parseDiscoveredCli reads the path when preceding login-shell output has no trailing newline, through the real discoverScript",
+  () => {
+    const unterminated = runDiscoverScript("welcome to dev box")
+
+    expect(unterminated.parsed).toBe(unterminated.cli)
+
+    const terminated = runDiscoverScript("welcome to dev box\\n")
+
+    expect(terminated.parsed).toBe(terminated.cli)
+
+    const clean = runDiscoverScript()
+
+    expect(clean.parsed).toBe(clean.cli)
+  },
+)
 
 test("wslArgs bypasses the distro default shell", () => {
   expect(wslArgs(["sh", "-lc", 'printf "%s\\n" "$HOME"'], "Debian")).toEqual([
