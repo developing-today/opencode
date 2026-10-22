@@ -75,6 +75,7 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| Pool variants kept when route provider settings apply            | 2026-10-22 | #266     |
 | ROADMAP records the #41 closure and #109 completion in Done      | 2026-10-22 | #260     |
 | Storybook family bumped to 10.6.2; Dependabot groups its updates | 2026-10-22 | #258     |
 | models-snapshot refresh runs on this fork against main           | 2026-10-21 | #252     |
