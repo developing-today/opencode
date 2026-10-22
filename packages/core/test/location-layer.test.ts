@@ -646,6 +646,55 @@ describe("LocationServiceMap", () => {
     ),
   )
 
+  it.live('keeps a pool\'s variants when providers["opencode-route"] settings rename it', () =>
+    Effect.acquireRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      (dirs) => Effect.promise(() => Promise.all(dirs.map((dir) => dir[Symbol.asyncDispose]())).then(() => undefined)),
+    ).pipe(
+      Effect.flatMap(([plain, configured]) =>
+        Effect.gen(function* () {
+          const routes = {
+            experimental: {
+              model_routes: { best: { targets: ["anthropic/claude-sonnet-4-5", "anthropic/claude-opus-4-6"] } },
+            },
+          }
+          yield* Effect.promise(() => fs.writeFile(path.join(plain.path, "opencode.json"), JSON.stringify(routes)))
+          yield* Effect.promise(() =>
+            fs.writeFile(
+              path.join(configured.path, "opencode.json"),
+              JSON.stringify({
+                providers: { "opencode-route": { models: { best: { name: "Best pool" } } } },
+                ...routes,
+              }),
+            ),
+          )
+          const inspect = (directory: string) =>
+            Effect.gen(function* () {
+              yield* Reference.Service
+              const plugins = yield* Plugin.Service
+              yield* plugins.awaitActivation
+              return yield* (yield* Model.Service).get(ModelRoute.PROVIDER_ID, Model.ID.make("best"))
+            }).pipe(
+              Effect.scoped,
+              Effect.provide(
+                LocationServiceMap.Service.get(Location.Ref.make({ directory: AbsolutePath.make(directory) })),
+              ),
+            )
+
+          const renamed = yield* inspect(configured.path)
+          const unconfigured = yield* inspect(plain.path)
+          // The targets share the high/max reasoning variants, so the pool presents both.
+          expect(unconfigured?.variants.map((variant) => String(variant.id))).toEqual(["high", "max"])
+          // Renaming the pool through the route provider must not clear those variants.
+          expect(renamed?.name).toBe("Best pool")
+          expect(renamed?.variants.map((variant) => String(variant.id))).toEqual(
+            unconfigured?.variants.map((variant) => String(variant.id)),
+          )
+        }),
+      ),
+    ),
+  )
+
   it.live("rejects an unavailable selected model during location model resolution", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),
