@@ -75,6 +75,7 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ROADMAP Done records the #272, #273, #276 and #277 completions   | 2026-10-22 | #282     |
 | Remote CLI version output framed against banner inventions       | 2026-10-22 | #279     |
 | Desktop CLI version line validated, not the last v token         | 2026-10-22 | #278     |
 | CLI version read from the last version-shaped line               | 2026-10-22 | #275     |
