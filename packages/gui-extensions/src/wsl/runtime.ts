@@ -66,6 +66,18 @@ export function shellEscape(value: string) {
   return `'${value.replace(/'/g, `'"'"'`)}'`
 }
 
+// Probe scripts run in a login shell and print their `yes`/`no` answer last, so read that line:
+// banner, MOTD, or profile output printed before it is not part of the answer.
+export function parseProbeAnswer(output: string) {
+  return (
+    output
+      .split(/\r?\n/g)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(-1) ?? null
+  )
+}
+
 /** WSL commands; `t` resolves the extension's copy for errors the user sees. */
 export function createWslRuntime(t: MainContext["t"]) {
   const runWsl = (args: string[], opts: RunWslOptions = {}) => runCommand("wsl", args, opts)
@@ -333,8 +345,8 @@ export function createWslRuntime(t: MainContext["t"]) {
       return {
         name,
         canExecute: true,
-        hasBash: bash.code === 0 && summarize(bash.stdout) === "yes",
-        hasCurl: curl.code === 0 && summarize(curl.stdout) === "yes",
+        hasBash: bash.code === 0 && parseProbeAnswer(bash.stdout) === "yes",
+        hasCurl: curl.code === 0 && parseProbeAnswer(curl.stdout) === "yes",
         error: null,
       }
     },
