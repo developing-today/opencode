@@ -75,6 +75,10 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| Remote CLI version output framed against banner inventions       | 2026-10-22 | #279     |
+| Desktop CLI version line validated, not the last v token         | 2026-10-22 | #278     |
+| CLI version read from the last version-shaped line               | 2026-10-22 | #275     |
+| ROADMAP Done records the #265 and #269 completions               | 2026-10-22 | #274     |
 | WSL probe verdict read from its answer line past banners         | 2026-10-22 | #271     |
 | Remote CLI version read past login-shell banners                 | 2026-10-22 | #270     |
 | Pool variants kept when route provider settings apply            | 2026-10-22 | #266     |
