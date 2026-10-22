@@ -75,6 +75,8 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| WSL probeDistro answers land on their own lines                  | 2026-10-22 | #301     |
+| ROADMAP Done records the #297 completion                         | 2026-10-22 | #300     |
 | ROADMAP Done records the #295 completion                         | 2026-10-22 | #298     |
 | ROADMAP Done records the #290 completion                         | 2026-10-22 | #296     |
 | Probe, registration and discovery prints land on their own lines | 2026-10-22 | #293     |
