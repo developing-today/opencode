@@ -648,6 +648,61 @@ describe("pool effort levels", () => {
     expect(refs("outer-matched", routes)).toEqual(["openai/luna-6#max"])
   })
 
+  test("a nested pool left out at a pin keeps its members' own pins, so a later target repeating one adds nothing", () => {
+    const routes = pools({
+      deep: { targets: ["openai/luna-6#high"] },
+      inner: {
+        targets: [
+          { model: "opencode-route/deep", variants: { max: false } },
+          "openai/luna-6#high",
+          "anthropic/claude-opus-6.1",
+        ],
+      },
+      // The same with the pin on the nested pool's reference: deep2 would bring luna-6.1 at high.
+      deep2: { targets: ["openai/luna-6.1"] },
+      inner2: {
+        targets: [
+          { model: "opencode-route/deep2#high", variants: { max: false } },
+          "openai/luna-6.1#high",
+          "anthropic/claude-opus-6.1",
+        ],
+      },
+      outer: { targets: ["opencode-route/inner#max"] },
+      outer2: { targets: ["opencode-route/inner2#max"] },
+    })
+    expect(refs("outer", routes)).toEqual(["anthropic/claude-opus-6.1#max"])
+    expect(refs("outer2", routes)).toEqual(["anthropic/claude-opus-6.1#max"])
+    // Selected without a pin, deep's luna-6#high comes first and sits max out, and the later one repeats it.
+    expect(refs("inner", routes)).toEqual(["openai/luna-6#high", "anthropic/claude-opus-6.1"])
+    expect(remaps("inner", routes)["openai/luna-6"]).toEqual({ max: false })
+    expect(refs("inner2", routes)).toEqual(["openai/luna-6.1#high", "anthropic/claude-opus-6.1"])
+  })
+
+  test("at a pin, a target with its own #variant is a separate member, as when the pool is selected at that level", () => {
+    const routes = pools({
+      // luna-6 sits max out, and luna-6#max is another target, pinned at max.
+      repeated: { targets: [{ model: "openai/luna-6", variants: { max: false } }, "openai/luna-6#max"] },
+      // The nested pool sits max out as a whole, and the target after it is pinned at max.
+      plain: { targets: ["openai/luna-6"] },
+      wrapped: { targets: [{ model: "opencode-route/plain", variants: { max: false } }, "openai/luna-6#max"] },
+      // luna-6 sits max out, and the pool after it, pinned at max, brings luna-6 at max.
+      repinned: { targets: [{ model: "openai/luna-6", variants: { max: false } }, "opencode-route/plain#max"] },
+      "outer-repeated": { targets: ["opencode-route/repeated#max"] },
+      "outer-wrapped": { targets: ["opencode-route/wrapped#max"] },
+      "outer-repinned": { targets: ["opencode-route/repinned#max"] },
+    })
+    for (const id of ["repeated", "wrapped", "repinned"]) {
+      expect(refs(`outer-${id}`, routes)).toEqual(["openai/luna-6#max"])
+      // Selected at max without a pin, each pool runs luna-6 at max through the other target as well.
+      expect(
+        expand(id, routes, catalog).leaves.map(
+          (leaf) =>
+            `${leaf.ref.id}${leaf.ref.variant ? `#${leaf.ref.variant}` : ""} ${leaf.variantMap?.max === false ? "sits max out" : "runs max"}`,
+        ),
+      ).toEqual(["luna-6 sits max out", "luna-6#max runs max"])
+    }
+  })
+
   test("a nested pool pinned at a level it does not declare adds nothing, and says so", () => {
     const routes = pools({
       "low-only": { targets: ["openai/luna-6"], levels: ["low"] },

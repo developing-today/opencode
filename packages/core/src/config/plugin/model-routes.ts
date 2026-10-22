@@ -402,12 +402,15 @@ type Shared = {
   readonly members: Map<string, ReadonlySet<string>>
 }
 
+/** The members `id` brings, and the tree they form. `enteredAt` are the pins it is entered at: none for the pool
+ * being expanded or named by a matching key. */
 function collect(
   id: string,
   routes: ReadonlyMap<string, ConfigModelRoutes.Route>,
   definitions: ReadonlyMap<Provider.ID, ReadonlyMap<string, Model.Info>>,
   trail: ReadonlySet<string>,
   shared: Shared,
+  enteredAt: readonly Pin[] = [],
 ) {
   const result: SourceModel[] = []
   const nodes: ModelRoute.Node[] = []
@@ -574,12 +577,25 @@ function collect(
       if (ref.providerID === ModelRoute.PROVIDER_ID) {
         // The levels this target object's remap sets to false. The config loader reports any other key it has.
         const off = Object.entries(spec.variants ?? {}).flatMap(([level, to]) => (to === false ? [level] : []))
-        // At a pin, a nested pool that sits the pin out does so as a whole: it is left out, with each model it
-        // brings.
+        // At a pin, a nested pool that sits the pin out does so as a whole: it is left out, with each member it
+        // would bring here, named as a later target would repeat it, its own pin kept.
         if (pin !== undefined && off.includes(pin.level)) {
-          membersOf(ref.id, nextTrail).forEach((member) => {
-            pin.leftOut.targets.add(member)
-            pin.leftOut.models.add(member)
+          const brought = collect(
+            ref.id,
+            routes,
+            definitions,
+            nextTrail,
+            shared,
+            ref.variant === undefined
+              ? []
+              : [{ level: ref.variant, rules: [], leftOut: { targets: new Set(), models: new Set() } }],
+          )
+          if (brought.cut) cut = true
+          brought.leaves.forEach((leaf) => {
+            pin.leftOut.targets.add(
+              `${leaf.ref.providerID}/${leaf.ref.id}${leaf.ref.variant ? `#${leaf.ref.variant}` : ""}`,
+            )
+            pin.leftOut.models.add(`${leaf.ref.providerID}/${leaf.ref.id}`)
           })
           continue
         }
@@ -663,7 +679,7 @@ function collect(
     return node.children.length > 0 ? nodeIndex : undefined
   }
 
-  visit(id, trail, { excludes: [], rules: [], pins: [] })
+  visit(id, trail, { excludes: [], rules: [], pins: enteredAt })
   return { leaves: result, nodes, diagnostics, cut, allowed }
 }
 

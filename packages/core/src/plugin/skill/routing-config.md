@@ -124,10 +124,11 @@ model `opencode-route/<id>`.
     and brings each member that has that variant, at that variant. A remap or rule
     applies to the levels of the pool that declares it, so those of the pinned pool
     and the pools nested in it decide only whether a member sits the pin out. Such a
-    member is left out, and nothing else in the pinned pool brings it back. The
-    others run at the pin at every level of the pools above, unless one of those
-    sits them out of a level. A pool pinned at a level it does not declare adds
-    nothing.
+    member is left out, and a later target or matching key that repeats it adds
+    nothing; a target with its own `#variant` is a separate member, as it is when the
+    pool is selected at that level. The others run at the pin at every level of the
+    pools above, unless one of those sits them out of a level. A pool pinned at a
+    level it does not declare adds nothing.
 - `selection`: `ordered` (the default), `round-robin`, or `weighted`.
 - `weights`: relative ratios keyed by target. A target not listed weighs 1. Models
   from matching keys are keyed by `provider/model` too.

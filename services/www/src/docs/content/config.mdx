@@ -473,9 +473,11 @@ Which levels a pool offers:
 
 A remap or a rule applies to the levels of the pool that declares it. A pinned pool
 runs only at its pin, so its remaps and rules, and those of the pools nested in it,
-decide only whether a member sits the pin out. Such a member is left out, and
-nothing else in the pinned pool brings it back. Every other member runs at the pin
-at each level of the pools above, unless one of them sits it out of that level.
+decide only whether a member sits the pin out. Such a member is left out. Otherwise
+the pinned pool is built as it would be when selected at its pin: a later target or
+matching key that repeats a member left out adds nothing, and a target with its own
+`#variant` is a separate member. Every other member runs at the pin at each level of
+the pools above, unless one of them sits it out of that level.
 
 ```jsonc
 "inner": {
