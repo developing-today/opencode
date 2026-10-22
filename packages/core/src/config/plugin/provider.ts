@@ -7,6 +7,7 @@ import { Money } from "@opencode/schema/money"
 import { Effect } from "effect"
 import { Config } from "../../config.js"
 import { Model } from "../../model.js"
+import { ModelRoute } from "../../model-route.js"
 import { Provider } from "../../provider.js"
 import { Variant } from "../../variant.js"
 import { ConfigEntryObserver } from "./entry-observer.js"
@@ -23,6 +24,8 @@ export const Plugin = define({
     )
     yield* ctx.integration.transform((integrations) => {
       for (const [id, provider] of configuredProviders(loaded.entries)) {
+        // The route provider is built by the model-routes plugin, not backed by a credential.
+        if (id === ModelRoute.PROVIDER_ID) continue
         const integrationID = id
         if (!integrations.get(integrationID)) {
           integrations.method.update({
@@ -59,24 +62,36 @@ export const Plugin = define({
         const current = providers.get(providerID)
         const source = providers.get(item.canonical ?? current?.provider.canonical ?? providerID)
         const changed = item.canonical !== undefined && item.canonical !== current?.provider.canonical
-        providers.update(providerID, (provider) => {
-          if (changed && source && source.provider !== provider)
-            Object.assign(provider, structuredClone(source.provider), {
-              id: provider.id,
-              integrationID: provider.integrationID,
-            })
-          provider.activation = "enabled"
-          if (item.canonical !== undefined) provider.canonical = item.canonical
-          if (item.name) provider.name = item.name
-          if (item.package !== undefined) provider.package = item.package
-          if (item.compatibility !== undefined)
-            provider.compatibility = { ...provider.compatibility, ...item.compatibility }
-          if (item.settings !== undefined) provider.settings = Provider.mergeOverlay(provider.settings, item.settings)
-          if (item.headers !== undefined) provider.headers = Provider.mergeHeaders(provider.headers, item.headers)
-          if (item.body !== undefined) provider.body = Provider.mergeOverlay(provider.body, item.body)
-        })
+        // The model-routes plugin owns the route provider and returns early when a record
+        // already exists, so creating one here would suppress every pool. Its per-model
+        // settings are still recorded below and applied by the model transform, after
+        // the routes plugin has built the pools.
+        const routeProvider = providerID === ModelRoute.PROVIDER_ID
+        if (!routeProvider)
+          providers.update(providerID, (provider) => {
+            if (changed && source && source.provider !== provider)
+              Object.assign(provider, structuredClone(source.provider), {
+                id: provider.id,
+                integrationID: provider.integrationID,
+              })
+            provider.activation = "enabled"
+            if (item.canonical !== undefined) provider.canonical = item.canonical
+            if (item.name) provider.name = item.name
+            if (item.package !== undefined) provider.package = item.package
+            if (item.compatibility !== undefined)
+              provider.compatibility = { ...provider.compatibility, ...item.compatibility }
+            if (item.settings !== undefined) provider.settings = Provider.mergeOverlay(provider.settings, item.settings)
+            if (item.headers !== undefined) provider.headers = Provider.mergeHeaders(provider.headers, item.headers)
+            if (item.body !== undefined) provider.body = Provider.mergeOverlay(provider.body, item.body)
+          })
         const definitions = new Map<string, { readonly inherit: boolean; readonly base?: Model.Info }>()
         for (const [id, config] of Object.entries(item.models ?? {})) {
+          // Route pools are not defined yet at this stage and have no source model to
+          // inherit from; the model transform applies their settings onto the built pool.
+          if (routeProvider) {
+            definitions.set(id, { inherit: false })
+            continue
+          }
           const base = source?.models.get(config.modelID ?? id) ?? source?.models.get(id)
           const inherit = changed || !current?.models.has(id)
           // Bind the source at this point in the provider fold. Later source edits/removal
@@ -92,6 +107,8 @@ export const Plugin = define({
         next.set(item, { providerID, models: definitions })
       }
       for (const [item, definition] of next) {
+        // Route-provider limits are applied by the model transform like its other settings.
+        if (definition.providerID === ModelRoute.PROVIDER_ID) continue
         for (const [id, config] of Object.entries(item.models ?? {})) {
           if (config.limit === undefined) continue
           providers.models.update(definition.providerID, id, (model) => {
@@ -111,6 +128,9 @@ export const Plugin = define({
       for (const [item, definition] of sources.models) {
         const providerID = definition.providerID
         for (const [id, config] of Object.entries(item.models ?? {})) {
+          // A route setting names a pool the routes plugin built; never let it create
+          // a stand-in model for a pool that does not exist.
+          if (providerID === ModelRoute.PROVIDER_ID && !models.get(providerID, id)) continue
           const source = definition.models.get(id)
           const inherit = source?.inherit || !models.get(providerID, id)
           models.update(providerID, id, (model) => {
