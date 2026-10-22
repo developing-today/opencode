@@ -66,6 +66,18 @@ export function shellEscape(value: string) {
   return `'${value.replace(/'/g, `'"'"'`)}'`
 }
 
+export function parseDiscoveredCli(output: string) {
+  // Discovery runs in a login shell (`sh -lc`), so a banner, MOTD or profile echo can precede
+  // the discovered path on stdout. The script prints only the CLI's absolute path, so take the
+  // line that is an absolute path to an `opencode` binary instead of the first line.
+  return (
+    output
+      .split(/\r?\n/g)
+      .map((line) => line.trim())
+      .find((line) => line.startsWith("/") && line.endsWith("/opencode")) ?? null
+  )
+}
+
 /** WSL commands; `t` resolves the extension's copy for errors the user sees. */
 export function createWslRuntime(t: MainContext["t"]) {
   const runWsl = (args: string[], opts: RunWslOptions = {}) => runCommand("wsl", args, opts)
@@ -340,7 +352,7 @@ export function createWslRuntime(t: MainContext["t"]) {
     },
 
     async resolveCli(distro: string, opts?: RunWslOptions) {
-      return firstLine((await runWslSh(discoverScript(), distro, opts)).stdout)
+      return parseDiscoveredCli((await runWslSh(discoverScript(), distro, opts)).stdout)
     },
 
     async readCliVersion(command: string, distro: string, opts?: RunWslOptions) {
