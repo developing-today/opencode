@@ -4,7 +4,7 @@ This is the roadmap for the fork. It is grouped by area. Each area lists its ite
 
 A row here records intent. It does not settle a product question and it is not a go-ahead to build.
 
-Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](README.md), and the merged PRs of 2026-10-20 and 2026-10-21.
+Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](README.md), and the merged PRs of 2026-10-20, 2026-10-21 and 2026-10-22.
 
 ## Areas
 
@@ -75,6 +75,8 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| WSL probe verdict read from its answer line past banners         | 2026-10-22 | #271     |
+| Remote CLI version read past login-shell banners                 | 2026-10-22 | #270     |
 | Pool variants kept when route provider settings apply            | 2026-10-22 | #266     |
 | ROADMAP records the #41 closure and #109 completion in Done      | 2026-10-22 | #260     |
 | Storybook family bumped to 10.6.2; Dependabot groups its updates | 2026-10-22 | #258     |
