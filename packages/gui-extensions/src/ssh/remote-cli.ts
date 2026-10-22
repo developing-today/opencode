@@ -41,7 +41,7 @@ fi
 
 // Adapters supply a quoted shell expression, including remote HOME or wslpath expansion.
 export function versionScript(command: string) {
-  return `if [ -x ${command} ]; then printf 'OPENCODE_CLI_VERSION_BEGIN\\n'; ${command} --version 2>/dev/null || true; printf 'OPENCODE_CLI_VERSION_END\\n'; fi\n`
+  return `if [ -x ${command} ]; then printf 'OPENCODE_CLI_VERSION_BEGIN\\n'; ${command} --version 2>/dev/null || true; printf '\\nOPENCODE_CLI_VERSION_END\\n'; fi\n`
 }
 
 export function parseVersion(output: string) {
