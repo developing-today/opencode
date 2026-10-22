@@ -26,6 +26,20 @@ updates:
         applies-to: "security-updates"
         patterns:
           - "@modelcontextprotocol/*"
+      # The Storybook packages in packages/storybook must also move as
+      # one: the addons and builder pin the same version as `storybook`
+      # itself, and a split bump leaves the family on mixed versions
+      # (see #257). Same split as mcp-sdk above: the version group here,
+      # the security group in the npm entry below.
+      storybook:
+        patterns:
+          - "storybook"
+          - "@storybook/*"
+      storybook-security:
+        applies-to: "security-updates"
+        patterns:
+          - "storybook"
+          - "@storybook/*"
   # Security updates for JavaScript manifests do not run under the bun
   # entry above: they arrive as npm_and_yarn jobs scoped to the manifest's
   # directory (e.g. PR #200, dependabot/npm_and_yarn/packages/desktop/…),
@@ -46,3 +60,18 @@ updates:
         applies-to: "security-updates"
         patterns:
           - "@modelcontextprotocol/*"
+  # Same story for packages/storybook, whose security updates arrived
+  # ungrouped and lockfile-less as PRs #255/#256 (see #257): the directory
+  # pins seven Storybook packages that must move together, so its
+  # security-only npm entry carries the storybook-security group.
+  - package-ecosystem: "npm"
+    directory: "/packages/storybook"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    groups:
+      storybook-security:
+        applies-to: "security-updates"
+        patterns:
+          - "storybook"
+          - "@storybook/*"
