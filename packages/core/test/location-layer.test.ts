@@ -605,6 +605,47 @@ describe("LocationServiceMap", () => {
     ),
   )
 
+  it.live('applies providers["opencode-route"] model settings to the pools it builds', () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            fs.writeFile(
+              path.join(dir.path, "opencode.json"),
+              JSON.stringify({
+                providers: {
+                  pool: { name: "Pool", package: "test-provider", models: { one: {}, two: {} } },
+                  "opencode-route": { models: { best: { name: "Best pool", disabled: true } } },
+                },
+                experimental: {
+                  model_routes: { best: { targets: ["pool/one", "pool/two"] } },
+                },
+              }),
+            ),
+          )
+          yield* Effect.gen(function* () {
+            const plugins = yield* Plugin.Service
+            yield* plugins.awaitActivation
+            const model = yield* (yield* Model.Service).get(ModelRoute.PROVIDER_ID, Model.ID.make("best"))
+            // The configured provider entry must not suppress the pool, and its
+            // per-model settings must land on the pool the routes plugin builds.
+            expect(model).toBeDefined()
+            expect(model?.name).toBe("Best pool")
+            expect(model?.enabled).toBe(false)
+            expect(ModelRoute.definition(model!)).toBeDefined()
+          }).pipe(
+            Effect.provide(
+              LocationServiceMap.Service.get(Location.Ref.make({ directory: AbsolutePath.make(dir.path) })),
+            ),
+          )
+        }),
+      ),
+    ),
+  )
+
   it.live("rejects an unavailable selected model during location model resolution", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),
