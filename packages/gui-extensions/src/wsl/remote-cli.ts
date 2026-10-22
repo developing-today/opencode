@@ -20,22 +20,33 @@ if [ -n "$cli" ]; then printf '%s\\n' "$cli"; fi
 
 // Adapters supply a quoted shell expression, including remote HOME or wslpath expansion.
 export function versionScript(command: string) {
-  return `if [ -x ${command} ]; then ${command} --version 2>/dev/null || true; fi\n`
+  return `if [ -x ${command} ]; then printf 'OPENCODE_CLI_VERSION_BEGIN\\n'; ${command} --version 2>/dev/null || true; printf 'OPENCODE_CLI_VERSION_END\\n'; fi\n`
 }
 
 export function parseVersion(output: string) {
-  const line = output
-    .split(/\r?\n/)
-    .find((line) => line.trim())
-    ?.trim()
+  // The transport is a login shell (`sh -lc`), so a banner, MOTD or profile echo can precede
+  // the script's output, and a banner line can itself end in (or be) a version-shaped token.
+  // No ordering rule can tell such a banner line from the CLI's own line when the script prints
+  // nothing — the CLI is not staged yet, or --version fails — so versionScript frames its
+  // output with markers and only framed lines are candidates. Within the frame, the version
+  // line is the last line whose version candidate matches the shape requireVersion accepts
+  // (the SSH copy's requireVersion).
+  const lines = output.split(/\r?\n/).map((line) => line.trim())
+  const begin = lines.lastIndexOf("OPENCODE_CLI_VERSION_BEGIN")
+  const end = begin === -1 ? -1 : lines.indexOf("OPENCODE_CLI_VERSION_END", begin + 1)
 
-  if (!line) return null
-  const marker = line.lastIndexOf(" v")
-  const version = marker === -1 ? line : line.slice(marker + 2)
+  if (end === -1) return null
 
-  if (!version) throw new Error("V2 CLI did not provide a version")
+  const versions = lines
+    .slice(begin + 1, end)
+    .map((line) => {
+      const marker = line.lastIndexOf(" v")
 
-  return version
+      return marker === -1 ? line : line.slice(marker + 2)
+    })
+    .filter((version) => version === "local" || /^[0-9][a-zA-Z0-9.+-]*$/.test(version))
+
+  return versions.at(-1) ?? null
 }
 
 /** The managed CLI installer also configures the user's shell PATH. */

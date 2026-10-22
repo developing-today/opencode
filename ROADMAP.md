@@ -4,7 +4,7 @@ This is the roadmap for the fork. It is grouped by area. Each area lists its ite
 
 A row here records intent. It does not settle a product question and it is not a go-ahead to build.
 
-Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](README.md), and the merged PRs of 2026-10-20 and 2026-10-21.
+Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](README.md), and the merged PRs of 2026-10-20, 2026-10-21 and 2026-10-22.
 
 ## Areas
 
@@ -16,7 +16,7 @@ Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](REA
 | [Routing, cost and plans](#routing-cost-and-plans)          | Feature requests for failover, cost display and cache use       |
 | [Plugin API](#plugin-api)                                   | Gaps found while building v2 plugins                            |
 | [CI and test health](#ci-and-test-health)                   | A main branch whose checks are green                            |
-| [Upstream sync](#upstream-sync)                             | Daily sync keeps failing                                        |
+| [Upstream sync](#upstream-sync)                             | Daily sync verified working                                     |
 
 ## Nested subsessions and their asks
 
@@ -69,14 +69,28 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 ## Upstream sync
 
-| Title                     | Horizon | Status   | Intent                                                                                             | Links |
-| ------------------------- | ------- | -------- | -------------------------------------------------------------------------------------------------- | ----- |
-| Daily upstream sync works | Now     | proposed | The Jules sync gets past setup, then dies in "Assemble Jules payload" with exit 126 and no output. | #41   |
+No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-21 after three consecutive scheduled successes; see Done.
 
 ## Done
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| WSL probe verdict read from its answer line past banners         | 2026-10-22 | #271     |
+| Remote CLI version read past login-shell banners                 | 2026-10-22 | #270     |
+| Pool variants kept when route provider settings apply            | 2026-10-22 | #266     |
+| ROADMAP records the #41 closure and #109 completion in Done      | 2026-10-22 | #260     |
+| Storybook family bumped to 10.6.2; Dependabot groups its updates | 2026-10-22 | #258     |
+| models-snapshot refresh runs on this fork against main           | 2026-10-21 | #252     |
+| Daily upstream sync verified working — #41 was transient         | 2026-10-21 | #41      |
+| ROADMAP Done table records the #250 completion                   | 2026-10-21 | #251     |
+| ROADMAP Done table records the #244 completion                   | 2026-10-21 | #245     |
+| ROADMAP Done table records the #197 and #232 completions         | 2026-10-21 | #249     |
+| Editor SSE and IDE lock-file ports parsed strictly               | 2026-10-21 | #247     |
+| restart-driver OC_PORT validation pinned by tests                | 2026-10-21 | #248     |
+| restart-driver validates OC_PORT, falls back to 4096             | 2026-10-21 | #242     |
+| Route attempts timed to the end of the model's response          | 2026-10-21 | #234     |
+| Config substitution supports `{env:VAR:-fallback}` defaults      | 2026-10-21 | #232     |
+| Release is deliberate dispatch only; dead `dev` trigger dropped  | 2026-10-21 | #229     |
 | Containers build on main pushes; GHCR push is a dispatch input   | 2026-10-21 | #226     |
 | `docs-update` gated to upstream; dead fork cron dropped          | 2026-10-21 | #225     |
 | Provider session grouping walks to the root session              | 2026-10-21 | #220     |

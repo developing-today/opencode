@@ -279,7 +279,9 @@ deadline, degradation after 3 slow completions in a rolling window of 5, and a
 60-second in-memory cooldown. Set `firstTokenTimeoutMs` to `false` to disable
 that deadline. Optional `maxResponseTimeMs` and `minOutputTokensPerSecond`
 thresholds define a slow completed response; omitting both leaves the first
-output deadline as the only performance signal. Cooldowns are shared by every
+output deadline as the only performance signal. Both are measured to the end of
+the model's response, so tools that a step runs afterwards do not count against
+the model. Cooldowns are shared by every
 session in the OpenCode process and are restored from the health history after a
 restart. A route can reference another route. Which variants a route offers is
 covered under "Effort levels in a pool".
@@ -782,9 +784,12 @@ the request.
 OpenCode records routing history in its database for analysis and tuning:
 `route_decision` (what was eligible, what was drawn and why), `route_attempt`
 (per request: exact error tag, code, HTTP status and message, whitelisted rate-limit
-headers, first-token and total latency, tokens per second, and input, output,
+headers, first-token latency, response time, tokens per second, and input, output,
 reasoning and cache token counts), `route_health` (cooldown
 starts, ends and network-suspect events) and `route_note` (adjustments).
+An attempt's response time and tokens per second stop at the end of the model's
+response, while its start and end times span the whole step, including any tools
+it ran.
 Rows carry the session and assistant message IDs so they join to the session
 tables, which already hold per-step usage and cost. Prompts and responses are
 never stored, and nothing is pruned automatically.
