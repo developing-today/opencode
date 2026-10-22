@@ -638,6 +638,10 @@ describe("LocationServiceMap", () => {
                       variantRules: [{ match: "argon or *haiku*", map: { max: false } }],
                     },
                     broken: { include: ["*luna*"], exclude: ["re:luna-(5"] },
+                    // Its only effort setting is a false remap. These models' variants exist only in this file, so
+                    // the pool offers low and high only when it is built with the configured models, as small is.
+                    remapped: { targets: [{ model: "pool/haiku-6", variants: { high: false } }, "pool/luna-5.5"] },
+                    "remapped-outer": { targets: ["opencode-route/remapped"] },
                   },
                 },
               }),
@@ -653,6 +657,8 @@ describe("LocationServiceMap", () => {
               small: yield* models.get(ModelRoute.PROVIDER_ID, Model.ID.make("small")),
               big: yield* models.get(ModelRoute.PROVIDER_ID, Model.ID.make("big")),
               broken: yield* models.get(ModelRoute.PROVIDER_ID, Model.ID.make("broken")),
+              remapped: yield* models.get(ModelRoute.PROVIDER_ID, Model.ID.make("remapped")),
+              remappedOuter: yield* models.get(ModelRoute.PROVIDER_ID, Model.ID.make("remapped-outer")),
               // Matching models of providers that are defined but not connected, which no pool may take.
               unconnected: Array.from(snapshot.records.values())
                 .filter((record) => !snapshot.available.includes(record))
@@ -684,6 +690,14 @@ describe("LocationServiceMap", () => {
             variants: ["low", "high", "max"],
           })
           expect(routes.broken).toBeUndefined()
+          // haiku-6 sits high out and luna-5.5 runs it. haiku-6 cannot run max and does not sit it out, so the
+          // pool does not offer max. The pool that nests it is built the same way.
+          expect(summary(routes.remapped)).toEqual({
+            targets: ["pool/haiku-6", "pool/luna-5.5"],
+            targetVariants: [{ map: { high: false } }, {}],
+            variants: ["low", "high"],
+          })
+          expect(summary(routes.remappedOuter)).toEqual(summary(routes.remapped))
         }),
       ),
     ),

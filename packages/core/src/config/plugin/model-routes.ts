@@ -214,7 +214,9 @@ function routeModel(
 }
 
 /** Pools that use a matching or effort key, or nest a pool that does. They are built with the models of
- * connected providers; every other pool is built from the provider definitions, as it always was. */
+ * connected providers; every other pool is built from the provider definitions, as it always was. A target
+ * remap to false is an effort key too: whether the pool offers a level it sits out depends on the variants of
+ * its other targets, and variants configured under a provider's models come only with the models. */
 function builtWithModels(routes: ReadonlyMap<string, ConfigModelRoutes.Route>) {
   const uses = (id: string, trail: ReadonlySet<string>): boolean => {
     const route = routes.get(id)
@@ -228,7 +230,8 @@ function builtWithModels(routes: ReadonlyMap<string, ConfigModelRoutes.Route>) {
         route.match,
         route.levels,
         route.variantRules,
-      ].some((value) => value !== undefined)
+      ].some((value) => value !== undefined) ||
+      (route.targets ?? []).some((target) => Object.values(targetSpec(target).variants ?? {}).includes(false))
     )
       return true
     const next = new Set(trail).add(id)
