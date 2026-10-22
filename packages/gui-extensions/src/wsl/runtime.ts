@@ -66,8 +66,15 @@ export function shellEscape(value: string) {
   return `'${value.replace(/'/g, `'"'"'`)}'`
 }
 
-// Probe scripts run in a login shell and print their `yes`/`no` answer last, so read that line:
-// banner, MOTD, or profile output printed before it is not part of the answer.
+// Probe scripts run in a login shell (`sh -lc`), so banner, MOTD, or profile output can precede
+// the answer and can end without a trailing newline. The script therefore prints its `yes`/`no`
+// answer with a leading newline, putting the answer on its own line, and parseProbeAnswer reads
+// that last line: preceding output is never part of the answer, and a banner ending in `yes`
+// cannot become the answer when the tool is missing.
+export function probeScript(tool: string) {
+  return `command -v ${tool} >/dev/null && printf '\\nyes\\n' || printf '\\nno\\n'`
+}
+
 export function parseProbeAnswer(output: string) {
   return (
     output
@@ -350,8 +357,8 @@ export function createWslRuntime(t: MainContext["t"]) {
       }
 
       const [bash, curl] = await Promise.all([
-        runWslSh("command -v bash >/dev/null && printf yes || printf no", name, opts),
-        runWslSh("command -v curl >/dev/null && printf yes || printf no", name, opts),
+        runWslSh(probeScript("bash"), name, opts),
+        runWslSh(probeScript("curl"), name, opts),
       ])
 
       return {
