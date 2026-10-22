@@ -1,5 +1,6 @@
 import type { LocationGetOutput, ModelRef, OpenCodeClient, SessionInfo } from "@opencode/client/promise"
 import { Model } from "@opencode/schema/model"
+import { ModelAlias } from "@opencode/schema/model-alias"
 import { errorMessage } from "./util/error"
 
 const SESSION_PAGE_LIMIT = 50
@@ -88,9 +89,15 @@ export async function resolveSessionTarget(input: {
   }
 }
 
-export function parseSessionTargetModel(value?: string): ModelRef | undefined {
+export function parseSessionTargetModel(value?: string, aliases?: ModelAlias.Aliases): ModelRef | undefined {
   if (!value) return
-  const model = Model.Ref.parse(value)
+  let resolved = value
+  if (aliases) {
+    try {
+      resolved = ModelAlias.resolve(aliases, value)
+    } catch {}
+  }
+  const model = Model.Ref.parse(resolved)
   return { providerID: model.providerID, id: model.id, variant: model.variant }
 }
 

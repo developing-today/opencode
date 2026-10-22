@@ -5,6 +5,7 @@ import { ephemeral, inventory } from "./event.js"
 import { Permission } from "./permission.js"
 import { AbsolutePath, optional } from "./schema.js"
 import { ConfigAgent } from "./config/agent.js"
+import { ConfigAlias } from "./config/aliases.js"
 import { ConfigMedia } from "./config/media.js"
 import { ConfigCompaction } from "./config/compaction.js"
 import { ConfigCommand } from "./config/command.js"
@@ -110,6 +111,9 @@ export class Info extends Schema.Class<Info>("Config.Info")({
     description: "Keep recently active sessions warm with transient model requests (default: false)",
   }),
   providers: Schema.Record(Schema.String, ConfigProvider.Info).pipe(optional),
+  aliases: ConfigAlias.Info.pipe(optional).annotate({
+    description: "Configured aliases for providers, models, and effort levels/variants",
+  }),
   experimental: ConfigExperimental.Info.pipe(optional),
 }) {}
 

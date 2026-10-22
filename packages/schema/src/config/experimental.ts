@@ -4,8 +4,12 @@ import { Schema } from "effect"
 import { NonNegativeInt, optional } from "../schema.js"
 import { ConfigPolicy } from "./policy.js"
 import { ConfigModelRoutes } from "./model-routes.js"
+import { ConfigAlias } from "./aliases.js"
 
 export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
+  aliases: ConfigAlias.Info.pipe(optional).annotate({
+    description: "Configured aliases for providers, models, and effort levels/variants",
+  }),
   portable_shell_scanner: Schema.Boolean.pipe(optional).annotate({
     description: "Enable the experimental portable shell permission scanner. Defaults to false.",
   }),
