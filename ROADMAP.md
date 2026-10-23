@@ -75,6 +75,7 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ROADMAP Done records the #347 and #105 completions               | 2026-10-23 | #351     |
 | Docs stop promising dead web-search, shell-timeout and LSP flags | 2026-10-23 | #349     |
 | ROADMAP Done records the #343 and #345 completions               | 2026-10-23 | #348     |
 | WSL CLI discovery output framed against banner suffix lines      | 2026-10-23 | #346     |
