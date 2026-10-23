@@ -114,7 +114,9 @@ describe("WSL parseVersion", () => {
     },
   )
 
-  test("discoverScript prints the discovered path with a leading newline", () => {
-    expect(discoverScript()).toContain(`printf '\\n%s\\n' "$cli"`)
+  test("discoverScript frames the discovered path", () => {
+    expect(discoverScript()).toContain(
+      `printf '\\nOPENCODE_CLI_DISCOVERY_BEGIN\\n%s\\nOPENCODE_CLI_DISCOVERY_END\\n' "$cli"`,
+    )
   })
 })
