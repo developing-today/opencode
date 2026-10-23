@@ -449,26 +449,43 @@ const layer = Layer.effect(
           // Embedded repositories are listed as `dir/`; update-index records them as gitlinks.
           Effect.map((result) => nuls(result.text).map((file) => RelativePath.make(file.replace(/\/$/, "")))),
         )
-      const [tracked, untracked] = yield* Effect.all(
+      const [status, untracked] = yield* Effect.all(
         [
-          list(["diff-files", "--name-only", "-z", "--", literalPathspec(scope)]),
+          list(["diff-files", "--name-status", "-z", "--", literalPathspec(scope)]),
           list(["ls-files", "--others", "--exclude-standard", "-z", "--", literalPathspec(scope)]),
         ],
         { concurrency: 2 },
       )
-      return { tracked, untracked }
+      // `--name-status -z` alternates status and path.
+      const tracked: RelativePath[] = []
+      const deleted: RelativePath[] = []
+      for (let i = 0; i + 1 < status.length; i += 2) {
+        const file = status[i + 1]
+        tracked.push(file)
+        if (status[i] === "D") deleted.push(file)
+      }
+      return { tracked, deleted, untracked }
     })
 
     const updateIndex = Effect.fnUntraced(function* (input: {
       repository: Repository
-      changes: { tracked: readonly RelativePath[]; untracked: readonly RelativePath[] }
+      changes: {
+        tracked: readonly RelativePath[]
+        deleted?: readonly RelativePath[]
+        untracked: readonly RelativePath[]
+      }
       ignores?: Repository
       maximumUntrackedFileBytes?: number
       index?: string
       excluded?: ReadonlySet<RelativePath>
     }) {
-      const candidates = [...input.changes.tracked, ...input.changes.untracked]
-      if (!candidates.length) return { skipped: [] }
+      // A tracked path under a directory that became a symlink is listed as deleted, and both check-ignore and
+      // `update-index --add` die on it ("beyond a symbolic link"), failing every capture after the change. Only
+      // `--force-remove` accepts such a path, so deleted paths skip both and are removed. dezren39/nix#665
+      const deleted = new Set(input.changes.deleted ?? [])
+      const present = input.changes.tracked.filter((item) => !deleted.has(item))
+      const candidates = [...present, ...input.changes.untracked]
+      if (!candidates.length && !deleted.size) return { skipped: [] }
       const excluded =
         input.excluded ??
         (input.ignores ? yield* ignored({ repository: input.ignores, paths: candidates }) : new Set<RelativePath>())
@@ -486,8 +503,8 @@ const layer = Layer.effect(
         : []
       const skip = new Set(skipped)
       const added = candidates.filter((item) => !excluded.has(item) && !skip.has(item))
-      // Untracked paths are not in the index, so only tracked paths that are now ignored need removing.
-      const removed = input.changes.tracked.filter((item) => excluded.has(item))
+      // Untracked paths are not in the index, so only deleted paths and tracked paths now ignored need removing.
+      const removed = [...deleted, ...present.filter((item) => excluded.has(item))]
       // update-index takes literal paths, so large lists avoid add's quadratic pathspec matching.
       if (removed.length)
         yield* repositoryOperation("refresh", input.repository, ["update-index", "--force-remove", "-z", "--stdin"], {
@@ -497,7 +514,7 @@ const layer = Layer.effect(
       // update-index drops a tracked file replaced by an embedded repository; a second line for the same path,
       // in the same call, records its gitlink. For a path that already is a gitlink the repeat is a no-op.
       const embedded = (yield* Effect.forEach(
-        input.changes.tracked.filter((item) => !excluded.has(item)),
+        present.filter((item) => !excluded.has(item)),
         (item) =>
           fs
             .existsSafe(path.join(input.repository.worktree, item, ".git"))

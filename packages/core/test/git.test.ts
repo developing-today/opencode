@@ -499,7 +499,7 @@ describe("Git capture recovery", () => {
       seed: source,
     })
     const capture = () => git.tree.capture({ repository, scopes: [RelativePath.make(".")], ignores: source })
-    return { root, project, repository, capture }
+    return { root, project, git, source, repository, capture }
   })
 
   it.live("sweeps abandoned temporary indexes by their creation time, not their mtime", () =>
@@ -537,6 +537,39 @@ describe("Git capture recovery", () => {
       expect(entry).toStartWith("160000 commit ")
     }),
   )
+
+  // dezren39/nix#665: the store's index still lists `features/design.md`, which Git now sees beyond a symlink.
+  const posix = process.platform === "win32" ? it.live.skip : it.live
+  for (const ignores of [true, false])
+    posix(`captures a tracked directory replaced by a symlink ${ignores ? "with" : "without"} source ignores`, () =>
+      Effect.gen(function* () {
+        const { project, git, source, repository } = yield* setup
+        const capture = () =>
+          git.tree.capture({
+            repository,
+            scopes: [RelativePath.make(".")],
+            ignores: ignores ? source : undefined,
+          })
+        const list = (tree: Git.TreeID) =>
+          Effect.promise(() => $`git --git-dir ${repository.gitDirectory} ls-tree -r ${tree}`.text())
+        yield* Effect.promise(async () => {
+          await Bun.write(path.join(project, "features", "design.md"), "design\n")
+          await $`git add . && git commit -q -m features`.cwd(project).quiet()
+        })
+        expect(yield* list(yield* capture())).toContain("\tfeatures/design.md\n")
+        yield* Effect.promise(async () => {
+          await fs.mkdir(path.join(project, "docs"))
+          await fs.rename(path.join(project, "features"), path.join(project, "docs", "features"))
+          await fs.symlink("docs/features", path.join(project, "features"))
+        })
+        const tree = yield* capture()
+        const entries = yield* list(tree)
+        expect(entries).toMatch(/^120000 blob [0-9a-f]+\tfeatures$/m)
+        expect(entries).toContain("\tdocs/features/design.md\n")
+        expect(entries).not.toContain("\tfeatures/design.md\n")
+        expect(yield* capture()).toBe(tree)
+      }),
+    )
 
   it.live("keeps the index when Git cannot even start", () =>
     Effect.gen(function* () {
