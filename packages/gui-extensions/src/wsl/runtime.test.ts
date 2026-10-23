@@ -66,6 +66,11 @@ test("parseDiscoveredCli returns the discovered path, not a login-shell banner l
   expect(parseDiscoveredCli("")).toBeNull()
   expect(parseDiscoveredCli("Welcome to Ubuntu 24.04 LTS\n")).toBeNull()
   expect(parseDiscoveredCli("opencode\n")).toBeNull()
+  // A banner line can itself be an absolute path to an `opencode` binary; the script's own
+  // line comes after any banner, so the last path-shaped line is the discovered one.
+  expect(parseDiscoveredCli("/opt/old-opencode/bin/opencode\n/home/user/.opencode/bin/opencode\n")).toBe(
+    "/home/user/.opencode/bin/opencode",
+  )
 })
 
 // Runs the real discoverScript through `sh` against a fake installed CLI,
