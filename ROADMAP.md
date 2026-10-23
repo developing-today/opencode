@@ -75,6 +75,8 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ROADMAP Done records the #103 completion                         | 2026-10-23 | #318     |
+| ROADMAP Done records the #108 and #310 completions               | 2026-10-23 | #315     |
 | Docs stop promising OPENCODE_SERVER_USERNAME                     | 2026-10-23 | #313     |
 | Embedded web UI disabled when the desktop asks for it            | 2026-10-23 | #312     |
 | ROADMAP Done records the #308 completion                         | 2026-10-23 | #311     |
