@@ -88,14 +88,16 @@ export function parseProbeAnswer(output: string) {
 export function parseDiscoveredCli(output: string) {
   // Discovery runs in a login shell (`sh -lc`), so a banner, MOTD or profile echo can precede
   // the discovered path on stdout, and a banner line can itself be an absolute path to an
-  // `opencode` binary. The script prints only the CLI's absolute path, after any banner, so
-  // take the last line that is an absolute path to an `opencode` binary instead of the first
-  // matching line — the same last-candidate rule parseVersion and parseProbeAnswer follow.
+  // `opencode` binary. No ordering rule can tell such a banner line from the script's own line
+  // when the script prints nothing — the managed CLI is not installed — but discoverScript can
+  // only ever print `$HOME/.opencode/bin/opencode`, so accept only lines ending in that exact
+  // suffix. Among those, take the last one (the script's line comes after any banner), the
+  // same last-candidate rule parseVersion and parseProbeAnswer follow.
   return (
     output
       .split(/\r?\n/g)
       .map((line) => line.trim())
-      .findLast((line) => line.startsWith("/") && line.endsWith("/opencode")) ?? null
+      .findLast((line) => line.startsWith("/") && line.endsWith("/.opencode/bin/opencode")) ?? null
   )
 }
 

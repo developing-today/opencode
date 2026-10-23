@@ -71,6 +71,12 @@ test("parseDiscoveredCli returns the discovered path, not a login-shell banner l
   expect(parseDiscoveredCli("/opt/old-opencode/bin/opencode\n/home/user/.opencode/bin/opencode\n")).toBe(
     "/home/user/.opencode/bin/opencode",
   )
+  // discoverScript can only ever print `$HOME/.opencode/bin/opencode`, so a path-shaped
+  // banner line on its own — the script printed nothing because the CLI is not installed —
+  // is not a discovery, whatever directory it points into.
+  expect(parseDiscoveredCli("/opt/old-opencode/bin/opencode\n")).toBeNull()
+  expect(parseDiscoveredCli("/usr/local/bin/opencode\n")).toBeNull()
+  expect(parseDiscoveredCli("/opt/opencode\n")).toBeNull()
 })
 
 // Runs the real discoverScript through `sh` against a fake installed CLI,
@@ -117,6 +123,38 @@ test.skipIf(process.platform === "win32")(
     const clean = runDiscoverScript()
 
     expect(clean.parsed).toBe(clean.cli)
+  },
+)
+
+// Runs the real discoverScript through `sh` with an empty HOME (no CLI installed),
+// optionally after preceding login-shell output, and reads the output with the real
+// parseDiscoveredCli.
+function runDiscoverScriptWithoutCli(precedingPrint?: string) {
+  const home = mkdtempSync(path.join(tmpdir(), "wsl-discover-no-cli-"))
+
+  try {
+    const script = precedingPrint === undefined ? discoverScript() : `printf '${precedingPrint}'\n${discoverScript()}`
+
+    const result = spawnSync("sh", ["-s"], {
+      input: script,
+      encoding: "utf8",
+      env: { ...process.env, HOME: home },
+    })
+
+    if (result.status !== 0) throw new Error(`discoverScript exited ${result.status}: ${result.stderr}`)
+
+    return parseDiscoveredCli(result.stdout)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+}
+
+test.skipIf(process.platform === "win32")(
+  "parseDiscoveredCli returns null when discoverScript prints nothing and preceding output is a path-shaped banner line",
+  () => {
+    expect(runDiscoverScriptWithoutCli()).toBeNull()
+    expect(runDiscoverScriptWithoutCli("/opt/old-opencode/bin/opencode\\n")).toBeNull()
+    expect(runDiscoverScriptWithoutCli("/opt/old-opencode/bin/opencode")).toBeNull()
   },
 )
 
