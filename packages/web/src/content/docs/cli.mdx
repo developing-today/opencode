@@ -700,8 +700,6 @@ OpenCode can be configured using environment variables.
 | `OPENCODE_DISABLE_MOUSE`              | boolean | Disable mouse capture in the TUI                 |
 | `OPENCODE_FAKE_VCS`                   | string  | Fake VCS provider for testing purposes           |
 | `OPENCODE_CLIENT`                     | string  | Client identifier (defaults to `cli`)            |
-| `OPENCODE_ENABLE_EXA`                 | boolean | Enable Exa web search tools                      |
-| `OPENCODE_ENABLE_PARALLEL`            | boolean | Enable Parallel web search tools                 |
 | `OPENCODE_SERVER_PASSWORD`            | string  | Enable basic auth for `serve`/`web`              |
 | `OPENCODE_MODELS_URL`                 | string  | Custom URL for fetching models configuration     |
 | `OPENCODE_MCPX_BIN`                   | string  | Path or name of the mcpx executable              |
@@ -716,20 +714,17 @@ If a test run or another short-lived process leaked an mcpx daemon — its home 
 
 These environment variables enable experimental features that may change or be removed.
 
-| Variable                                        | Type    | Description                             |
-| ----------------------------------------------- | ------- | --------------------------------------- |
-| `OPENCODE_EXPERIMENTAL`                         | boolean | Enable the experimental umbrella flag   |
-| `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT`  | boolean | Disable copy on select in TUI           |
-| `OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS` | number  | Default timeout for bash commands in ms |
-| `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`        | number  | Max output tokens for LLM responses     |
-| `OPENCODE_EXPERIMENTAL_OXFMT`                   | boolean | Enable oxfmt formatter                  |
-| `OPENCODE_EXPERIMENTAL_LSP_TOOL`                | boolean | Enable experimental LSP tool            |
-| `OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER`     | boolean | Disable file watcher                    |
-| `OPENCODE_EXPERIMENTAL_EXA`                     | boolean | Enable experimental Exa features        |
-| `OPENCODE_EXPERIMENTAL_LSP_TY`                  | boolean | Enable TY LSP for python files          |
-| `OPENCODE_EXPERIMENTAL_PLAN_MODE`               | boolean | Enable plan mode                        |
-| `OPENCODE_EXPERIMENTAL_EVENT_SYSTEM`            | boolean | Enable experimental event system        |
-| `OPENCODE_EXPERIMENTAL_NATIVE_LLM`              | boolean | Enable native LLM request path          |
-| `OPENCODE_EXPERIMENTAL_PARALLEL`                | boolean | Enable parallel web search execution    |
-| `OPENCODE_EXPERIMENTAL_SCOUT`                   | boolean | Enable Scout subagent                   |
-| `OPENCODE_EXPERIMENTAL_WORKSPACES`              | boolean | Enable workspace support                |
+| Variable                                       | Type    | Description                          |
+| ---------------------------------------------- | ------- | ------------------------------------ |
+| `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT` | boolean | Disable copy on select in TUI        |
+| `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`       | number  | Max output tokens for LLM responses  |
+| `OPENCODE_EXPERIMENTAL_OXFMT`                  | boolean | Enable oxfmt formatter               |
+| `OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER`    | boolean | Disable file watcher                 |
+| `OPENCODE_EXPERIMENTAL_EXA`                    | boolean | Enable experimental Exa features     |
+| `OPENCODE_EXPERIMENTAL_LSP_TY`                 | boolean | Enable TY LSP for python files       |
+| `OPENCODE_EXPERIMENTAL_PLAN_MODE`              | boolean | Enable plan mode                     |
+| `OPENCODE_EXPERIMENTAL_EVENT_SYSTEM`           | boolean | Enable experimental event system     |
+| `OPENCODE_EXPERIMENTAL_NATIVE_LLM`             | boolean | Enable native LLM request path       |
+| `OPENCODE_EXPERIMENTAL_PARALLEL`               | boolean | Enable parallel web search execution |
+| `OPENCODE_EXPERIMENTAL_SCOUT`                  | boolean | Enable Scout subagent                |
+| `OPENCODE_EXPERIMENTAL_WORKSPACES`             | boolean | Enable workspace support             |
