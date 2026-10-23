@@ -450,9 +450,18 @@ export const layer = Layer.effect(
         const now = Date.now()
         const triedTargets = new Set(tried)
         let lastError: Error | undefined
+        // A target whose remap sits the requested level out is never used at it, not even as a last resort.
+        const sitsOut = (index: number) =>
+          requestedVariant !== undefined && definition.targetVariants[index]?.map?.[requestedVariant] === false
         while (triedTargets.size < definition.targets.length) {
-          const indexes = definition.targets.flatMap((_, index) => (triedTargets.has(index) ? [] : [index]))
-          const unavailable = new Map<number, string>()
+          const indexes = definition.targets.flatMap((_, index) =>
+            triedTargets.has(index) || sitsOut(index) ? [] : [index],
+          )
+          const unavailable = new Map<number, string>(
+            definition.targets.flatMap((_, index) =>
+              !triedTargets.has(index) && sitsOut(index) ? [[index, "sits-out-level"] as const] : [],
+            ),
+          )
           const ready = indexes.filter((index) => {
             const target = definition.targets[index]
             const until = ModelRoute.cooldownUntil(target, now)
@@ -491,12 +500,16 @@ export const layer = Layer.effect(
           if (!source?.enabled) continue
           const targetVariants = definition.targetVariants[index]
           // A requested route variant runs the target at its remap, else at the same variant when the
-          // target has it natively: the route only offers variants every target can produce one of
-          // those two ways (config/plugin/model-routes.ts routeVariants).
+          // target has it natively. A target that can do neither sits the level out: its remap says
+          // false, so it was never a candidate (config/plugin/model-routes.ts routeVariants and expand).
+          const remapped = requestedVariant === undefined ? undefined : targetVariants?.map?.[requestedVariant]
           const mapped =
             requestedVariant !== undefined
-              ? (targetVariants?.map?.[requestedVariant] ??
-                (source.variants.some((item) => item.id === requestedVariant) ? requestedVariant : undefined))
+              ? typeof remapped === "string"
+                ? remapped
+                : source.variants.some((item) => item.id === requestedVariant)
+                  ? requestedVariant
+                  : undefined
               : targetVariants?.default
           const resolved = yield* Effect.result(load(source, target.variant ?? mapped))
           if (Result.isFailure(resolved)) {

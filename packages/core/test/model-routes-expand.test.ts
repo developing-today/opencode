@@ -3,6 +3,8 @@ import { expand, routeVariants, routeWeightRules, weightRulesAcross } from "@ope
 import { Model } from "@opencode/core/model"
 import { Provider } from "@opencode/core/provider"
 import type { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
+import { catalog as existingCatalog, routes as existingRoutes } from "./fixture/model-routes-existing"
+import existingExpansion from "./fixture/model-routes-existing.expected.json"
 
 const anthropic = Provider.ID.make("anthropic")
 const openai = Provider.ID.make("openai")
@@ -34,6 +36,35 @@ const route = (targets: (string | { model: string; until?: number; variants?: Re
   ])
 
 describe("pool targets", () => {
+  // The expected file was captured from this expansion at 1668a0350b, before pools had matching keys,
+  // effort levels or `false` remaps; the pinned-stack entry came later from dc951d46de, whose expansion code
+  // is the same. It is the only check that those additions leave an older configuration exactly as it was;
+  // regenerate it from one of those commits, never from the current code.
+  test("a configuration without the new keys expands exactly as it did before they existed", () => {
+    const expanded = Object.fromEntries(
+      [...existingRoutes.keys()].map((id) => {
+        const result = expand(id, existingRoutes, existingCatalog)
+        return [
+          id,
+          {
+            leaves: result.leaves.map((leaf) => ({
+              ref: `${leaf.ref.providerID}/${leaf.ref.id}${leaf.ref.variant ? `#${leaf.ref.variant}` : ""}`,
+              fixedVariant: leaf.fixedVariant,
+              ...(leaf.defaultVariant ? { defaultVariant: leaf.defaultVariant } : {}),
+              ...(leaf.variantMap ? { variantMap: leaf.variantMap } : {}),
+              ...(leaf.budget ? { budget: leaf.budget } : {}),
+            })),
+            nodes: result.nodes,
+            variants: routeVariants(result.leaves).map((variant) => String(variant.id)),
+          },
+        ]
+      }),
+    )
+    expect(Object.keys(expanded)).toHaveLength(8)
+    // The expected file is JSON, so the expansion is compared in its JSON form.
+    expect(JSON.parse(JSON.stringify(expanded))).toEqual(existingExpansion)
+  })
+
   test("a glob target joins every matching model of its provider, in provider order", () => {
     const { leaves } = expand("r", route(["anthropic/*sonnet*", "anthropic/*opus*"]), definitions)
     expect(leaves.map((leaf) => String(leaf.ref.id))).toEqual(["claude-sonnet-4-5", "claude-opus-4-1"])
@@ -119,6 +150,18 @@ describe("pool weight schedules", () => {
         schedules: [{ targets: ["*"], when: { start: "25:00" }, factor: 2 }],
       } as unknown as ConfigModelRoutes.Route),
     ).toEqual([])
+  })
+
+  test("a schedule with an empty day list applies every day instead of being dropped", () => {
+    expect(
+      routeWeightRules({
+        targets: [],
+        schedules: [{ id: "daily", targets: ["*"], when: { daysOfWeek: [], start: "09:00" }, factor: 2 }],
+      } as unknown as ConfigModelRoutes.Route),
+    ).toEqual([{ id: "daily", match: { targets: ["*"] }, window: { start: "09:00" }, factor: 2 }])
+    expect(
+      weightRulesAcross([{ when: { daysOfMonth: [] }, weight: 3 }] as unknown as ConfigModelRoutes.GlobalSchedule[]),
+    ).toEqual([{ window: {}, weight: 3 }])
   })
 
   test("a global schedule keeps its matchers, including the route filter", () => {
