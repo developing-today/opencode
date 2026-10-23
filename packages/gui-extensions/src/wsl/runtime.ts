@@ -87,13 +87,15 @@ export function parseProbeAnswer(output: string) {
 
 export function parseDiscoveredCli(output: string) {
   // Discovery runs in a login shell (`sh -lc`), so a banner, MOTD or profile echo can precede
-  // the discovered path on stdout. The script prints only the CLI's absolute path, so take the
-  // line that is an absolute path to an `opencode` binary instead of the first line.
+  // the discovered path on stdout, and a banner line can itself be an absolute path to an
+  // `opencode` binary. The script prints only the CLI's absolute path, after any banner, so
+  // take the last line that is an absolute path to an `opencode` binary instead of the first
+  // matching line — the same last-candidate rule parseVersion and parseProbeAnswer follow.
   return (
     output
       .split(/\r?\n/g)
       .map((line) => line.trim())
-      .find((line) => line.startsWith("/") && line.endsWith("/opencode")) ?? null
+      .findLast((line) => line.startsWith("/") && line.endsWith("/opencode")) ?? null
   )
 }
 
