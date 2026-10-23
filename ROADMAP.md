@@ -75,6 +75,9 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| Docs stop promising OPENCODE_PORT for the desktop local server   | 2026-10-23 | #336     |
+| WSL CLI discovery takes the last path-shaped line                | 2026-10-23 | #335     |
+| ROADMAP Done records the #330 completion                         | 2026-10-23 | #333     |
 | ROADMAP Done records the #328 completion                         | 2026-10-23 | #331     |
 | ROADMAP Done records the #326 completion                         | 2026-10-23 | #329     |
 | ROADMAP Done records the #324 completion                         | 2026-10-23 | #327     |
