@@ -58,25 +58,40 @@ test.skipIf(process.platform === "win32")(
   },
 )
 
+// The output discoverScript produces for a discovered CLI at `cli`: the frame markers
+// discoverScript prints around the path. Both markers are printed in one printf whose
+// leading newline puts BEGIN on its own line even when preceding login-shell output
+// does not end with one, and the path's trailing newline puts END on its own line.
+const framedDiscovery = (cli: string) => `\nOPENCODE_CLI_DISCOVERY_BEGIN\n${cli}\nOPENCODE_CLI_DISCOVERY_END\n`
+
 test("parseDiscoveredCli returns the discovered path, not a login-shell banner line", () => {
-  expect(parseDiscoveredCli("/home/user/.opencode/bin/opencode\n")).toBe("/home/user/.opencode/bin/opencode")
-  expect(parseDiscoveredCli("Welcome to Ubuntu 24.04 LTS\n/home/user/.opencode/bin/opencode\n")).toBe(
+  expect(parseDiscoveredCli(framedDiscovery("/home/user/.opencode/bin/opencode"))).toBe(
     "/home/user/.opencode/bin/opencode",
   )
+  expect(
+    parseDiscoveredCli(`Welcome to Ubuntu 24.04 LTS\n${framedDiscovery("/home/user/.opencode/bin/opencode")}`),
+  ).toBe("/home/user/.opencode/bin/opencode")
   expect(parseDiscoveredCli("")).toBeNull()
   expect(parseDiscoveredCli("Welcome to Ubuntu 24.04 LTS\n")).toBeNull()
   expect(parseDiscoveredCli("opencode\n")).toBeNull()
-  // A banner line can itself be an absolute path to an `opencode` binary; the script's own
-  // line comes after any banner, so the last path-shaped line is the discovered one.
-  expect(parseDiscoveredCli("/opt/old-opencode/bin/opencode\n/home/user/.opencode/bin/opencode\n")).toBe(
-    "/home/user/.opencode/bin/opencode",
-  )
+  // A banner line can itself be an absolute path to an `opencode` binary; only the framed
+  // line is the discovered one.
+  expect(
+    parseDiscoveredCli(`/opt/old-opencode/bin/opencode\n${framedDiscovery("/home/user/.opencode/bin/opencode")}`),
+  ).toBe("/home/user/.opencode/bin/opencode")
   // discoverScript can only ever print `$HOME/.opencode/bin/opencode`, so a path-shaped
   // banner line on its own — the script printed nothing because the CLI is not installed —
   // is not a discovery, whatever directory it points into.
   expect(parseDiscoveredCli("/opt/old-opencode/bin/opencode\n")).toBeNull()
   expect(parseDiscoveredCli("/usr/local/bin/opencode\n")).toBeNull()
   expect(parseDiscoveredCli("/opt/opencode\n")).toBeNull()
+  // A banner line ending in the managed suffix itself is still not a discovery when it is
+  // unframed: it is exactly the one path discoverScript can print, so no suffix rule can
+  // tell it from the script's own line — only the frame can.
+  expect(parseDiscoveredCli("/home/other/.opencode/bin/opencode\n")).toBeNull()
+  expect(parseDiscoveredCli("/home/user/.opencode/bin/opencode\n")).toBeNull()
+  // An empty frame is not a discovery either.
+  expect(parseDiscoveredCli("\nOPENCODE_CLI_DISCOVERY_BEGIN\n\nOPENCODE_CLI_DISCOVERY_END\n")).toBeNull()
 })
 
 // Runs the real discoverScript through `sh` against a fake installed CLI,
@@ -155,6 +170,23 @@ test.skipIf(process.platform === "win32")(
     expect(runDiscoverScriptWithoutCli()).toBeNull()
     expect(runDiscoverScriptWithoutCli("/opt/old-opencode/bin/opencode\\n")).toBeNull()
     expect(runDiscoverScriptWithoutCli("/opt/old-opencode/bin/opencode")).toBeNull()
+    // A banner line ending in the managed suffix — the exact spelling discoverScript can
+    // print for another HOME — is still not a discovery, terminated or unterminated.
+    expect(runDiscoverScriptWithoutCli("/home/other/.opencode/bin/opencode\\n")).toBeNull()
+    expect(runDiscoverScriptWithoutCli("/home/other/.opencode/bin/opencode")).toBeNull()
+  },
+)
+
+test.skipIf(process.platform === "win32")(
+  "parseDiscoveredCli reads the real path after a banner line ending in the managed suffix, through the real discoverScript",
+  () => {
+    const terminated = runDiscoverScript("/home/other/.opencode/bin/opencode\\n")
+
+    expect(terminated.parsed).toBe(terminated.cli)
+
+    const unterminated = runDiscoverScript("/home/other/.opencode/bin/opencode")
+
+    expect(unterminated.parsed).toBe(unterminated.cli)
   },
 )
 

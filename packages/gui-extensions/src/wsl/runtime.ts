@@ -87,17 +87,22 @@ export function parseProbeAnswer(output: string) {
 
 export function parseDiscoveredCli(output: string) {
   // Discovery runs in a login shell (`sh -lc`), so a banner, MOTD or profile echo can precede
-  // the discovered path on stdout, and a banner line can itself be an absolute path to an
-  // `opencode` binary. No ordering rule can tell such a banner line from the script's own line
-  // when the script prints nothing — the managed CLI is not installed — but discoverScript can
-  // only ever print `$HOME/.opencode/bin/opencode`, so accept only lines ending in that exact
-  // suffix. Among those, take the last one (the script's line comes after any banner), the
-  // same last-candidate rule parseVersion and parseProbeAnswer follow.
+  // the discovered path on stdout, and a banner line can itself end in the one path
+  // discoverScript can print (`$HOME/.opencode/bin/opencode`). No ordering or suffix rule can
+  // tell such a banner line from the script's own line when the script prints nothing — the
+  // managed CLI is not installed — so discoverScript frames its output with
+  // OPENCODE_CLI_DISCOVERY_BEGIN/END markers, like versionScript's frame, and only a framed
+  // line ending in that exact suffix is a discovery. Within the frame, take the last such
+  // line, the same last-candidate rule parseVersion follows.
+  const lines = output.split(/\r?\n/g).map((line) => line.trim())
+  const begin = lines.lastIndexOf("OPENCODE_CLI_DISCOVERY_BEGIN")
+  const end = begin === -1 ? -1 : lines.indexOf("OPENCODE_CLI_DISCOVERY_END", begin + 1)
+
+  if (end === -1) return null
+
   return (
-    output
-      .split(/\r?\n/g)
-      .map((line) => line.trim())
-      .findLast((line) => line.startsWith("/") && line.endsWith("/.opencode/bin/opencode")) ?? null
+    lines.slice(begin + 1, end).findLast((line) => line.startsWith("/") && line.endsWith("/.opencode/bin/opencode")) ??
+    null
   )
 }
 
