@@ -75,6 +75,8 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| WSL CLI discovery output framed against banner suffix lines      | 2026-10-23 | #346     |
+| ROADMAP Done records the #339 and #340 completions               | 2026-10-23 | #344     |
 | WSL discovery requires the managed CLI path suffix               | 2026-10-23 | #342     |
 | ROADMAP Done records the #337 completion                         | 2026-10-23 | #341     |
 | ROADMAP Done records the #332, #334 and #117 completions         | 2026-10-23 | #338     |
