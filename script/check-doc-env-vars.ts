@@ -31,7 +31,11 @@ export function deadVars(vars: string[], hasReader: (name: string) => boolean): 
   return vars.filter((name) => !hasReader(name))
 }
 
-/** A variable has a reader when git finds it outside the docs tree. */
+/**
+ * A variable has a reader when git finds it outside the docs tree.
+ * `-w` matches whole names only: without it a longer sibling such as
+ * OPENCODE_CONFIG_DIR would pose as a reader of OPENCODE_CONFIG (#358).
+ */
 export function gitHasReader(root: string, name: string): boolean {
   const result = Bun.spawnSync(
     [
@@ -40,6 +44,7 @@ export function gitHasReader(root: string, name: string): boolean {
       root,
       "grep",
       "-q",
+      "-w",
       "-F",
       name,
       "--",
