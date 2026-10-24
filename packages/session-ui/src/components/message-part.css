@@ -905,6 +905,11 @@
     min-width: 0;
   }
 
+  [data-slot="permission-source"] {
+    font-weight: var(--font-weight-regular);
+    color: var(--v2-text-text-muted);
+  }
+
   [data-slot="permission-content"] {
     display: flex;
     flex-direction: column;

@@ -568,6 +568,8 @@ export const dict = {
 
   "session.question.progress": "{{current}} of {{total}} questions",
   "session.question.title": "Question",
+  "session.request.from": "From {{title}}",
+  "session.request.fromSubagent": "From subagent",
   "session.websearch.title": "Third-party web search",
   "session.websearch.description": "Select the search provider agents use to search the web",
   "session.websearch.provider": "Search provider",

@@ -78,6 +78,30 @@ export function createSessionRequestModel() {
     return sessionPermissionRequest(data.session.list(), data.session.permission.list, id)
   })
 
+  // A docked ask can come from any session in the viewed tree; name the asker when it is not the
+  // viewed session itself, falling back to a generic label until that session has loaded.
+  const requestSource = (sessionID: string) => {
+    const id = params.id
+
+    if (!id || sessionID === id) return undefined
+
+    const title = data.session.get(sessionID)?.title
+
+    return title ? language.t("session.request.from", { title }) : language.t("session.request.fromSubagent")
+  }
+
+  const permissionSource = createMemo(() => {
+    const request = permissionRequest()
+
+    return request ? requestSource(request.sessionID) : undefined
+  })
+
+  const questionSource = createMemo(() => {
+    const request = questionRequest()
+
+    return request ? requestSource(request.sessionID) : undefined
+  })
+
   const blocked = createMemo(() => {
     const id = params.id
 
@@ -175,8 +199,10 @@ export function createSessionRequestModel() {
   return {
     blocked,
     questionRequest,
+    questionSource,
     websearch,
     permissionRequest,
+    permissionSource,
     permissionResponding,
     background: {
       blocking,
