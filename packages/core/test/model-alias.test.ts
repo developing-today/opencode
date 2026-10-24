@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { ModelAlias, AliasCycleError } from "../src/model-alias.js"
+import { ModelAlias, AliasCycleError, AliasMaxDepthError } from "../src/model-alias.js"
 
 describe("ModelAlias", () => {
   const sampleAliases: ModelAlias.Aliases = {
@@ -144,5 +144,34 @@ describe("ModelAlias", () => {
   test("14. Real variant passes through when not aliased", () => {
     const resolved = ModelAlias.resolve(sampleAliases, "ds/deepseek-chat#unaliased-variant")
     expect(resolved).toBe("deepseek/deepseek-chat#unaliased-variant")
+  })
+
+  test("15. Empty variant is rejected on the alias path, as on the no-alias path", () => {
+    expect(() => ModelAlias.resolve(sampleAliases, "openai/gpt-4o#")).toThrow("Invalid model reference: openai/gpt-4o#")
+  })
+
+  test("16. Variant containing a second # is rejected on the alias path", () => {
+    expect(() => ModelAlias.resolve(sampleAliases, "openai/gpt-4o#high#extra")).toThrow(
+      "Invalid model reference: openai/gpt-4o#high#extra",
+    )
+  })
+
+  test("17. Invalid variants arriving via an alias target are rejected", () => {
+    const emptyTarget: ModelAlias.Aliases = { models: { bad: "openai/gpt-4o#" } }
+    expect(() => ModelAlias.resolve(emptyTarget, "bad")).toThrow("Invalid model reference: openai/gpt-4o#")
+    const doubleHashTarget: ModelAlias.Aliases = { models: { bad: "openai/gpt-4o#a#b" } }
+    expect(() => ModelAlias.resolve(doubleHashTarget, "bad")).toThrow("Invalid model reference: openai/gpt-4o#a#b")
+  })
+
+  test("18. A chain that settles exactly at the depth limit resolves", () => {
+    const models: Record<string, string> = {}
+    for (let i = 0; i < 9; i++) models[`a${i}`] = i === 8 ? "openai/gpt-4o" : `a${i + 1}`
+    expect(ModelAlias.resolve({ models }, "a0")).toBe("openai/gpt-4o")
+  })
+
+  test("19. A chain one hop past the depth limit throws AliasMaxDepthError", () => {
+    const models: Record<string, string> = {}
+    for (let i = 0; i < 10; i++) models[`a${i}`] = i === 9 ? "openai/gpt-4o" : `a${i + 1}`
+    expect(() => ModelAlias.resolve({ models }, "a0")).toThrow(AliasMaxDepthError)
   })
 })
