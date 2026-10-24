@@ -24,6 +24,8 @@ export class ModelUnavailableError extends Schema.TaggedError<ModelUnavailableEr
   { providerID: Provider.ID, modelID: Model.ID },
 ) {
   override get message() {
+    // A bare alias target carries an empty model id; name the original input, not a trailing slash.
+    if (!this.modelID) return `Model unavailable: ${this.providerID}`
     if (this.providerID === "azure-cognitive-services")
       return `Model unavailable: ${this.providerID}/${this.modelID}. This provider has been deprecated; use azure/${this.modelID} instead.`
     if (this.providerID === "google-vertex-anthropic")
@@ -71,7 +73,7 @@ export const resolved = (
   ...(options.routing === undefined ? {} : { routing: options.routing }),
 })
 
-const layer = Layer.effect(
+export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const resolver = yield* ModelResolver.Service
@@ -93,9 +95,16 @@ const layer = Layer.effect(
             const allModels = yield* available()
             const exists = ({ providerID, modelID }: { providerID: string; modelID: string }) =>
               allModels.some((m) => m.providerID === providerID && m.id === modelID)
-            const refStr = target.variant
-              ? `${target.providerID}/${target.id}#${target.variant}`
-              : `${target.providerID}/${target.id}`
+            // A bare alias arrives as the provider field with an empty model id (PR #382's
+            // CLI passthrough); build the reference from the alias name alone, keeping any
+            // variant, instead of a trailing-slash string alias resolution rejects.
+            const refStr = target.id
+              ? target.variant
+                ? `${target.providerID}/${target.id}#${target.variant}`
+                : `${target.providerID}/${target.id}`
+              : target.variant
+                ? `${target.providerID}#${target.variant}`
+                : target.providerID
             try {
               const res = ModelAlias.resolveRef(aliases, refStr, exists)
               target = Model.Ref.make({
