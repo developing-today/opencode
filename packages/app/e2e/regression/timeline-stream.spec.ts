@@ -27,6 +27,7 @@ import {
   userText,
 } from "../utils/timeline"
 import { sessionCreated } from "../utils/session-events"
+import { sessionHref } from "../utils/app"
 
 const detailed = timelinePresets[2].value
 
@@ -1537,6 +1538,75 @@ test.describe("background shortcut", () => {
 
     await rows.nth(2).click()
     await expect(page).toHaveURL(new RegExp(`/session/${started[1]!.id}$`))
+  })
+
+  test("lists the root's running subagents from a grandchild view", async ({ page }) => {
+    const childID = "ses_tree_child"
+    const grandchildID = "ses_tree_grandchild"
+    const siblingID = "ses_tree_sibling"
+
+    await setupTimeline(page, {
+      sessionMessages: [
+        user,
+        {
+          id: "msg_tree",
+          type: "assistant",
+          agent: "build",
+          model: { id: "model", providerID: "provider" },
+          content: [
+            {
+              type: "tool",
+              id: "call_tree_child",
+              name: "subagent",
+              state: {
+                status: "running",
+                input: { description: "Plan the migration", agent: "explore" },
+                metadata: { sessionID: childID },
+              },
+              time: { created: 3 },
+            },
+            {
+              type: "tool",
+              id: "call_tree_sibling",
+              name: "subagent",
+              state: {
+                status: "running",
+                input: { description: "Draft the notes", agent: "build" },
+                metadata: { sessionID: siblingID },
+              },
+              time: { created: 4 },
+            },
+          ],
+          time: { created: 2 },
+        },
+      ],
+      sessions: [
+        session(),
+        session({ id: childID, parentID: sessionID, title: "Plan the migration", agent: "explore" }),
+        session({ id: grandchildID, parentID: childID, title: "Search callers", agent: "general" }),
+        session({ id: siblingID, parentID: sessionID, title: "Draft the notes", agent: "build" }),
+      ],
+      sessionStatus: Object.fromEntries(
+        [sessionID, childID, grandchildID, siblingID].map((id) => [id, { type: "busy" }]),
+      ),
+    })
+
+    await page.goto(sessionHref(grandchildID))
+
+    // The menu is rooted at the tree's root, so the grandchild view lists the root's other running
+    // subagent alongside the viewed session's own parent chain.
+    const trigger = page.locator("[data-session-title]").getByRole("button", { name: "+2 working", exact: true })
+    await expect(trigger).toBeVisible()
+    await trigger.click()
+    const rows = page.getByRole("menu", { name: "+2 working", exact: true }).getByRole("menuitem")
+    await expect(rows).toHaveText([
+      /^Explore\s*Plan the migration$/,
+      /^General\s*Search callers$/,
+      /^Build\s*Draft the notes$/,
+    ])
+
+    await rows.nth(2).click()
+    await expect(page).toHaveURL(new RegExp(`/session/${siblingID}$`))
   })
 })
 
