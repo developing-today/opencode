@@ -119,6 +119,33 @@ export const readStore = (dataDir?: string): Store => {
   return Schema.decodeUnknownSync(Store)(parsed)
 }
 
+const transientRenameCodes = new Set(["EPERM", "EACCES", "EBUSY"])
+const renameRetryDelays = [10, 25, 50, 100]
+const renameWait = new Int32Array(new SharedArrayBuffer(4))
+
+function isTransientRenameError(error: unknown) {
+  if (typeof error !== "object" || error === null) return false
+  if (!("code" in error)) return false
+  return typeof error.code === "string" && transientRenameCodes.has(error.code)
+}
+
+// On Windows, renaming over a destination another handle is reading fails
+// with EPERM and the update would be lost; retry briefly before giving up
+// (same fix as #85 for the TUI persistence helper, kept in sync with the
+// desktop copy in packages/desktop/src/main/atomic-write.ts).
+function renameSyncWithRetry(source: string, destination: string) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(source, destination)
+      return
+    } catch (error) {
+      const delay = renameRetryDelays[attempt]
+      if (delay === undefined || !isTransientRenameError(error)) throw error
+      Atomics.wait(renameWait, 0, 0, delay)
+    }
+  }
+}
+
 /** Writes the store atomically: a temporary file in the same directory, then a rename over the old one. */
 export const writeStore = (store: Store, dataDir?: string) => {
   const dir = directory(dataDir)
@@ -126,8 +153,15 @@ export const writeStore = (store: Store, dataDir?: string) => {
   const file = path.join(dir, "plans.json")
   const valid = Schema.decodeUnknownSync(Store)(store)
   const temporary = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
-  fs.writeFileSync(temporary, `${JSON.stringify(valid, null, 2)}\n`)
-  fs.renameSync(temporary, file)
+  try {
+    fs.writeFileSync(temporary, `${JSON.stringify(valid, null, 2)}\n`)
+    renameSyncWithRetry(temporary, file)
+  } catch (error) {
+    try {
+      fs.rmSync(temporary, { force: true })
+    } catch {}
+    throw error
+  }
 }
 
 /** A stable id from a provider and a name: `anthropic-max-20x`. */

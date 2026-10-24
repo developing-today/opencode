@@ -217,7 +217,7 @@ describe("Agent", () => {
     }),
   )
 
-  it.effect("denies the subagent tool for built-in subagents", () =>
+  it.effect("lets general launch subagents while explore stays read-only", () =>
     Effect.gen(function* () {
       const agent = yield* Agent.Service
       yield* AgentPlugin.Plugin.effect(
@@ -226,15 +226,13 @@ describe("Agent", () => {
         }),
       )
 
-      yield* Effect.forEach(["general", "explore"], (id) =>
-        Effect.gen(function* () {
-          const info = yield* agent.get(Agent.ID.make(id))
-          if (!info) throw new Error(`expected built-in agent: ${id}`)
-          expect(info.mode).toBe("subagent")
-          expect(info.permissions).toContainEqual({ action: "subagent", resource: "*", effect: "deny" })
-          expect(Permission.evaluate("subagent", "*", info.permissions).effect).toBe("deny")
-        }),
-      )
+      const general = yield* agent.get(Agent.ID.make("general"))
+      const explore = yield* agent.get(Agent.ID.make("explore"))
+      expect(general?.mode).toBe("subagent")
+      expect(Permission.evaluate("subagent", "general", general?.permissions ?? []).effect).toBe("allow")
+      expect(Permission.evaluate("question", "*", general?.permissions ?? []).effect).toBe("deny")
+      expect(explore?.mode).toBe("subagent")
+      expect(Permission.evaluate("subagent", "general", explore?.permissions ?? []).effect).toBe("deny")
     }),
   )
 })

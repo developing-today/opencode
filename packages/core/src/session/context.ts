@@ -2,7 +2,7 @@ export * as SessionContext from "./context.js"
 
 import { Model } from "../model.js"
 import { Permission } from "../permission.js"
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { Agent } from "../agent.js"
 import { CodeModeInstructions } from "../codemode/instructions.js"
 import { Database } from "../database/database.js"
@@ -12,6 +12,7 @@ import { Instructions } from "../instructions/index.js"
 import { InstructionBuiltIns } from "../instructions/builtins.js"
 import { Location } from "../location.js"
 import { McpInstructions } from "../mcp/instructions.js"
+import { MessagingVars } from "../messaging/vars.js"
 import { McpTool } from "../tool/mcp.js"
 import { ReferenceInstructions } from "../reference/instructions.js"
 import { SkillInstructions } from "../skill/instructions.js"
@@ -89,6 +90,7 @@ const layer = Layer.effect(
     const skillInstructions = yield* SkillInstructions.Service
     const store = yield* SessionStore.Service
     const registry = yield* Tool.Service
+    const vars = yield* MessagingVars.Service
 
     const resolveModel = (session: SessionSchema.Info) => models.resolve(session, model.available)
 
@@ -133,7 +135,7 @@ const layer = Layer.effect(
         {
           tools: registry.snapshot(permissions),
           builtins: builtins.load(),
-          discovery: discovery.load(),
+          discovery: discovered(session.id),
           skills: skillInstructions.load(permissions),
           references: referenceInstructions.load(),
           mcp: mcpInstructions.load(permissions),
@@ -158,6 +160,23 @@ const layer = Layer.effect(
         ]),
         tools: loaded.tools,
       }
+    })
+
+    // Instruction files whose frontmatter sets `vars` render the session's variables, stripped of
+    // that frontmatter. Time variables resolve to the session start so the value stays stable.
+    const discovered = Effect.fn("SessionContext.discovered")(function* (sessionID: SessionSchema.ID) {
+      return (yield* discovery.load()).map((source) => ({
+        ...source,
+        read: source.read.pipe(
+          Effect.flatMap((value) => {
+            const files = Option.getOrUndefined(decodeFiles(value))
+            if (!files) return Effect.succeed(value)
+            return Effect.forEach(files, (file) =>
+              vars.inject(file.content, sessionID).pipe(Effect.map((content) => ({ path: file.path, content }))),
+            )
+          }),
+        ),
+      }))
     })
 
     const load = Effect.fn("SessionContext.load")(function* (selection: Selection) {
@@ -185,6 +204,11 @@ const layer = Layer.effect(
 /** Variant IDs that minimize reasoning output, in preference order. */
 const MINIMAL_REASONING_VARIANTS = ["none", "minimal", "low"].map((id) => Model.VariantID.make(id))
 
+// Discovered instruction files as stored: the JSON encoding of `InstructionDiscovery.File[]`.
+const decodeFiles = Schema.decodeUnknownOption(
+  Schema.Array(Schema.Struct({ path: Schema.String, content: Schema.String })),
+)
+
 export const node = makeLocationNode({
   service: Service,
   layer,
@@ -198,6 +222,7 @@ export const node = makeLocationNode({
     Location.node,
     McpInstructions.node,
     McpTool.node,
+    MessagingVars.node,
     ReferenceInstructions.node,
     SessionRunnerModel.node,
     SessionModelRequest.node,

@@ -56,10 +56,135 @@ const findDaemonSocket = (): string | undefined => {
   return undefined
 }
 
+/**
+ * The mcpx executable opencode talks to. `OPENCODE_MCPX_BIN` pins a stable
+ * binary (path or name); otherwise the first `mcpx` on `PATH` wins, which in
+ * a test or CI shell may be an unrelated build.
+ */
+export const mcpxBinary = (env: NodeJS.ProcessEnv = process.env): string => env.OPENCODE_MCPX_BIN || "mcpx"
+
+/**
+ * Whether opencode may spawn a detached mcpx daemon. Spawning is off when
+ * `OPENCODE_MCPX_DAEMON` is `0`/`false`/`off`, and in test processes
+ * (`OPENCODE_TEST_HOME` set, as every package test runner does): each test
+ * home would otherwise leak its own daemon, invisible to `mcpx daemons`
+ * once the temp home is deleted (#14). A daemon that is already running is
+ * still used; only spawning is gated. Tests that cover mcpx inject one via
+ * `McpxSubagent.setDaemonCaller` or `MCPX_DAEMON_ENDPOINT` instead.
+ */
+export const daemonAutostartEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => {
+  const flag = env.OPENCODE_MCPX_DAEMON?.trim().toLowerCase()
+  if (flag === "0" || flag === "false" || flag === "off") return false
+  if (env.OPENCODE_TEST_HOME) return false
+  return true
+}
+
+/**
+ * Parses `mcpx settings get daemon.autostart` output (first line:
+ * `daemon.autostart = true|false`). Returns undefined when the output does
+ * not carry the setting, e.g. an mcpx too old to know it.
+ */
+export const parseMcpxDaemonAutostart = (output: string): boolean | undefined => {
+  const match = /^daemon\.autostart\s*=\s*(true|false)\b/m.exec(output)
+  if (!match) return undefined
+  return match[1] === "true"
+}
+
+/**
+ * Whether mcpx's own `daemon.autostart` setting allows starting a daemon.
+ * A supervised daemon (launchd/systemd) is configured with the setting off
+ * so nothing else puts a second daemon on the same socket while it restarts
+ * (#134); the CLI honours it, so the plugin resolves it the same way — by
+ * asking the CLI. Only an explicit `false` blocks the spawn: a missing or
+ * unparseable answer (old mcpx, binary not installed) keeps today's
+ * behaviour, since the setting defaults to true. The settings-call timeout
+ * is a parameter (default 5s) so tests can exercise the timeout branch
+ * without waiting it out (#178).
+ */
+export const mcpxDaemonAutostart = async (timeoutMs = 5000): Promise<boolean> => {
+  try {
+    const output = await new Promise<string>((resolve, reject) => {
+      execFile(
+        mcpxBinary(),
+        ["settings", "get", "daemon.autostart"],
+        { timeout: timeoutMs, maxBuffer: 1024 * 1024 },
+        (err, stdout, stderr) => {
+          if (err) reject(err)
+          else resolve(stdout || stderr)
+        },
+      )
+    })
+    return parseMcpxDaemonAutostart(output) ?? true
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Arguments for a daemon opencode spawns. The daemon gets a bounded idle
+ * lifetime (`--daemon-idle-exit`, default 1h, `OPENCODE_MCPX_DAEMON_IDLE_EXIT`
+ * overrides; `0`/`0s` restores mcpx's never-exit default) so a daemon started
+ * by a short-lived process exits on its own instead of leaking forever (#14).
+ */
+export const daemonSpawnArgs = (env: NodeJS.ProcessEnv = process.env): string[] => {
+  const idle = env.OPENCODE_MCPX_DAEMON_IDLE_EXIT?.trim() || "1h"
+  const total = mcpxDurationNs(idle)
+  if (total === 0n) return ["daemon"]
+  if (total === undefined) {
+    console.warn(
+      `Invalid OPENCODE_MCPX_DAEMON_IDLE_EXIT value ${JSON.stringify(idle)}: expected a duration like "1h" or "15m"; falling back to "1h".`,
+    )
+    return ["daemon", "--daemon-idle-exit", "1h"]
+  }
+  return ["daemon", "--daemon-idle-exit", idle]
+}
+
+// mcpx parses durations with Go's time.ParseDuration (its settings validation
+// rejects anything else before the daemon starts, and the spawn below discards
+// the daemon's stderr, so a rejected value used to fail silently): an optional
+// sign, then one or more <number><unit> components ("1h", "15m", "1h30m",
+// "1.5h"), where the number may be fractional and the unit is ns, us, µs, μs,
+// ms, s, m, or h. Go also accepts a bare signed "0" with no unit, and rejects
+// any total whose magnitude overflows int64 nanoseconds (~2562047h47m) — a
+// shape-only check passes those through to a daemon that cannot start (#79).
+// Returns the total in nanoseconds (sign aside: Go applies it to the whole
+// value, and mcpx treats any idle exit <= 0 as "never"), or undefined when
+// Go's parser would reject the value.
+const mcpxDurationNs = (value: string): bigint | undefined => {
+  if (/^[+-]?0$/.test(value)) return 0n
+  if (
+    !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h)(?:(?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))*$/.test(
+      value,
+    )
+  )
+    return undefined
+  const units: Record<string, bigint> = {
+    ns: 1n,
+    us: 1_000n,
+    µs: 1_000n,
+    μs: 1_000n,
+    ms: 1_000_000n,
+    s: 1_000_000_000n,
+    m: 60_000_000_000n,
+    h: 3_600_000_000_000n,
+  }
+  let total = 0n
+  for (const match of value.matchAll(/(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h)/g)) {
+    const unit = units[match[2] ?? ""]
+    if (unit === undefined) return undefined
+    const [whole = "0", fraction = ""] = (match[1] ?? "").split(".")
+    total += BigInt(whole || "0") * unit
+    if (fraction) total += (BigInt(fraction) * unit) / 10n ** BigInt(fraction.length)
+  }
+  // Go's int64 range is asymmetric: a negative value may reach 2^63 ns.
+  const limit = value.startsWith("-") ? 9_223_372_036_854_775_808n : 9_223_372_036_854_775_807n
+  return total > limit ? undefined : total
+}
+
 export const runCli = (args: string[], env?: Record<string, string | undefined>): Promise<string> =>
   new Promise((resolve, reject) => {
     execFile(
-      "mcpx",
+      mcpxBinary(),
       args,
       { maxBuffer: 16 * 1024 * 1024, env: env ? { ...process.env, ...env } : process.env },
       (err, stdout, stderr) => {
@@ -118,6 +243,11 @@ export const callDaemon = async (
 
 let daemonEnsured = false
 
+/** Test-only: forget that the daemon was already ensured in this process. */
+export const resetDaemonEnsured = (): void => {
+  daemonEnsured = false
+}
+
 /**
  * Ensures mcpx daemon is standing and up-to-date.
  * Decoupled lifecycle:
@@ -125,7 +255,7 @@ let daemonEnsured = false
  *   OpenCode shutting down or reloading will not terminate the mcpx daemon.
  * - If daemon is already running, check if reload is needed or notify it.
  */
-const ensureDaemon = async (): Promise<void> => {
+export const ensureDaemon = async (): Promise<void> => {
   if (daemonEnsured) return
   try {
     const health = await callDaemon("/v1/health")
@@ -139,12 +269,31 @@ const ensureDaemon = async (): Promise<void> => {
     }
   } catch {}
 
-  // Daemon not reachable; spawn detached so it outlives opencode
+  // Daemon not reachable. Tests and opted-out processes must not spawn one:
+  // a detached daemon per test home leaks invisibly (#14). The tools degrade
+  // to their CLI fallback / unreachable errors, as when mcpx is not installed.
+  if (!daemonAutostartEnabled()) {
+    daemonEnsured = true
+    return
+  }
+
+  // mcpx itself may forbid autostart (daemon.autostart=false, set when a
+  // supervisor owns the daemon): spawning here would race the supervised
+  // daemon for its socket (#134). Tools degrade as above; the supervised
+  // daemon answers health once it is up.
+  if (!(await mcpxDaemonAutostart())) {
+    daemonEnsured = true
+    return
+  }
+
+  // Spawn detached so it outlives opencode, but with a bounded idle lifetime
+  // and an owner tag (`MCPX_OWNER=opencode:<pid>`) so `script/mcpx-cleanup.ts`
+  // can find daemons opencode started (#14).
   try {
-    const child = spawn("mcpx", ["daemon"], {
+    const child = spawn(mcpxBinary(), daemonSpawnArgs(), {
       detached: true,
       stdio: "ignore",
-      env: process.env,
+      env: { ...process.env, MCPX_OWNER: `opencode:${process.pid}` },
     })
     // A missing binary (ENOENT) is reported as an async 'error' event, not a thrown exception.
     // Without a listener it crashes OpenCode for everyone who has not installed mcpx.
@@ -273,7 +422,7 @@ export const Plugin = {
             // Auto-project tools used in script with a 3-turn TTL for subsequent review
             const projected = yield* Effect.tryPromise(() =>
               autoProjectFromScript({ source: input.source, callDaemon, defaultTtl: 3 }),
-            ).pipe(Effect.catch(() => Effect.succeed([] as string[])))
+            ).pipe(Effect.orElseSucceed(() => [] as string[]))
             if (projected.length > 0) yield* ctx.tool.reload()
             return { output: { output } }
           }),

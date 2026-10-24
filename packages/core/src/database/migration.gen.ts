@@ -54,6 +54,7 @@ import m51 from "./migration/20261007080042_route_attempt_hedges_and_bodies.js"
 import m52 from "./migration/20261007190000_azure_cli_external_credential.js"
 import m53 from "./migration/20261010180456_project_time_archived.js"
 import m54 from "./migration/20261014094820_route_attempt_cost_usd.js"
+import m55 from "./migration/20261016221426_messaging.js"
 
 export const migrations = [
   m00,
@@ -111,4 +112,5 @@ export const migrations = [
   m52,
   m53,
   m54,
+  m55,
 ] satisfies DatabaseMigration.Migration[]

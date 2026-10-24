@@ -282,6 +282,12 @@ describe("ConfigNormalize", () => {
     })
   })
 
+  test("keeps a legacy provider's instanceOf", () => {
+    expect(decoded({ provider: { "openai.work": { instanceOf: "openai", name: "Work" } } }).providers).toEqual({
+      "openai.work": expect.objectContaining({ instanceOf: "openai", name: "Work" }),
+    })
+  })
+
   test("uses a valid retired provider alias when the canonical legacy entry is malformed", () => {
     const result = normalized({
       provider: {
@@ -548,6 +554,17 @@ describe("ConfigNormalize", () => {
         { action: "provider.use", resource: "native", effect: "deny" },
       ],
     })
+  })
+
+  test("passes through the experimental shell timeout and drops invalid values", () => {
+    expect(normalized({ experimental: { shell_timeout: 300000 } }).encoded).toMatchObject({
+      experimental: { shell_timeout: 300000 },
+    })
+    expect(normalized({ experimental: { shell_timeout: 0 } }).encoded).toMatchObject({
+      experimental: { shell_timeout: 0 },
+    })
+    expect(normalized({ experimental: { shell_timeout: -1 } }).encoded.experimental).toBeUndefined()
+    expect(decoded({ experimental: { shell_timeout: 300000 } }).experimental?.shell_timeout).toBe(300000)
   })
 
   test("never emits experimental policies", () => {

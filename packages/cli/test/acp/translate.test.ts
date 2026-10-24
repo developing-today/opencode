@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { OpenCodeEvent, type OpenCodeEventEncoded } from "@opencode/protocol/groups/event"
+import { Permission } from "@opencode/schema/permission"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Schema } from "effect"
@@ -13,6 +14,7 @@ import {
   durableEvent,
   ephemeralEvent,
   failed,
+  permissionAsked,
   reasoningDelta,
   stepEnded,
   succeeded,
@@ -598,6 +600,62 @@ const rows: Row[] = [
 describe("acp turn translation", () => {
   test.each(rows)("$name", (row) => {
     expect(translate(row)).toMatchObject(row.expected)
+  })
+})
+
+describe("acp ask tracking", () => {
+  const event = (value: OpenCodeEventEncoded) => decodeEvent({ ...value, id: "evt_1" })
+
+  test("asks a pending ask once when its event also arrives, and settles it on reply", () => {
+    const request = Schema.decodeUnknownSync(Permission.Request)({
+      id: "perm_listed",
+      sessionID: root,
+      action: "read",
+      resources: ["*"],
+    })
+    const listed = ACPTranslate.pending(ACPTranslate.initial, ctx, { permissions: [request], forms: [] })
+    const asked = ACPTranslate.fold(listed.state, event(permissionAsked(root, "perm_listed")), ctx)
+    const replied = ACPTranslate.fold(
+      asked.state,
+      event(ephemeralEvent("permission.replied", { sessionID: root, requestID: "perm_listed", reply: "once" })),
+      ctx,
+    )
+
+    expect(listed.outputs).toMatchObject([{ _tag: "PermissionAsk", request: { id: "perm_listed" } }])
+    expect(asked.outputs).toEqual([])
+    expect(replied.outputs).toEqual([{ _tag: "AskSettled", id: "perm_listed" }])
+  })
+
+  test("does not ask a listed ask whose settlement arrived before the list was merged", () => {
+    const replied = ACPTranslate.fold(
+      ACPTranslate.initial,
+      event(ephemeralEvent("permission.replied", { sessionID: root, requestID: "perm_stale", reply: "once" })),
+      ctx,
+    )
+    const request = Schema.decodeUnknownSync(Permission.Request)({
+      id: "perm_stale",
+      sessionID: root,
+      action: "read",
+      resources: ["*"],
+    })
+
+    expect(replied.outputs).toEqual([])
+    expect(ACPTranslate.pending(replied.state, ctx, { permissions: [request], forms: [] }).outputs).toEqual([])
+  })
+
+  test("routes an adopted descendant's asks and events by its place in the tree", () => {
+    const state = ACPTranslate.adopt(ACPTranslate.initial, [
+      { id: "ses_child", parentID: root, depth: 1, title: "Explore" },
+      { id: "ses_grandchild", parentID: "ses_child", depth: 2 },
+    ])
+    const asked = ACPTranslate.fold(state, event(permissionAsked("ses_grandchild", "perm_deep")), ctx)
+
+    expect(asked.outputs).toMatchObject([
+      { _tag: "PermissionAsk", child: { id: "ses_grandchild", parentID: "ses_child", depth: 2 } },
+    ])
+    expect(ACPTranslate.inTree(state, event(childCreated("ses_deeper", "ses_grandchild", "Deeper")), ctx)).toBe(true)
+    expect(ACPTranslate.inTree(state, event(permissionAsked("ses_other", "perm_other")), ctx)).toBe(false)
+    expect(ACPTranslate.fold(state, event(permissionAsked("ses_other", "perm_other")), ctx).outputs).toEqual([])
   })
 })
 

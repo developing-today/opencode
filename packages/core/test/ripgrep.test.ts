@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test"
+import { existsSync } from "node:fs"
 import fs from "fs/promises"
 import path from "path"
 import { Effect } from "effect"
@@ -6,13 +7,22 @@ import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { Location } from "@opencode/core/location"
 import { Ripgrep } from "@opencode/core/ripgrep"
 import { RelativePath } from "@opencode/core/schema"
+import { Global } from "@opencode/util/global"
 import { tmpdir, tmpdirScoped } from "./fixture/tmpdir"
 import { testEffect } from "./lib/effect"
 import { tempLocationLayer } from "./fixture/location"
 
+// These suites drive a real rg binary. Without one on PATH or in the
+// global bin cache, RipgrepBinary falls through to downloading one from
+// the network, which the test harness forbids — the suite then fails
+// eleven times instead of surfacing the missing setup once (#72).
+const rgExecutable = process.platform === "win32" ? "rg.exe" : "rg"
+const describeRipgrep =
+  Bun.which(rgExecutable) || existsSync(path.join(Global.Path.bin, rgExecutable)) ? describe : describe.skip
+
 const it = testEffect(AppNodeBuilder.build(Ripgrep.node, [Location.node.replace(tempLocationLayer)]))
 
-describe("Ripgrep", () => {
+describeRipgrep("Ripgrep", () => {
   for (const hidden of [undefined, false, true]) {
     for (const limit of hidden ? [10] : [1, 10]) {
       it.live(`glob honors hidden=${hidden} before limit=${limit}`, () =>

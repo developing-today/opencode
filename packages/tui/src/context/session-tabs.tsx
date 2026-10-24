@@ -291,7 +291,15 @@ export const { use: useSessionTabs, provider: SessionTabsProvider } = createSimp
             data.session.pending.sync(sessionID),
             data.session.permission.sync(sessionID),
             data.session.form.sync(sessionID),
+            data.session.sync(sessionID, { children: true }),
           ])
+          if (stale) return
+          // A pending ask from a subagent at any depth marks its root's tab.
+          await Promise.allSettled(
+            data.session
+              .family(sessionID)
+              .flatMap((id) => [data.session.permission.sync(id), data.session.form.sync(id)]),
+          )
         }
       }, TAB_PREFETCH_DELAY)
       onCleanup(() => {

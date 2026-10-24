@@ -1,4 +1,4 @@
-import { createEffect, createMemo } from "solid-js"
+import { createEffect, createMemo, on } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { FormInfo, PermissionRequest } from "@opencode/client/promise"
 import { useParams } from "@solidjs/router"
@@ -20,19 +20,19 @@ export function createSessionRequestModel() {
   const language = useLanguage()
   const settings = useSettings()
   createEffect(() => {
-    const id = params.id
-
-    if (!id || serverSDK.connection.status() !== "connected") return
-    void Promise.all([data.shell.sync({ directory: sdk().directory }), data.session.permission.sync(id)]).catch(
-      () => undefined,
-    )
+    if (!params.id || serverSDK.connection.status() !== "connected") return
+    void data.shell.sync({ directory: sdk().directory }).catch(() => undefined)
   })
+  // Asks from subagents at any depth surface here, including ones raised before this client saw them.
   createEffect(() => {
     const id = params.id
 
     if (!id || serverSDK.connection.status() !== "connected") return
     void Promise.all(
-      sessionTreeIDs(data.session.list(), id).map((sessionID) => data.session.form.sync(sessionID)),
+      sessionTreeIDs(data.session.list(), id).flatMap((sessionID) => [
+        data.session.permission.sync(sessionID),
+        data.session.form.sync(sessionID),
+      ]),
     ).catch(() => undefined)
   })
 
@@ -92,14 +92,29 @@ export function createSessionRequestModel() {
     return !!id && !data.session.get(id)?.parentID
   }
 
-  // Inside a subagent, running work is the parent's, so the header lists its siblings.
+  // The running menu belongs to the whole tree: inside a subagent it is rooted at the tree's root, so a
+  // grandchild still sees the root's other subagents, not only its parent's.
   const owner = createMemo(() => {
     const id = params.id
 
     if (!id) return
 
-    return data.session.get(id)?.parentID ?? id
+    return data.session.root(id)
   })
+
+  // The owner's messages name the subagent calls still starting at the root; load them when a subagent
+  // view makes a different session the owner and they have not arrived yet.
+  createEffect(
+    on(
+      () => [owner(), params.id, serverSDK.connection.status()] as const,
+      ([rootID, id, status]) => {
+        if (!rootID || rootID === id || status !== "connected") return
+        if (data.session.message.list(rootID).length > 0) return
+        void Promise.all([data.session.sync(rootID), data.session.message.sync(rootID)]).catch(() => undefined)
+      },
+      { defer: true },
+    ),
+  )
 
   const running = createSessionBackground({
     sessionID: owner,

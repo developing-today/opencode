@@ -5,6 +5,7 @@ import { ToolFailure } from "@opencode/ai"
 import { Effect, Schema } from "effect"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Skill } from "../../skill.js"
+import { MessagingVars } from "../../messaging/vars.js"
 import { Permission } from "../../permission.js"
 
 export const name = "skill"
@@ -35,6 +36,7 @@ export const Plugin = {
     const fs = yield* FSUtil.Service
     const skills = yield* Skill.Service
     const permission = yield* Permission.Service
+    const vars = yield* MessagingVars.Service
     yield* ctx.tool
       .transform((editor) =>
         editor.add({
@@ -56,7 +58,9 @@ export const Plugin = {
                   agent: context.agent,
                   source: { type: "tool", messageID: context.messageID, id: context.id },
                 })
-                return { name: skill.name, ...(yield* Skill.prepare(fs, skill)) }
+                // Skills whose frontmatter sets `vars` render the invoking session's variables.
+                const content = skill.vars ? yield* vars.expand(skill.content, context.sessionID) : skill.content
+                return { name: skill.name, ...(yield* Skill.prepare(fs, { ...skill, content })) }
               }).pipe(Effect.mapError((error) => unableToLoad(input.id, error)))
             }).pipe(
               Effect.map((output) => ({

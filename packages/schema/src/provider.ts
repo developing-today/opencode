@@ -81,6 +81,8 @@ export const Info = Schema.Struct({
   id: ID,
   canonical: ID.pipe(optional),
   integrationID: Integration.ID.pipe(optional),
+  /** The provider this one is a separately signed-in copy of, such as `openai` for `openai.work`. */
+  instanceOf: ID.pipe(optional),
   name: Schema.String,
   activation: Activation,
   package: Package,

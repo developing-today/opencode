@@ -285,8 +285,6 @@ Use a dedicated `tui.json` (or `tui.jsonc`) file for TUI-specific settings.
 }
 ```
 
-Use `OPENCODE_TUI_CONFIG` to point to a custom TUI config file.
-
 When `cursor.style` is `"default"`, the terminal default cursor is restored, so `cursor.blinking` has no effect.
 
 Set `attention.enabled` to turn on TUI desktop notifications and sounds. See [TUI attention](/docs/tui#attention).
@@ -545,16 +543,35 @@ This setting applies across all interfaces: TUI, CLI (`opencode run`), desktop a
 
 ### Subagent depth
 
-You can control how deeply subagents can invoke other subagents using the `subagent_depth` option.
+You can control how deeply subagents can invoke other subagents using the `subagent_depth` option under `experimental`.
 
 ```json title="opencode.json"
 {
   "$schema": "https://opencode.ai/config.json",
-  "subagent_depth": 2
+  "experimental": {
+    "subagent_depth": 2
+  }
 }
 ```
 
-The default is `1`, which allows primary agents to launch subagents but prevents those subagents from launching additional subagents. Set it to `2` to allow one additional level of nested subagents, or `0` to prevent all subagent launches.
+The default is `5`, which lets subagents launch their own subagents up to five levels below the top-level session. Set it to `1` to prevent subagents from launching additional subagents, or `0` to prevent all subagent launches.
+
+---
+
+### Shell timeout
+
+You can change the default timeout for foreground shell commands using the `shell_timeout` option under `experimental`. The value is in milliseconds.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "shell_timeout": 300000
+  }
+}
+```
+
+The default is `120000` (2 minutes). Set it to `0` to disable the timeout for foreground commands. A timeout passed explicitly for a single command still takes precedence, and background commands have no timeout by default.
 
 ---
 
@@ -892,6 +909,21 @@ Use `{env:VARIABLE_NAME}` to substitute environment variables:
 ```
 
 If the environment variable is not set, it will be replaced with an empty string.
+
+Add a default with `{env:VARIABLE_NAME:-fallback}` to substitute a fallback value instead when the variable is unset or empty:
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "openai-codex": {
+      "options": {
+        "baseURL": "http://127.0.0.1:{env:CODEX_PROXY_PORT:-18744}/v1"
+      }
+    }
+  }
+}
+```
 
 ---
 

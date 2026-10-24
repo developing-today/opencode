@@ -7,7 +7,15 @@ type SessionNode = {
   parentID?: string | null
 }
 
-export function sessionFamily<T extends SessionNode>(sessions: readonly T[], sessionID: string) {
+type FamilyNode<T> = { session: T; children: FamilyNode<T>[] }
+
+// The family around `sessionID` below its root, in tree order with a connector prefix per row. Sessions that fail
+// `include` stay only as ancestors of sessions that pass, so every row is drawn under its own parent.
+export function sessionFamily<T extends SessionNode>(
+  sessions: readonly T[],
+  sessionID: string,
+  include: (session: T) => boolean = () => true,
+) {
   const byID = new Map(sessions.map((session) => [session.id, session]))
   const current = byID.get(sessionID)
   if (!current) return []
@@ -20,15 +28,25 @@ export function sessionFamily<T extends SessionNode>(sessions: readonly T[], ses
     else children.set(session.parentID, [session])
   })
 
-  function root(session: T): T {
+  // Parent links can form a cycle, so each walk visits a session once.
+  function root(session: T, seen: Set<string>): T {
+    seen.add(session.id)
     const parent = session.parentID ? byID.get(session.parentID) : undefined
-    return parent ? root(parent) : session
+    return parent && !seen.has(parent.id) ? root(parent, seen) : session
   }
 
-  function walk(parentID: string, ancestors: boolean[]): Array<{ session: T; prefix: string }> {
-    const group = children.get(parentID) ?? []
-    return group.flatMap((session, index) => {
-      const last = index === group.length - 1
+  function tree(parentID: string, seen: Set<string>): FamilyNode<T>[] {
+    return (children.get(parentID) ?? []).flatMap((session) => {
+      if (seen.has(session.id)) return []
+      seen.add(session.id)
+      const nested = tree(session.id, seen)
+      return include(session) || nested.length > 0 ? [{ session, children: nested }] : []
+    })
+  }
+
+  function walk(nodes: FamilyNode<T>[], ancestors: boolean[]): Array<{ session: T; prefix: string }> {
+    return nodes.flatMap((node, index) => {
+      const last = index === nodes.length - 1
       const prefix =
         ancestors.length === 0
           ? ""
@@ -36,11 +54,12 @@ export function sessionFamily<T extends SessionNode>(sessions: readonly T[], ses
               .slice(1)
               .map((ancestor) => (ancestor ? "   " : "│  "))
               .join("") + (last ? "└─ " : "├─ ")
-      return [{ session, prefix }, ...walk(session.id, [...ancestors, last])]
+      return [{ session: node.session, prefix }, ...walk(node.children, [...ancestors, last])]
     })
   }
 
-  return walk(root(current).id, [])
+  const top = root(current, new Set())
+  return walk(tree(top.id, new Set([top.id])), [])
 }
 
 export function contextUsage(

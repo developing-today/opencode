@@ -40,26 +40,28 @@ export function SubagentsTab(props: { sessionID: string }) {
     const current = session()
     if (!current) return []
 
-    const result = sessionFamily<SessionInfo>(data.session.list(), current.id).map(
-      ({ session, prefix }): SubagentEntry => {
-        const title = withTimestampedFallback(session)
-        const agentMatch = title.match(/@(\w+) subagent/)
-        return {
-          sessionID: session.id,
-          agent: session.agent
-            ? Locale.titlecase(session.agent)
-            : agentMatch
-              ? Locale.titlecase(agentMatch[1])
-              : "Subagent",
-          title: agentMatch ? title.replace(agentMatch[0], "").trim() || title : title,
-          status: data.session.status(session.id),
-          current: session.id === route.sessionID,
-          prefix,
-        }
-      },
-    )
-
-    return result.filter((entry) => (filter.active ? entry.status === "running" : entry.status !== "running"))
+    // Filter while building the tree, so a match under a filtered-out subagent keeps that parent as context instead
+    // of drawing a connector to a missing row.
+    return sessionFamily<SessionInfo>(
+      data.session.list(),
+      current.id,
+      (session) => (data.session.status(session.id) === "running") === filter.active,
+    ).map(({ session, prefix }): SubagentEntry => {
+      const title = withTimestampedFallback(session)
+      const agentMatch = title.match(/@(\w+) subagent/)
+      return {
+        sessionID: session.id,
+        agent: session.agent
+          ? Locale.titlecase(session.agent)
+          : agentMatch
+            ? Locale.titlecase(agentMatch[1])
+            : "Subagent",
+        title: agentMatch ? title.replace(agentMatch[0], "").trim() || title : title,
+        status: data.session.status(session.id),
+        current: session.id === route.sessionID,
+        prefix,
+      }
+    })
   })
 
   let selectedSessionID = ""

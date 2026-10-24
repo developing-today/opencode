@@ -68,8 +68,6 @@ Still open:
 - Systemd units: `Type=notify` needs `NotifyAccess=all`, because the notifying process is the server
   child, not the unit's main pid, when the wrapper starts it. Not verified under a real systemd user
   session. The tests stand in for systemd with a socket the test process owns and a fake notify socket.
-- Clients: a client that gets a refused connection during a handoff should retry the same URL instead
-  of starting a server of its own. Not implemented in the client.
 - Residual race: a connection the predecessor accepted in the last instant before it closes can get a
   `503` (`service_stopping`) or a reset when its request arrives after teardown has begun. The
   handover runs (about a thousand requests) showed none; the control showed one in each run.

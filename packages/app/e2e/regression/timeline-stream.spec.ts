@@ -26,6 +26,8 @@ import {
   userMessage,
   userText,
 } from "../utils/timeline"
+import { sessionCreated } from "../utils/session-events"
+import { sessionHref } from "../utils/app"
 
 const detailed = timelinePresets[2].value
 
@@ -1399,6 +1401,212 @@ test.describe("background shortcut", () => {
 
     await expect(shellCall.locator('[data-slot="collapsible-trigger"]')).toHaveAttribute("aria-expanded", "true")
     await expect(shellCall).toBeInViewport()
+  })
+
+  test("nests running subagents at any depth under the subagent that started them", async ({ page }) => {
+    const childID = "ses_nested_child"
+    const backgroundID = "ses_nested_background"
+    const summaryID = "ses_nested_summary"
+    const finishedID = "ses_nested_finished"
+    const grandchildID = "ses_nested_grandchild"
+
+    // These start while the root is open, so the app learns of them as they are created.
+    const started = [
+      session({ id: grandchildID, parentID: childID, title: "Search callers", agent: "general" }),
+      session({ id: "ses_nested_deepest", parentID: grandchildID, title: "Read call sites", agent: "explore" }),
+      session({ id: "ses_nested_notes", parentID: backgroundID, title: "Collect references", agent: "explore" }),
+      session({ id: "ses_nested_stray", parentID: finishedID, title: "Index the docs", agent: "explore" }),
+    ]
+
+    const timeline = await setupTimeline(page, {
+      sessionMessages: [
+        user,
+        {
+          id: "msg_nested",
+          type: "assistant",
+          agent: "build",
+          model: { id: "model", providerID: "provider" },
+          content: [
+            {
+              type: "tool",
+              id: "call_finished",
+              name: "subagent",
+              state: {
+                status: "completed",
+                input: { description: "Review earlier work", agent: "explore" },
+                content: [{ type: "text", text: "done" }],
+                metadata: { sessionID: finishedID, status: "completed" },
+              },
+              time: { created: 2, completed: 3 },
+            },
+            // Listed as background work until its completion notice arrives.
+            {
+              type: "tool",
+              id: "call_background",
+              name: "subagent",
+              state: {
+                status: "completed",
+                input: { description: "Draft the notes", agent: "build" },
+                content: [{ type: "text", text: "working" }],
+                metadata: { sessionID: backgroundID, status: "running" },
+              },
+              time: { created: 3, completed: 4 },
+            },
+            // Idle with nothing running below it, so only its pending notice keeps it counted.
+            {
+              type: "tool",
+              id: "call_summary",
+              name: "subagent",
+              state: {
+                status: "completed",
+                input: { description: "Summarize findings", agent: "explore" },
+                content: [{ type: "text", text: "working" }],
+                metadata: { sessionID: summaryID, status: "running" },
+              },
+              time: { created: 3, completed: 4 },
+            },
+            {
+              type: "tool",
+              id: "call_child",
+              name: "subagent",
+              state: {
+                status: "running",
+                input: { description: "Plan the migration", agent: "explore" },
+                metadata: { sessionID: childID },
+              },
+              time: { created: 5 },
+            },
+          ],
+          time: { created: 2 },
+        },
+      ],
+      sessions: [
+        session(),
+        session({ id: finishedID, parentID: sessionID, title: "Review earlier work", agent: "explore" }),
+        session({ id: backgroundID, parentID: sessionID, title: "Draft the notes", agent: "build" }),
+        session({ id: summaryID, parentID: sessionID, title: "Summarize findings", agent: "explore" }),
+        session({ id: childID, parentID: sessionID, title: "Plan the migration", agent: "explore" }),
+        ...started,
+      ],
+      // The finished subagents are idle while the subagents they started still run.
+      sessionStatus: Object.fromEntries(
+        [sessionID, childID, ...started.map((item) => item.id)].map((id) => [id, { type: "busy" }]),
+      ),
+    })
+
+    for (const item of started) await timeline.send(sessionCreated(item))
+
+    const trigger = page.locator("[data-session-title]").getByRole("button", { name: /^\d+ working$/ })
+    await expect(trigger).toHaveAccessibleName("6 working")
+    await trigger.click()
+    const rows = page.getByRole("menu", { name: "6 working", exact: true }).getByRole("menuitem")
+    await expect(rows).toHaveText([
+      /^Explore\s*Plan the migration$/,
+      /^General\s*Search callers$/,
+      /^Explore\s*Read call sites$/,
+      /^Build\s*Draft the notes$/,
+      /^Explore\s*Collect references$/,
+      /^Explore\s*Summarize findings$/,
+      /^Explore\s*Review earlier work$/,
+      /^Explore\s*Index the docs$/,
+    ])
+
+    // Each level starts one step further in than the subagent that started it.
+    const starts = await rows.evaluateAll((items) =>
+      items.map((item) => item.querySelector("svg")!.getBoundingClientRect().left),
+    )
+
+    expect(starts[1]).toBeGreaterThan(starts[0]!)
+    expect(starts[2]).toBeGreaterThan(starts[1]!)
+    expect(starts.slice(3)).toEqual([starts[0], starts[1], starts[0], starts[0], starts[1]])
+
+    // A finished subagent, still listed as background work or not, only keeps the work it started in place.
+    for (const finished of [rows.nth(3), rows.nth(6)]) {
+      await finished.hover()
+      await expect(finished.locator('[data-component="session-progress-indicator-v2"]')).toHaveCount(0)
+      await expect(finished.getByRole("button")).toHaveCount(0)
+    }
+
+    const interrupt = page.waitForRequest(
+      (request) =>
+        request.method() === "POST" && new URL(request.url()).pathname === `/api/session/${grandchildID}/interrupt`,
+    )
+
+    await rows.nth(1).hover()
+    await rows.nth(1).getByRole("button", { name: "Interrupt subagent", exact: true }).click()
+    await interrupt
+
+    await rows.nth(2).click()
+    await expect(page).toHaveURL(new RegExp(`/session/${started[1]!.id}$`))
+  })
+
+  test("lists the root's running subagents from a grandchild view", async ({ page }) => {
+    const childID = "ses_tree_child"
+    const grandchildID = "ses_tree_grandchild"
+    const siblingID = "ses_tree_sibling"
+
+    await setupTimeline(page, {
+      sessionMessages: [
+        user,
+        {
+          id: "msg_tree",
+          type: "assistant",
+          agent: "build",
+          model: { id: "model", providerID: "provider" },
+          content: [
+            {
+              type: "tool",
+              id: "call_tree_child",
+              name: "subagent",
+              state: {
+                status: "running",
+                input: { description: "Plan the migration", agent: "explore" },
+                metadata: { sessionID: childID },
+              },
+              time: { created: 3 },
+            },
+            {
+              type: "tool",
+              id: "call_tree_sibling",
+              name: "subagent",
+              state: {
+                status: "running",
+                input: { description: "Draft the notes", agent: "build" },
+                metadata: { sessionID: siblingID },
+              },
+              time: { created: 4 },
+            },
+          ],
+          time: { created: 2 },
+        },
+      ],
+      sessions: [
+        session(),
+        session({ id: childID, parentID: sessionID, title: "Plan the migration", agent: "explore" }),
+        session({ id: grandchildID, parentID: childID, title: "Search callers", agent: "general" }),
+        session({ id: siblingID, parentID: sessionID, title: "Draft the notes", agent: "build" }),
+      ],
+      sessionStatus: Object.fromEntries(
+        [sessionID, childID, grandchildID, siblingID].map((id) => [id, { type: "busy" }]),
+      ),
+    })
+
+    await page.goto(sessionHref(grandchildID))
+
+    // The menu is rooted at the tree's root, so the grandchild view lists the root's other running
+    // subagent alongside the viewed session's own parent chain.
+    const trigger = page.locator("[data-session-title]").getByRole("button", { name: "+2 working", exact: true })
+    await expect(trigger).toBeVisible()
+    await trigger.click()
+    const rows = page.getByRole("menu", { name: "+2 working", exact: true }).getByRole("menuitem")
+    await expect(rows).toHaveText([
+      /^Explore\s*Plan the migration$/,
+      /^General\s*Search callers$/,
+      /^Build\s*Draft the notes$/,
+    ])
+
+    await rows.nth(2).click()
+    await expect(page).toHaveURL(new RegExp(`/session/${siblingID}$`))
   })
 })
 

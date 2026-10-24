@@ -18,12 +18,15 @@ import { KV } from "@opencode/core/kv"
 import { Location } from "@opencode/core/location"
 import { ManagedPolicy } from "@opencode/core/managed-policy"
 import { Mcp } from "@opencode/core/mcp/index"
+import { Messaging } from "@opencode/core/messaging"
+import { MessagingEmbedding } from "@opencode/core/messaging/embedding"
 import { Model } from "@opencode/core/model"
 import { Npm } from "@opencode/util/npm"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { Provider } from "@opencode/core/provider"
 import { Session } from "@opencode/core/session"
+import { SessionStore } from "@opencode/core/session/store"
 import { PersistentPty } from "@opencode/core/persistent-pty"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
@@ -96,7 +99,10 @@ export const makePluginTestLayer = (permission = permissionLayer) =>
       KV.node,
       ManagedPolicy.node,
       Mcp.node,
+      Messaging.node,
+      MessagingEmbedding.node,
       Session.node,
+      SessionStore.node,
       PersistentPty.node,
       LocationServiceMap.node,
       Permission.node,

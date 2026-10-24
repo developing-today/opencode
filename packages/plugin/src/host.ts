@@ -23,8 +23,14 @@ export function resolve(target: Target): Entrypoints {
       try {
         return resolveModule(specifier, target.directory)
       } catch (error) {
+        // Not `instanceof Error`: under Bun, a failed resolution throws a
+        // ResolveMessage, which carries `code` but is not an Error subclass.
+        // Requiring Error made every missing optional entrypoint (e.g. a
+        // directory with no `server` file) throw instead of falling through to
+        // the next candidate, so plugins with only an index failed to load.
         if (
-          !(error instanceof Error) ||
+          typeof error !== "object" ||
+          error === null ||
           !("code" in error) ||
           ![
             "ENOENT",

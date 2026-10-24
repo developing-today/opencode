@@ -9,6 +9,7 @@ import { Agent } from "@opencode/schema/agent"
 import { Config } from "@opencode/schema/config"
 import { Event } from "@opencode/schema/event"
 import { Location } from "@opencode/schema/location"
+import { Messaging } from "@opencode/schema/messaging"
 import { Model } from "@opencode/schema/model"
 import { Project } from "@opencode/schema/project"
 import { Provider } from "@opencode/schema/provider"
@@ -34,6 +35,7 @@ test("re-exports canonical contracts directly from Schema", () => {
   expect(SDK.Agent).toBe(Agent)
   expect(SDK.Config).toBe(Config)
   expect(SDK.Event).toBe(Event)
+  expect(SDK.Messaging).toBe(Messaging)
   expect(SDK.Model).toBe(Model)
   expect(SDK.WebSearch).toBe(WebSearch)
   expect(SDK.Session).toBe(Session)
@@ -50,6 +52,7 @@ test("re-exports canonical contracts directly from Schema", () => {
     "FileSystem",
     "Integration",
     "Location",
+    "Messaging",
     "Model",
     "OpenCode",
     "Permission",

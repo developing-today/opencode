@@ -1,8 +1,7 @@
 import type { PermissionOption, SessionUpdate } from "@agentclientprotocol/sdk"
-import type { OpenCodeClient, OpenCodeEvent } from "@opencode/client/effect"
+import type { OpenCodeClient } from "@opencode/client/effect"
 import { FileDiff } from "@opencode/schema/file-diff"
 import type { Permission } from "@opencode/schema/permission"
-import type { Session } from "@opencode/schema/session"
 import { Patch } from "@opencode/util/patch"
 import { applyPatch, parsePatch, reversePatch, structuredPatch, type StructuredPatch } from "diff"
 import { Effect, Option, Schema } from "effect"
@@ -21,18 +20,18 @@ import {
   type ToolInput,
 } from "./tool"
 
-type PermissionEvent = Extract<OpenCodeEvent, { type: "permission.asked" }>
 type Tool = { readonly id: string; readonly name: string; readonly input: ToolInput }
 type Preview = ReturnType<typeof diff>
 
 type Input = {
   readonly client: OpenCodeClient
   readonly connection: ACPConnection.Interface
-  readonly event: PermissionEvent
-  readonly sessionID: Session.ID
+  readonly request: Permission.Request
   readonly clientSessionID: string
   readonly cwd: string
   readonly tool?: Tool
+  /** The tool call this request came from, when the client received it. */
+  readonly toolCall?: string
   readonly child?: ACPChild.Session
 }
 
@@ -45,14 +44,14 @@ const options: PermissionOption[] = [
 const decodeFiles = Schema.decodeUnknownOption(Schema.Array(FileDiff.Info))
 
 export const ask = Effect.fnUntraced(function* (input: Input) {
-  const toolName = input.tool?.name ?? input.event.data.action
-  const toolInput = input.tool?.input ?? input.event.data.metadata ?? {}
-  const previews = yield* permissionPreviews(toolName, toolInput, input.event.data.metadata, input.cwd).pipe(
+  const toolName = input.tool?.name ?? input.request.action
+  const toolInput = input.tool?.input ?? input.request.metadata ?? {}
+  const previews = yield* permissionPreviews(toolName, toolInput, input.request.metadata, input.cwd).pipe(
     Effect.orElseSucceed((): Preview[] => []),
   )
   const title = permissionTitle(toolName, toolInput, previews)
   const toolCall = pendingToolCall({
-    toolCallId: ACPChild.toolCallID(input.child, input.tool?.id ?? input.event.data.id),
+    toolCallId: ACPChild.toolCallID(input.child, input.toolCall ?? input.request.id),
     toolName,
     state: { input: toolInput, title: title ? ACPChild.prefixTitle(input.child, title) : input.child?.title },
     cwd: input.cwd,
@@ -63,7 +62,7 @@ export const ask = Effect.fnUntraced(function* (input: Input) {
       ...toolCall,
       name: input.tool?.name,
       rawInput: input.tool ? toolCall.rawInput : undefined,
-      locations: permissionLocations(toolName, toolInput, input.event.data, input.cwd),
+      locations: permissionLocations(toolName, toolInput, input.request, input.cwd),
       ...(previews.length > 0 ? { content: previews } : {}),
       ...(input.child ? { _meta: ACPChild.meta(input.child) } : {}),
     },
@@ -74,10 +73,12 @@ export const ask = Effect.fnUntraced(function* (input: Input) {
 })
 
 export function respond(input: Input, decision: Permission.Reply) {
-  return input.client.permission.reply({ sessionID: input.sessionID, requestID: input.event.data.id, decision }).pipe(
-    Effect.catchTag("PermissionNotFoundError", () => Effect.void),
-    Effect.catch(ACPClient.classify),
-  )
+  return input.client.permission
+    .reply({ sessionID: input.request.sessionID, requestID: input.request.id, decision })
+    .pipe(
+      Effect.catchTag("PermissionNotFoundError", () => Effect.void),
+      Effect.catch(ACPClient.classify),
+    )
 }
 
 export const withCompletedDiffs = Effect.fnUntraced(function* (
@@ -187,7 +188,7 @@ function permissionTitle(toolName: string, input: ToolInput, previews: ReadonlyA
   }
 }
 
-function permissionLocations(toolName: string, input: ToolInput, ask: PermissionEvent["data"], cwd: string) {
+function permissionLocations(toolName: string, input: ToolInput, ask: Permission.Request, cwd: string) {
   const locations = toLocations(toolName, input, cwd)
   if (locations.length > 0 || !PathActions.has(ask.action)) return locations
   const paths = ask.resources.flatMap((resource) => {

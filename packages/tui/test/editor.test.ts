@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { normalizePromptContent, openEditor } from "../src/editor"
+import { normalizePromptContent, openEditor, parseEditorPort } from "../src/editor"
 
 const editor = process.env.EDITOR
 const visual = process.env.VISUAL
@@ -37,6 +37,19 @@ test("says which variable to set when no external editor is configured", async (
 
   await expect(openEditor({ value: "original", renderer: renderer as never })).rejects.toThrow("$EDITOR")
   expect(suspended).toBe(false)
+})
+
+test("parseEditorPort accepts only canonical decimal ports in range", () => {
+  expect(parseEditorPort("8080")).toBe(8080)
+  expect(parseEditorPort("1")).toBe(1)
+  expect(parseEditorPort("65535")).toBe(65535)
+  expect(parseEditorPort("8080abc")).toBeUndefined()
+  expect(parseEditorPort("8080.9")).toBeUndefined()
+  expect(parseEditorPort("+8080")).toBeUndefined()
+  expect(parseEditorPort(" 8080")).toBeUndefined()
+  expect(parseEditorPort("")).toBeUndefined()
+  expect(parseEditorPort("0")).toBeUndefined()
+  expect(parseEditorPort("65536")).toBeUndefined()
 })
 
 test("normalizes a single trailing editor newline for one-line prompts", () => {

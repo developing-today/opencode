@@ -324,6 +324,51 @@ it.effect("maps package-specific AI SDK provider option keys", () =>
   }),
 )
 
+it.effect("forwards the request prompt cache key to Copilot provider options only", () =>
+  Effect.gen(function* () {
+    const aisdk = yield* AISDK.Service
+    yield* aisdk.hook.sdk((event) => {
+      event.sdk = { languageModel: () => ({ provider: event.model.providerID }) }
+    })
+
+    const copilot = yield* aisdk.model(model("@ai-sdk/github-copilot", { reasoningEffort: "high" }))
+    const prepared = yield* compileRequest(
+      LLM.request({ model: copilot, prompt: "Hello", promptCacheKey: "session-123" }),
+    )
+    expect(prepared.body.providerOptions).toEqual({
+      copilot: { reasoningEffort: "high", promptCacheKey: "session-123" },
+    })
+
+    // An explicit provider-option key wins over the request's session key.
+    const explicit = yield* compileRequest(
+      LLM.request({
+        model: copilot,
+        prompt: "Hello",
+        promptCacheKey: "session-123",
+        providerOptions: { promptCacheKey: "explicit-key" },
+      }),
+    )
+    expect(explicit.body.providerOptions).toEqual({
+      copilot: { reasoningEffort: "high", promptCacheKey: "explicit-key" },
+    })
+
+    // Caching disabled for the request suppresses the key, matching the native protocols.
+    const uncached = yield* compileRequest(
+      LLM.request({ model: copilot, prompt: "Hello", promptCacheKey: "session-123", cache: "none" }),
+    )
+    expect(uncached.body.providerOptions).toEqual({ copilot: { reasoningEffort: "high" } })
+
+    // Other AI SDK packages keep their current options unchanged.
+    const openai = yield* aisdk.model(model("@ai-sdk/openai", { reasoningEffort: "high" }))
+    const openaiPrepared = yield* compileRequest(
+      LLM.request({ model: openai, prompt: "Hello", promptCacheKey: "session-123" }),
+    )
+    expect(openaiPrepared.body.providerOptions).toEqual({
+      openai: { reasoningEffort: "high", forceReasoning: true },
+    })
+  }),
+)
+
 it.effect("forces reasoning and projects both Azure AI SDK namespaces", () =>
   Effect.gen(function* () {
     const aisdk = yield* AISDK.Service

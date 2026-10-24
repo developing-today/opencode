@@ -12135,6 +12135,1202 @@
         }
       }
     },
+    "/api/messaging/message": {
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.send",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.SendResult"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Write a message to a topic or directly to a session. A soft write limit refusal fails with a conflict unless force is set.",
+        "summary": "Send message",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.SendInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/messaging/user": {
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.user",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.SendResult"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Send a message from the acting session to the person, optionally showing it to the root session.",
+        "summary": "Send user message",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.UserInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/messaging/query": {
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.query",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.QueryResult"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Read or search messages visible to the viewer across topics.",
+        "summary": "Query messages",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.Query"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/messaging/inspect": {
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.inspect",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.Message"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Return one message with its delete and restore operations.",
+        "summary": "Inspect message",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.InspectInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/messaging/visibility": {
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.visibility",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.VisibilityResult"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Hide or restore messages, or a topic's default visibility, for the given viewers.",
+        "summary": "Change message visibility",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.VisibilityInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/messaging/settings": {
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.settings",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.Topic"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Change a topic's write mode, limited writers, or description.",
+        "summary": "Update topic settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.SettingsInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/messaging/subscribe": {
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.subscribe",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.Topic"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Subscribe a session to a topic with a delivery mode, or remove its subscription.",
+        "summary": "Subscribe to topic",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.SubscribeInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/messaging/topic": {
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.topic",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.Topic"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Return one topic's settings, write policy, and activity.",
+        "summary": "Get topic",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.TopicInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/messaging/topics": {
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.topics",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.TopicList"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "List topics filtered by name, participant session, role, kind, or search text.",
+        "summary": "List topics",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.TopicsInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/messaging/chain": {
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.chain",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.Chain"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Return a session followed by its parents up to the root session.",
+        "summary": "Get session chain",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.ChainInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/messaging/sessions": {
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.sessions",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.SessionList"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "List sessions across projects filtered by family, location, agent, activity, or time.",
+        "summary": "List sessions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.SessionsInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/messaging/log": {
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.log",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.Log"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Read, grep, or search the transcripts of one or more sessions.",
+        "summary": "Read session logs",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.LogInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/messaging/vars": {
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.vars",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.Vars"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "List topic presets and template variables, optionally with values or a rendered template.",
+        "summary": "List template variables",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.VarsInput"
+              }
+            }
+          },
+          "required": true
+        }
+      },
+      "put": {
+        "tags": ["messaging"],
+        "operationId": "messaging.setVar",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "204": {
+            "description": "<No Content>"
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MessagingNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagingNotFoundErrorEncoded"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ConflictError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Set or remove a custom template variable for a session scope or globally.",
+        "summary": "Set template variable",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.SetVarInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/messaging/model": {
+      "get": {
+        "tags": ["messaging"],
+        "operationId": "messaging.model.status",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.ModelStatus"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Return the local embedding model's state, download progress, and available tiers.",
+        "summary": "Get embedding model status"
+      },
+      "post": {
+        "tags": ["messaging"],
+        "operationId": "messaging.model.configure",
+        "parameters": [],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Messaging.ModelStatus"
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UnauthorizedError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+                }
+              }
+            }
+          }
+        },
+        "description": "Select the embedding model tier or source, optionally start it now, and return its status.",
+        "summary": "Configure embedding model",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Messaging.ModelInput"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
     "/api/vcs/init": {
       "post": {
         "tags": ["vcs"],
@@ -14088,6 +15284,68 @@
               }
             ]
           },
+          "messaging": {
+            "type": "object",
+            "properties": {
+              "presets": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "vars": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "session_start": {
+                "type": "string"
+              },
+              "delivery": {
+                "type": "object",
+                "properties": {
+                  "direct": {
+                    "type": "string",
+                    "enum": ["none", "inbox", "wake"]
+                  },
+                  "root": {
+                    "type": "string",
+                    "enum": ["none", "inbox", "wake"]
+                  },
+                  "user": {
+                    "type": "string",
+                    "enum": ["hidden", "visible", "wake"]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "search": {
+                "type": "object",
+                "properties": {
+                  "match": {
+                    "type": "string",
+                    "enum": ["exact", "regex", "fuzzy", "semantic", "hybrid", "advanced"]
+                  },
+                  "model": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "embedding": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Config.Messaging.EmbeddingEncoded"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
           "providers": {
             "type": "object",
             "additionalProperties": {
@@ -14101,6 +15359,10 @@
                 "type": "boolean"
               },
               "subagent_depth": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "shell_timeout": {
                 "type": "integer",
                 "minimum": 0
               },
@@ -14128,27 +15390,37 @@
               "model_routes": {
                 "$ref": "#/components/schemas/Config.ModelRoutes"
               },
+              "model_route_schedules": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Config.ModelRoute.GlobalScheduleEncoded"
+                }
+              },
               "model_route_tuning": {
                 "type": "object",
                 "properties": {
                   "enabled": {
-                    "type": "boolean"
+                    "type": "boolean",
+                    "description": "Review routing history on a schedule and put the resulting adjustments in force without asking, for every route that uses rules as well as those at adaptive or higher. They only lower a target's share or skip it, and lapse on their own. Defaults to false."
                   },
                   "intervalMinutes": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
-                    "maximum": 1440
+                    "maximum": 1440,
+                    "description": "Minutes between reviews. Defaults to 15."
                   },
                   "windowHours": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
-                    "maximum": 336
+                    "maximum": 336,
+                    "description": "How much history each review looks at. Defaults to 24."
                   },
                   "notes": {
                     "type": "array",
                     "items": {
                       "type": "string"
-                    }
+                    },
+                    "description": "What the history cannot say, one note per line as `match: text`, where `match` is a case-insensitive substring of provider/model. A text that states when a limit returns, such as `reset at 2026-01-01` or `back in 3 hours`, skips the matching targets until then. The rest is shown to the agent by route_stats."
                   }
                 },
                 "additionalProperties": false
@@ -14157,7 +15429,8 @@
                 "type": "object",
                 "properties": {
                   "captureErrorBodies": {
-                    "type": "boolean"
+                    "type": "boolean",
+                    "description": "Keep the first 2 KB of a failed request's error body in the routing history, with credentials redacted. A provider body can echo the request, so this is off by default. Defaults to false."
                   }
                 },
                 "additionalProperties": false
@@ -14197,6 +15470,63 @@
           }
         },
         "required": ["command"],
+        "additionalProperties": false
+      },
+      "Config.Messaging.EmbeddingEncoded": {
+        "type": "object",
+        "properties": {
+          "tier": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "pooling": {
+            "type": "string",
+            "enum": ["last", "mean", "cls"]
+          },
+          "query": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "autostart": {
+            "type": "boolean"
+          },
+          "gpu_layers": {
+            "type": "integer"
+          },
+          "threads": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "remote": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": "Base URL of an OpenAI-compatible API, for example https://api.openai.com/v1"
+              },
+              "model": {
+                "type": "string",
+                "description": "Embedding model name"
+              },
+              "key": {
+                "type": "string"
+              },
+              "dimensions": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": ["url", "model"],
+            "additionalProperties": false
+          }
+        },
         "additionalProperties": false
       },
       "Config.Model.Capabilities": {
@@ -14455,9 +15785,64 @@
           "softLimit": {
             "type": "number",
             "minimum": 0.125,
-            "maximum": 1
+            "maximum": 1,
+            "description": "Fraction of an allowance at which the target is passed over. Defaults to 0.9."
           }
         },
+        "additionalProperties": false
+      },
+      "Config.ModelRoute.GlobalScheduleEncoded": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Provider IDs the change covers, compared case-insensitively."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Model ID patterns the change covers, `*` allowed, e.g. [\"*flash*\"]."
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Full `provider/model` patterns, `*` allowed, e.g. [\"deepseek/*\", \"openai/gpt-6-*\"]."
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Route IDs the change is limited to, including nested ones. Empty or unset means every route."
+          },
+          "when": {
+            "$ref": "#/components/schemas/Config.ModelRoute.WindowEncoded"
+          },
+          "factor": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Multiplies the target's configured weight while the window is active."
+          },
+          "weight": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Sets the target's weight outright while the window is active, instead of scaling it."
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": ["when"],
         "additionalProperties": false
       },
       "Config.ModelRoute.RouteEncoded": {
@@ -14487,36 +15872,43 @@
                     "type": "boolean",
                     "enum": [false]
                   }
-                ]
+                ],
+                "description": "Fail over if the target produces no response output within this many milliseconds. Defaults to 10000."
               },
               "maxResponseTimeMs": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 3600000
+                "maximum": 3600000,
+                "description": "Count a completed response as slow when it exceeds this many milliseconds, measured to the end of the model's response. Tools that the step runs afterwards do not count."
               },
               "minOutputTokensPerSecond": {
                 "type": "number",
-                "exclusiveMinimum": 0
+                "exclusiveMinimum": 0,
+                "description": "Count a completed response as slow when output throughput, from the model's first output to the end of its response, falls below this rate."
               },
               "sampleWindow": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 50
+                "maximum": 50,
+                "description": "Number of completed requests in the rolling performance window. Defaults to 5."
               },
               "slowThreshold": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 50
+                "maximum": 50,
+                "description": "Slow requests in the window that mark a target degraded. Defaults to 3."
               },
               "cooldownMs": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 3600000
+                "maximum": 3600000,
+                "description": "How long a failed or degraded target is skipped. Defaults to 60000."
               },
               "quotaCooldownMs": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 3600000
+                "maximum": 3600000,
+                "description": "How long a target is skipped after the provider reports an exhausted quota without saying when it resets. A reported retry-after always wins. Defaults to 900000."
               }
             },
             "additionalProperties": false
@@ -14525,17 +15917,20 @@
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/Config.ModelRoute.BudgetEncoded"
-            }
+            },
+            "description": "Allowances keyed by target model reference, e.g. { \"openai/gpt-6-luna\": { \"requestsPerDay\": 500, \"tokensPerMinute\": 200000 } }. Usage is counted from every request OpenCode makes to the target and is restored from history after a restart."
           },
           "hedgeAfterMs": {
             "type": "integer",
             "exclusiveMinimum": 0,
-            "maximum": 3600000
+            "maximum": 3600000,
+            "description": "Send the same request to the next target when the current one has produced no output after this many milliseconds. The first to answer wins and the other is cancelled; nothing is shown or run before a winner is known. Costs a duplicate request whenever the first target is slow. Off by default."
           },
           "attempts": {
             "type": "integer",
             "exclusiveMinimum": 0,
-            "maximum": 50
+            "maximum": 50,
+            "description": "Total requests to make against one target before failing over to the next, so 2 allows one retry. Defaults to 2. Retries only happen before any response output, so no tool call ever runs twice."
           },
           "autonomy": {
             "type": "string",
@@ -14551,9 +15946,50 @@
               "type": "number",
               "exclusiveMinimum": 0
             }
+          },
+          "schedules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Config.ModelRoute.ScheduleEncoded"
+            }
           }
         },
         "required": ["targets"],
+        "additionalProperties": false
+      },
+      "Config.ModelRoute.ScheduleEncoded": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Name for the schedule, shown in decisions and editors."
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Target references this change covers, `*` allowed, e.g. [\"deepseek/*\", \"openai/gpt-6-*\"]. Empty or unset means every target of the route."
+          },
+          "when": {
+            "$ref": "#/components/schemas/Config.ModelRoute.WindowEncoded"
+          },
+          "factor": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Multiplies the target's configured weight while the window is active. 0.8 makes a weight of 2 become 1.6; 1.2 makes it 2.4. Exactly one of factor and weight is expected."
+          },
+          "weight": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Sets the target's weight outright while the window is active, instead of scaling it. Applied before any user preference for the target."
+          },
+          "note": {
+            "type": "string",
+            "description": "Why the schedule exists, kept for review."
+          }
+        },
+        "required": ["when"],
         "additionalProperties": false
       },
       "Config.ModelRoute.Target": {
@@ -14585,6 +16021,88 @@
             "additionalProperties": false
           }
         ]
+      },
+      "Config.ModelRoute.WindowEncoded": {
+        "type": "object",
+        "properties": {
+          "daysOfWeek": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "sun",
+                    "sunday",
+                    "mon",
+                    "monday",
+                    "tue",
+                    "tuesday",
+                    "tues",
+                    "wed",
+                    "wednesday",
+                    "thu",
+                    "thursday",
+                    "thur",
+                    "thurs",
+                    "fri",
+                    "friday",
+                    "sat",
+                    "saturday"
+                  ]
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 6
+                }
+              ],
+              "description": "A weekday as a name or 0 (Sunday) to 6 (Saturday)."
+            },
+            "description": "Weekdays the window is active on. Empty or unset means every day."
+          },
+          "daysOfMonth": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "enum": [-1]
+                },
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 31
+                }
+              ],
+              "description": "A day of the month, 1 to 31, or -1 for the last day of the month."
+            },
+            "description": "Days of the month the window is active on. Empty or unset means every day."
+          },
+          "start": {
+            "type": "string",
+            "description": "Local start of the daily window as \"HH:mm\". Unset means from the start of the day. A start later than the end runs past midnight into the following morning."
+          },
+          "end": {
+            "type": "string",
+            "description": "Local end of the daily window as \"HH:mm\", exclusive. Unset means to the end of the day."
+          },
+          "timezone": {
+            "type": "string",
+            "description": "IANA timezone such as \"America/Chicago\". Unset means the host's local timezone."
+          },
+          "from": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Epoch milliseconds before which the window never applies."
+          },
+          "until": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Epoch milliseconds after which the window never applies."
+          }
+        },
+        "additionalProperties": false
       },
       "Config.ModelRoutes": {
         "type": "object",
@@ -16925,6 +18443,1447 @@
           }
         },
         "required": ["_tag", "sessionID", "messageID", "message"],
+        "additionalProperties": false
+      },
+      "Messaging.Chain": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.SessionNode"
+            },
+            "description": "The session first, then each parent up to the root"
+          },
+          "root": {
+            "type": "string"
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": ["chain", "root", "depth"],
+        "additionalProperties": false
+      },
+      "Messaging.ChainInput": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "depth": {
+            "type": "string",
+            "enum": ["self", "parent", "all"]
+          },
+          "detail": {
+            "type": "string",
+            "enum": ["brief", "full"]
+          },
+          "expand": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": ["session"],
+        "additionalProperties": false
+      },
+      "Messaging.ChildWindow": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "first": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.SessionBrief"
+            }
+          },
+          "latest": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.SessionBrief"
+            }
+          }
+        },
+        "required": ["total", "first", "latest"],
+        "additionalProperties": false
+      },
+      "Messaging.Delivered": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "delivery": {
+            "$ref": "#/components/schemas/Messaging.Delivery"
+          }
+        },
+        "required": ["session", "delivery"],
+        "additionalProperties": false
+      },
+      "Messaging.Delivery": {
+        "type": "string",
+        "enum": ["none", "inbox", "wake"],
+        "description": "none: store only (read on demand). inbox: queue a notice into the session without starting it. wake: queue it and start or steer the session."
+      },
+      "Messaging.HiddenMode": {
+        "type": "string",
+        "enum": ["exclude", "include", "only"]
+      },
+      "Messaging.InspectInput": {
+        "type": "object",
+        "properties": {
+          "as": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": ["topic", "seq"],
+        "additionalProperties": false
+      },
+      "Messaging.Log": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.LogEntry"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "more": {
+            "type": "boolean"
+          },
+          "match": {
+            "$ref": "#/components/schemas/Messaging.MatchMode"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": ["entries", "total", "more"],
+        "additionalProperties": false
+      },
+      "Messaging.LogEntry": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "part": {
+            "$ref": "#/components/schemas/Messaging.LogPart"
+          },
+          "time": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "match": {
+            "type": "boolean"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          }
+        },
+        "required": ["session", "message", "index", "part", "time", "text"],
+        "additionalProperties": false
+      },
+      "Messaging.LogInput": {
+        "type": "object",
+        "properties": {
+          "as": {
+            "type": "string"
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Session-set expressions; +descendants covers a tree"
+          },
+          "op": {
+            "type": "string",
+            "enum": ["head", "tail", "grep", "search", "pull"]
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.LogPart"
+            }
+          },
+          "query": {
+            "type": "string"
+          },
+          "match": {
+            "$ref": "#/components/schemas/Messaging.MatchMode"
+          },
+          "context": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["all", "context"]
+          },
+          "since": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "chars": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": ["sessions"],
+        "additionalProperties": false
+      },
+      "Messaging.LogPart": {
+        "type": "string",
+        "enum": [
+          "user",
+          "output",
+          "thinking",
+          "tools",
+          "results",
+          "system",
+          "synthetic",
+          "shell",
+          "events",
+          "compaction"
+        ]
+      },
+      "Messaging.MatchMode": {
+        "type": "string",
+        "enum": ["exact", "regex", "fuzzy", "semantic", "hybrid", "advanced"],
+        "description": "exact substring, regex, fuzzy (typo tolerant), semantic (embedding similarity), hybrid (fuzzy + semantic), advanced (hybrid reranked by an LLM)"
+      },
+      "Messaging.Message": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "topic": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "kind": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "writer": {
+            "type": "string"
+          },
+          "time": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "data": {
+            "type": "string"
+          },
+          "meta": {
+            "type": "object"
+          },
+          "reply": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Op"
+            }
+          }
+        },
+        "required": ["id", "topic", "seq", "kind", "type", "writer", "time", "data"],
+        "additionalProperties": false
+      },
+      "Messaging.ModelInput": {
+        "type": "object",
+        "properties": {
+          "tier": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "start": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Messaging.ModelProgress": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "received": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": ["file", "received"],
+        "additionalProperties": false
+      },
+      "Messaging.ModelStatus": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": ["off", "unavailable", "pending", "downloading", "starting", "ready", "error"]
+          },
+          "tier": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "dimensions": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "path": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "remote": {
+            "type": "boolean"
+          },
+          "progress": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.ModelProgress"
+            }
+          },
+          "error": {
+            "type": "string"
+          },
+          "indexed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pending": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "string"
+                },
+                "hardware": {
+                  "type": "string"
+                },
+                "available": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["name", "model", "size", "hardware", "available"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["state"],
+        "additionalProperties": false
+      },
+      "Messaging.Op": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "kind": {
+            "type": "string"
+          },
+          "writer": {
+            "type": "string"
+          },
+          "time": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "viewers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Sessions affected; * means everyone"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": ["seq", "kind", "writer", "time", "viewers"],
+        "additionalProperties": false
+      },
+      "Messaging.Participant": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "reads": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "writes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "first": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "last": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          }
+        },
+        "required": ["session", "reads", "writes"],
+        "additionalProperties": false
+      },
+      "Messaging.Preset": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "template": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "policy": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": ["name", "template", "description", "policy"],
+        "additionalProperties": false
+      },
+      "Messaging.Query": {
+        "type": "object",
+        "properties": {
+          "as": {
+            "type": "string"
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "query": {
+            "type": "string"
+          },
+          "match": {
+            "$ref": "#/components/schemas/Messaging.MatchMode"
+          },
+          "from": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "since": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          },
+          "after": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "before": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "hidden": {
+            "$ref": "#/components/schemas/Messaging.HiddenMode"
+          },
+          "hiddenBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hiddenFrom": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hiddenSince": {
+            "type": "string"
+          },
+          "hiddenUntil": {
+            "type": "string"
+          },
+          "unread": {
+            "type": "boolean"
+          },
+          "inbox": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "order": {
+            "type": "string",
+            "enum": ["asc", "desc"]
+          },
+          "markRead": {
+            "type": "boolean"
+          },
+          "wait": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "Messaging.QueryResult": {
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Message"
+            }
+          },
+          "more": {
+            "type": "boolean"
+          },
+          "match": {
+            "$ref": "#/components/schemas/Messaging.MatchMode"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": ["messages", "more"],
+        "additionalProperties": false
+      },
+      "Messaging.SendInput": {
+        "type": "object",
+        "properties": {
+          "as": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "meta": {
+            "type": "object"
+          },
+          "reply": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "force": {
+            "type": "boolean"
+          },
+          "deliver": {
+            "$ref": "#/components/schemas/Messaging.Delivery"
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false
+      },
+      "Messaging.SendResult": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "forced": {
+            "type": "boolean"
+          },
+          "delivered": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Delivered"
+            }
+          }
+        },
+        "required": ["topic", "seq", "created", "delivered"],
+        "additionalProperties": false
+      },
+      "Messaging.SessionBrief": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["running", "idle"]
+          },
+          "created": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "updated": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          }
+        },
+        "required": ["id", "status"],
+        "additionalProperties": false
+      },
+      "Messaging.SessionList": {
+        "type": "object",
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.SessionNode"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": ["sessions", "total"],
+        "additionalProperties": false
+      },
+      "Messaging.SessionNode": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "parentID": {
+            "type": "string"
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Distance from the root session"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["running", "idle"]
+          },
+          "project": {
+            "type": "string"
+          },
+          "original": {
+            "type": "string"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "updated": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "children": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "descendants": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "messages": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "topics": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "childWindow": {
+            "$ref": "#/components/schemas/Messaging.ChildWindow"
+          }
+        },
+        "required": ["id", "depth", "directory", "status"],
+        "additionalProperties": false
+      },
+      "Messaging.SessionsInput": {
+        "type": "object",
+        "properties": {
+          "as": {
+            "type": "string"
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "parent": {
+            "type": "string"
+          },
+          "ancestor": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "search": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "since": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          },
+          "sort": {
+            "type": "string",
+            "enum": ["created", "updated"]
+          },
+          "order": {
+            "type": "string",
+            "enum": ["asc", "desc"]
+          },
+          "limit": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "detail": {
+            "type": "string",
+            "enum": ["brief", "full"]
+          },
+          "expand": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "Messaging.SetVarInput": {
+        "type": "object",
+        "properties": {
+          "as": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+      },
+      "Messaging.SettingsInput": {
+        "type": "object",
+        "properties": {
+          "as": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/Messaging.WriteMode"
+          },
+          "writers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Writer"
+            }
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": ["topic"],
+        "additionalProperties": false
+      },
+      "Messaging.SubscribeInput": {
+        "type": "object",
+        "properties": {
+          "as": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "delivery": {
+            "$ref": "#/components/schemas/Messaging.Delivery"
+          },
+          "remove": {
+            "type": "boolean"
+          }
+        },
+        "required": ["as", "topic"],
+        "additionalProperties": false
+      },
+      "Messaging.Topic": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "exists": {
+            "type": "boolean",
+            "description": "Standard topics are listed before first use with exists: false"
+          },
+          "kind": {
+            "type": "string",
+            "description": "Standard kind (private, readonly, family, dm, ...) or custom"
+          },
+          "preset": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "creator": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/Messaging.WriteMode"
+          },
+          "writers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Writer"
+            },
+            "description": "Limited writers, when mode is limited"
+          },
+          "policy": {
+            "type": "string",
+            "description": "Effective write rule in words"
+          },
+          "messages": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Latest sequence number"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "last": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": ["Infinity", "-Infinity", "NaN"]
+              }
+            ]
+          },
+          "unread": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "subscribed": {
+            "$ref": "#/components/schemas/Messaging.Delivery"
+          },
+          "writersWindow": {
+            "$ref": "#/components/schemas/Messaging.Window"
+          },
+          "readersWindow": {
+            "$ref": "#/components/schemas/Messaging.Window_1"
+          },
+          "allowedWindow": {
+            "$ref": "#/components/schemas/Messaging.Window_2"
+          }
+        },
+        "required": ["name", "exists", "kind", "mode", "writers", "policy", "messages"],
+        "additionalProperties": false
+      },
+      "Messaging.TopicInput": {
+        "type": "object",
+        "properties": {
+          "as": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "expand": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": ["topic"],
+        "additionalProperties": false
+      },
+      "Messaging.TopicList": {
+        "type": "object",
+        "properties": {
+          "topics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Topic"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": ["topics", "total"],
+        "additionalProperties": false
+      },
+      "Messaging.TopicsInput": {
+        "type": "object",
+        "properties": {
+          "as": {
+            "type": "string"
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "role": {
+            "type": "string",
+            "enum": ["any", "reader", "writer", "subscriber"]
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "search": {
+            "type": "string"
+          },
+          "standard": {
+            "type": "boolean"
+          },
+          "sort": {
+            "type": "string",
+            "enum": ["created", "last"]
+          },
+          "order": {
+            "type": "string",
+            "enum": ["asc", "desc"]
+          },
+          "limit": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expand": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "Messaging.UserInput": {
+        "type": "object",
+        "properties": {
+          "as": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string",
+            "enum": ["hidden", "visible", "wake"]
+          }
+        },
+        "required": ["as", "text"],
+        "additionalProperties": false
+      },
+      "Messaging.Var": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["constant", "context", "time", "custom"]
+          },
+          "description": {
+            "type": "string"
+          },
+          "template": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": ["name", "kind", "description"],
+        "additionalProperties": false
+      },
+      "Messaging.Vars": {
+        "type": "object",
+        "properties": {
+          "presets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Preset"
+            }
+          },
+          "vars": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Var"
+            }
+          },
+          "rendered": {
+            "type": "string"
+          }
+        },
+        "required": ["presets", "vars"],
+        "additionalProperties": false
+      },
+      "Messaging.VarsInput": {
+        "type": "object",
+        "properties": {
+          "as": {
+            "type": "string"
+          },
+          "values": {
+            "type": "boolean"
+          },
+          "render": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Messaging.VisibilityInput": {
+        "type": "object",
+        "properties": {
+          "as": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": ["hide", "restore"]
+          },
+          "seqs": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          },
+          "for": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": ["topic", "action"],
+        "additionalProperties": false
+      },
+      "Messaging.VisibilityResult": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Sequence number of the recorded operation"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          },
+          "viewers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "default": {
+            "type": "boolean"
+          }
+        },
+        "required": ["topic", "seq", "targets", "viewers", "default"],
+        "additionalProperties": false
+      },
+      "Messaging.Window": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "first": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Participant"
+            }
+          },
+          "latest": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Participant"
+            }
+          }
+        },
+        "required": ["total", "first", "latest"],
+        "additionalProperties": false
+      },
+      "Messaging.Window_1": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "first": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Participant"
+            }
+          },
+          "latest": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Participant"
+            }
+          }
+        },
+        "required": ["total", "first", "latest"],
+        "additionalProperties": false
+      },
+      "Messaging.Window_2": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "first": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Participant"
+            }
+          },
+          "latest": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Messaging.Participant"
+            }
+          }
+        },
+        "required": ["total", "first", "latest"],
+        "additionalProperties": false
+      },
+      "Messaging.WriteMode": {
+        "type": "string",
+        "enum": ["open", "readonly", "limited"],
+        "description": "open: anyone writes. readonly: only the owner (and its ancestors) write. limited: only listed writers write."
+      },
+      "Messaging.Writer": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string",
+            "description": "Session ID or user"
+          },
+          "children": {
+            "type": "boolean"
+          },
+          "ancestors": {
+            "type": "boolean"
+          }
+        },
+        "required": ["session"],
+        "additionalProperties": false
+      },
+      "MessagingNotFoundErrorEncoded": {
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string",
+            "enum": ["MessagingNotFoundError"]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": ["_tag", "message"],
         "additionalProperties": false
       },
       "Model.CacheFormat": {
@@ -20326,6 +23285,9 @@
           "autoinvoke": {
             "type": "boolean"
           },
+          "vars": {
+            "type": "boolean"
+          },
           "path": {
             "$ref": "#/components/schemas/AbsolutePath"
           },
@@ -20831,6 +23793,10 @@
     {
       "name": "worktree",
       "description": "Project-based worktree management routes."
+    },
+    {
+      "name": "messaging",
+      "description": "Inter-session messaging: topics, messages, visibility, session chains, logs, and embeddings."
     },
     {
       "name": "vcs",

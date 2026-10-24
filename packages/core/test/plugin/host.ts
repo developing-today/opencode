@@ -107,6 +107,31 @@ export function host(overrides: Overrides = {}): Plugin.Context {
       transform: () => Effect.die("unused mcp.transform"),
       reload: () => Effect.die("unused mcp.reload"),
     },
+    messaging: overrides.messaging ?? {
+      send: () => Effect.die("unused messaging.send"),
+      user: () => Effect.die("unused messaging.user"),
+      query: () => Effect.die("unused messaging.query"),
+      inspect: () => Effect.die("unused messaging.inspect"),
+      visibility: () => Effect.die("unused messaging.visibility"),
+      settings: () => Effect.die("unused messaging.settings"),
+      subscribe: () => Effect.die("unused messaging.subscribe"),
+      topic: () => Effect.die("unused messaging.topic"),
+      topics: () => Effect.die("unused messaging.topics"),
+      chain: () => Effect.die("unused messaging.chain"),
+      sessions: () => Effect.die("unused messaging.sessions"),
+      log: () => Effect.die("unused messaging.log"),
+      vars: () => Effect.die("unused messaging.vars"),
+      setVar: () => Effect.die("unused messaging.setVar"),
+      model: {
+        status: () => Effect.die("unused messaging.model.status"),
+        configure: () => Effect.die("unused messaging.model.configure"),
+      },
+      kinds: {
+        register: () => Effect.die("unused messaging.kinds.register"),
+        list: () => Effect.die("unused messaging.kinds.list"),
+      },
+      write: () => Effect.die("unused messaging.write"),
+    },
     permission: overrides.permission ?? {
       hook: () => Effect.die("unused permission.hook"),
       list: () => Effect.die("unused permission.list"),
@@ -342,6 +367,7 @@ export function integrationHost(integration: Integration.Interface): Plugin.Cont
           },
           update: (id, update) => editor.update(Integration.ID.make(id), update),
           remove: (id) => editor.remove(Integration.ID.make(id)),
+          copy: (from, to) => editor.copy(Integration.ID.make(from), Integration.ID.make(to)),
           method: {
             list: (id) => editor.method.list(Integration.ID.make(id)),
             update: (input) => {

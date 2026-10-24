@@ -86,7 +86,8 @@ export type ToolDescription = {
   readonly signature: string
 }
 
-const defaultSearchLimit = 10
+// Each result carries a full signature, and the useful matches are nearly always the first few; `next` pages on.
+const defaultSearchLimit = 5
 const PositiveInt = Schema.Int.check(Schema.isGreaterThan(0))
 const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const SearchInput = Schema.Struct({
@@ -176,7 +177,7 @@ const describeTool = <R>(visible: VisibleTool<R>): ToolDescription => {
       // Joining the final fragments avoids retaining the rendering's intermediate string ropes in JSC.
       return (signature ??= [
         toolExpression(visible.path),
-        isEmptyInput(visible.tool) ? "()" : `(${inputTypeScript(visible.tool, true)})`,
+        isEmptyInput(visible.tool) ? "()" : `(${inputTypeScript(visible.tool, "dense")})`,
         `: Promise<${outputTypeScript(visible.tool, true)}>`,
       ].join(""))
     },
@@ -195,6 +196,8 @@ export type SearchEntry = {
   /** The path split into words, so `zones` matches `get_zones` as a word rather than as a substring of `timezones`. */
   readonly pathWords: ReadonlyArray<string>
   readonly searchText: string
+  /** searchText without namespace descriptions, which every tool of a namespace shares. */
+  readonly ownText: string
 }
 
 const tokenize = (query: string): Array<string> =>
@@ -213,23 +216,29 @@ const termForms = (term: string): Array<string> => {
 
 const rank = (entries: ReadonlyArray<SearchEntry>, query: string): Array<SearchEntry> => {
   const terms = tokenize(query).map(termForms)
-  return entries
-    .map((entry) => {
-      const path = entry.description.path.toLowerCase()
-      const description = entry.description.description.toLowerCase()
-      const score = terms.reduce(
-        (total, forms) =>
-          total +
-          (forms.some((form) => path === form || path.endsWith(`.${form}`)) ? 20 : 0) +
-          (forms.some((form) => entry.pathWords.includes(form)) ? 12 : 0) +
-          (forms.some((form) => path.includes(form)) ? 8 : 0) +
-          (forms.some((form) => description.includes(form)) ? 4 : 0) +
-          (forms.some((form) => entry.searchText.includes(form)) ? 2 : 0),
-        0,
-      )
-      return { entry, score }
-    })
-    .filter(({ score }) => terms.length === 0 || score > 0)
+  const scored = entries.map((entry) => {
+    const path = entry.description.path.toLowerCase()
+    const description = entry.description.description.toLowerCase()
+    const own = terms.reduce(
+      (total, forms) =>
+        total +
+        (forms.some((form) => path === form || path.endsWith(`.${form}`)) ? 20 : 0) +
+        (forms.some((form) => entry.pathWords.includes(form)) ? 12 : 0) +
+        (forms.some((form) => path.includes(form)) ? 8 : 0) +
+        (forms.some((form) => description.includes(form)) ? 4 : 0) +
+        (forms.some((form) => entry.ownText.includes(form)) ? 2 : 0),
+      0,
+    )
+    const shared = terms.filter(
+      (forms) =>
+        !forms.some((form) => entry.ownText.includes(form)) && forms.some((form) => entry.searchText.includes(form)),
+    ).length
+    return { entry, own, score: own + shared * 2 }
+  })
+  // A namespace description matches every tool in it, so it only finds tools when nothing matches on its own.
+  const owned = scored.some(({ own }) => own > 0)
+  return scored
+    .filter(({ own, score }) => terms.length === 0 || (owned ? own > 0 : score > 0))
     .sort(
       (left, right) =>
         right.score - left.score || compareText(left.entry.description.path, right.entry.description.path),
@@ -281,23 +290,27 @@ const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Tool => ({
 /** Exact callable signature of the built-in `search` function, for host-owned instructions. */
 export const searchSignature = (() => {
   const tool = makeSearchTool([])
-  return `search(${inputTypeScript(tool, true)}): ${outputTypeScript(tool, true)}`
+  return `search(${inputTypeScript(tool, "dense")}): ${outputTypeScript(tool, true)}`
 })()
 
-const toSearchEntry = <R>(visible: VisibleTool<R>): SearchEntry => ({
-  description: describeTool(visible),
-  pathWords: tokenize(visible.path),
-  searchText: [
+const toSearchEntry = <R>(visible: VisibleTool<R>): SearchEntry => {
+  const own = [
     visible.path,
     visible.tool.description,
-    ...visible.namespaces.flatMap((namespace) => (namespace.description === undefined ? [] : [namespace.description])),
     ...inputProperties(visible.tool).flatMap(({ name, description: property }) =>
       property === undefined ? [name] : [name, property],
     ),
   ]
-    .join("\n")
-    .toLowerCase(),
-})
+  const namespaces = visible.namespaces.flatMap((namespace) =>
+    namespace.description === undefined ? [] : [namespace.description],
+  )
+  return {
+    description: describeTool(visible),
+    pathWords: tokenize(visible.path),
+    searchText: [...own, ...namespaces].join("\n").toLowerCase(),
+    ownText: own.join("\n").toLowerCase(),
+  }
+}
 
 export const prepare = <R>(tools: Tools<R>): Prepared<R> => {
   const root = toolTrie(tools)

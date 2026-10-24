@@ -13,6 +13,7 @@ import { ConfigExperimental } from "./config/experimental.js"
 import { ConfigFormatter } from "./config/formatter.js"
 import { ConfigLSP } from "./config/lsp.js"
 import { ConfigMCP } from "./config/mcp.js"
+import { ConfigMessaging } from "./config/messaging.js"
 import { ConfigModel } from "./config/model.js"
 import { ConfigPlugin } from "./config/plugin.js"
 import { ConfigPolicy } from "./config/policy.js"
@@ -109,6 +110,9 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   }),
   warming: ConfigWarming.Warming.pipe(optional).annotate({
     description: "Keep recently active sessions warm with transient model requests (default: false)",
+  }),
+  messaging: ConfigMessaging.Info.pipe(optional).annotate({
+    description: "Inter-session messaging: topic presets, template variables, delivery, search, and the local embedding model",
   }),
   providers: Schema.Record(Schema.String, ConfigProvider.Info).pipe(optional),
   aliases: ConfigAlias.Info.pipe(optional).annotate({

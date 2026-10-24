@@ -52,6 +52,21 @@ describe("toLLMMessages", () => {
     ])
   })
 
+  test("keeps notices addressed only to the user out of model context", () => {
+    const notice = (value: string, audience: string) =>
+      SessionMessage.Synthetic.make({
+        id: id(value),
+        type: "synthetic",
+        text: `<message to="user" from="ses_child">\n${value}\n</message>`,
+        metadata: { source: "messaging", audience, type: "user" },
+        time: { created },
+      })
+    const visible = notice("visible", "all")
+    expect(toLLMMessages([notice("hidden", "user"), visible], model)).toEqual([
+      Message.make({ id: visible.id, role: "user", content: visible.text }),
+    ])
+  })
+
   test("omits empty assistant turns", () => {
     const assistant = (value: string, content: SessionMessage.Assistant["content"]) =>
       SessionMessage.Assistant.make({

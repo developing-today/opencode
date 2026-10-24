@@ -13,6 +13,7 @@ import { Agent } from "../../agent.js"
 import { Config, reloadsSections } from "../../config.js"
 import { Location } from "../../location.js"
 import { Session } from "../../session.js"
+import { SubagentDepth } from "../../session/subagent-depth.js"
 import { SubagentJob } from "../../session/subagent-job.js"
 import { ShellSelect } from "../../shell/select.js"
 import { FSUtil } from "@opencode/util/fs-util"
@@ -97,6 +98,7 @@ export const Plugin = define({
                 })
                 if (subagent ?? commandAgent?.mode === "subagent") {
                   const parent = yield* sessions.get(input.sessionID)
+                  yield* SubagentDepth.assertWithinLimit(sessions, config, parent)
                   const selected = yield* agents.select(agent ?? parent.agent)
                   const child = yield* sessions.create({
                     parentID: parent.id,

@@ -18,6 +18,8 @@ import { Location } from "../location.js"
 import { LocationServiceMap } from "../location-service-map.js"
 import { Model } from "../model.js"
 import { Mcp } from "../mcp/index.js"
+import { Messaging } from "../messaging.js"
+import { MessagingEmbedding } from "../messaging/embedding.js"
 import { Session } from "../session.js"
 import { PersistentPty } from "../persistent-pty.js"
 import { Provider } from "../provider.js"
@@ -58,6 +60,8 @@ export const make = Effect.fn("PluginHost.make")(function* (
   const integration = yield* Integration.Service
   const kv = yield* KV.Service
   const mcp = yield* Mcp.Service
+  const messaging = yield* Messaging.Service
+  const embedding = yield* MessagingEmbedding.Service
   const location = yield* Location.Service
   const reference = yield* Reference.Service
   const rpc = yield* Rpc.Service
@@ -372,6 +376,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
             get: (id) => mutable(editor.get(Integration.ID.make(id))),
             update: (id, update) => editor.update(Integration.ID.make(id), update),
             remove: (id) => editor.remove(Integration.ID.make(id)),
+            copy: (from, to) => editor.copy(Integration.ID.make(from), Integration.ID.make(to)),
             method: {
               list: (id) => editor.method.list(Integration.ID.make(id)),
               update: (input) => editor.method.update(methodImplementation(input)),
@@ -410,6 +415,32 @@ export const make = Effect.fn("PluginHost.make")(function* (
             remove: editor.remove,
           })
         }),
+    },
+    messaging: {
+      send: (input) => messaging.send(input),
+      user: (input) => messaging.user(input),
+      query: (input) => messaging.query(input ?? {}),
+      inspect: (input) => messaging.inspect(input),
+      visibility: (input) => messaging.visibility(input),
+      settings: (input) => messaging.settings(input),
+      subscribe: (input) => messaging.subscribe(input),
+      topic: (input) => messaging.topic(input),
+      topics: (input) => messaging.topics(input ?? {}),
+      chain: (input) => messaging.chain(input),
+      sessions: (input) => messaging.sessions(input ?? {}),
+      log: (input) => messaging.log(input),
+      vars: (input) => messaging.vars(input ?? {}),
+      setVar: (input) => messaging.setVar(input),
+      model: {
+        status: embedding.status,
+        configure: Effect.fn(function* (input) {
+          if (input) yield* embedding.select(input)
+          if (input?.start) yield* embedding.start()
+          return yield* embedding.status()
+        }),
+      },
+      kinds: messaging.kinds,
+      write: (input) => messaging.send(input, { kind: input.kind }),
     },
     permission: {
       hook: (name, callback) => hooks.register("permission", name, callback),
@@ -602,6 +633,8 @@ export const requirements = LayerNode.group([
   Integration.node,
   KV.node,
   Mcp.node,
+  Messaging.node,
+  MessagingEmbedding.node,
   Location.node,
   Reference.node,
   Rpc.node,

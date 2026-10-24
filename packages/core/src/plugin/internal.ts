@@ -59,6 +59,9 @@ import { Permission } from "../permission.js"
 import { Reference } from "../reference.js"
 import { WebSearch } from "../websearch.js"
 import { Ripgrep } from "../ripgrep.js"
+import { Messaging } from "../messaging.js"
+import { MessagingEmbedding } from "../messaging/embedding.js"
+import { MessagingVars } from "../messaging/vars.js"
 import { Session } from "../session.js"
 import { SessionCompaction } from "../session/compaction.js"
 import { SessionInstructions } from "../session/instructions.js"
@@ -74,6 +77,7 @@ import { EditTool } from "../tool/plugin/edit.js"
 import { GlobTool } from "../tool/plugin/glob.js"
 import { GrepTool } from "../tool/plugin/grep.js"
 import { McpResourceTools } from "../tool/plugin/mcp-resource.js"
+import { MessagingTools } from "../tool/plugin/messaging.js"
 import { OpenCodeTools } from "../tool/plugin/opencode.js"
 import { QuestionTool } from "../tool/plugin/question.js"
 import { ReadToolFileSystem } from "../tool/read-filesystem.js"
@@ -92,6 +96,7 @@ import { WellKnown } from "../wellknown.js"
 import { WriteTool } from "../tool/plugin/write.js"
 import { AgentPlugin } from "./agent.js"
 import BrowserPlugin from "@opencode/plugin-browser"
+import GitHubPlugin from "@opencode/plugin-github"
 import { CommandPlugin } from "./command.js"
 import { IdentityPlugin } from "./identity.js"
 import { PlanPlugin } from "./plan.js"
@@ -99,6 +104,7 @@ import { ModelsDevPlugin } from "./models-dev.js"
 import { McpCodeModeDefaultsPlugin } from "./mcp-codemode-defaults.js"
 import { ProviderPlugins } from "./provider.js"
 import { OpencodePlugin } from "./provider/opencode.js"
+import { ProviderInstancePlugin } from "./provider/instance.js"
 import { WebSearchPlugins } from "./websearch/index.js"
 import { SkillPlugin } from "./skill.js"
 import { PlanInfoPlugin } from "./plan-info.js"
@@ -138,6 +144,9 @@ const services = [
   ManagedPolicy.Service,
   ModelsDev.Service,
   Mcp.Service,
+  Messaging.Service,
+  MessagingEmbedding.Service,
+  MessagingVars.Service,
   Npm.Service,
   Permission.Service,
   Form.Service,
@@ -193,6 +202,9 @@ export const requirements = LayerNode.group([
   ManagedPolicy.node,
   ModelsDev.node,
   Mcp.node,
+  Messaging.node,
+  MessagingEmbedding.node,
+  MessagingVars.node,
   Npm.node,
   Permission.node,
   Form.node,
@@ -234,6 +246,8 @@ const pre = [
   PlanInfoPlugin.Plugin,
   VcsHgPlugin.Plugin,
   ModelsDevPlugin,
+  // Copy catalog providers into their configured instances before provider plugins adjust either one.
+  ProviderInstancePlugin,
   ...ProviderPlugins,
   ...WebSearchPlugins,
   PatchTool.Plugin,
@@ -246,6 +260,7 @@ const pre = [
   GrepTool.Plugin,
   OpenCodeTools.Plugin,
   McpResourceTools.Plugin,
+  MessagingTools.Plugin,
   QuestionTool.Plugin,
   ReadTool.Plugin,
   ShellTool.Plugin,
@@ -264,6 +279,7 @@ const post = [
   ConfigReferencePlugin.Plugin,
   ConfigAgentPlugin.Plugin,
   BrowserPlugin,
+  GitHubPlugin,
   ConfigCommandPlugin.Plugin,
   ConfigCompactionPlugin.Plugin,
   ConfigFormatterPlugin.Plugin,

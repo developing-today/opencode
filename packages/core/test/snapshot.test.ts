@@ -340,6 +340,42 @@ describe("Snapshot", () => {
     ),
   )
 
+  // dezren39/nix#665: the earlier tree holds `features/design.md`, which check-ignore rejects once `features` is a symlink.
+  const posix = process.platform === "win32" ? testEffect(Layer.empty).live.skip : testEffect(Layer.empty).live
+  posix("captures and lists a tracked directory replaced by a symlink", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) =>
+        Effect.gen(function* () {
+          const project = path.join(tmp.path, "project")
+          yield* Effect.promise(async () => {
+            await fs.mkdir(path.join(project, "features"), { recursive: true })
+            await fs.writeFile(path.join(project, "features", "design.md"), "design\n")
+            await initGit(project, true)
+          })
+          yield* Effect.gen(function* () {
+            const snapshot = yield* Snapshot.Service
+            const before = yield* snapshot.capture()
+            yield* Effect.promise(async () => {
+              await fs.mkdir(path.join(project, "docs"))
+              await fs.rename(path.join(project, "features"), path.join(project, "docs", "features"))
+              await fs.symlink("docs/features", path.join(project, "features"))
+            })
+            const after = yield* snapshot.capture()
+            expect(before).toBeDefined()
+            expect(after).toBeDefined()
+            if (!before || !after) return
+            expect(yield* snapshot.files({ from: before, to: after })).toEqual([
+              RelativePath.make("docs/features/design.md"),
+              RelativePath.make("features"),
+              RelativePath.make("features/design.md"),
+            ])
+          }).pipe(Effect.provide(snapshotLayer(tmp.path, project)))
+        }),
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
   testEffect(Layer.empty).live("applies availability transforms", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),

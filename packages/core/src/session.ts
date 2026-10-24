@@ -66,6 +66,7 @@ import type { Command } from "./command.js"
 import { SessionEnvironment } from "./session/environment.js"
 import { InstructionEntry } from "./session/instruction-entry.js"
 import { McpxSubagent } from "./tool/plugin/mcpx-subagent.js"
+import { MessagingVars } from "./messaging/vars.js"
 
 // get project -> project.locations
 //
@@ -500,5 +501,6 @@ export const node: LayerNode.Provider<Service, never, typeof Node.tags.values.gl
     LocationServiceMap.node,
     FSUtil.node,
     App.node,
+    MessagingVars.node,
   ],
 })

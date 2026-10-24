@@ -71,6 +71,8 @@ test("counts every subagent page in a root session's cost", async () => {
       if (url.searchParams.get("cursor") === "page_2")
         return Response.json({ data: Array.from({ length: 50 }, (_, index) => child(200 + index)), cursor: { next: "page_3" } })
 
+      if (url.searchParams.get("parentID") !== "ses_root") return Response.json({ data: [], cursor: {} })
+
       return Response.json({ data: Array.from({ length: 200 }, (_, index) => child(index)), cursor: { next: "page_2" } })
     },
   })
@@ -83,10 +85,303 @@ test("counts every subagent page in a root session's cost", async () => {
     await setup.data.session.sync("ses_root", { children: true })
     expect(setup.data.session.family("ses_root")).toHaveLength(251)
     expect(setup.data.session.cost("ses_root")).toBe(250.5)
-    expect(requests.toSorted()).toEqual([
+    const nested = requests.filter((request) => request.includes("parentID=ses_child_"))
+    expect(requests.filter((request) => !request.includes("parentID=ses_child_")).toSorted()).toEqual([
       "/api/session/ses_root?",
       "/api/session?limit=200&cursor=page_2",
       "/api/session?limit=200&order=desc&parentID=ses_root",
+    ])
+    // Each subagent is asked once for subagents of its own.
+    expect(new Set(nested).size).toBe(250)
+    expect(nested).toHaveLength(250)
+  } finally {
+    setup.dispose()
+  }
+})
+
+test("discovers nested subagents at any depth, publishing each listing as it resolves", async () => {
+  const parents: Record<string, string> = {
+    ses_a: "ses_root",
+    ses_b: "ses_root",
+    ses_a1: "ses_a",
+    ses_a2: "ses_a",
+    ses_a1x: "ses_a1",
+    ses_a2x: "ses_a2",
+  }
+  const deepest = Promise.withResolvers<void>()
+  const requests: string[] = []
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      requests.push(`${url.pathname}?${url.searchParams}`)
+      if (url.pathname === "/api/session/ses_root") return Response.json({ data: { ...session(0), id: "ses_root" } })
+      const parentID = url.searchParams.get("parentID")
+      if (parentID === "ses_a1") await deepest.promise
+      return Response.json({
+        data: Object.entries(parents)
+          .filter(([, parent]) => parent === parentID)
+          .map(([id, parent]) => ({ ...session(0), id, parentID: parent })),
+        cursor: {},
+      })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    const synced = setup.data.session.sync("ses_root", { children: true })
+    // a2's listing publishes its child while a1's listing on the same level is still pending.
+    await wait(() => setup.data.session.get("ses_a2x") !== undefined)
+    expect(setup.data.session.get("ses_a1x")).toBeUndefined()
+    deepest.resolve()
+    await synced
+
+    expect(setup.data.session.family("ses_root")).toEqual([
+      "ses_root",
+      "ses_a",
+      "ses_b",
+      "ses_a1",
+      "ses_a2",
+      "ses_a2x",
+      "ses_a1x",
+    ])
+    expect(setup.data.session.root("ses_a1x")).toBe("ses_root")
+    expect(requests.toSorted()).toEqual(
+      [
+        "/api/session/ses_root?",
+        ...["ses_root", "ses_a", "ses_b", "ses_a1", "ses_a2", "ses_a1x", "ses_a2x"].map(
+          (id) => `/api/session?limit=200&order=desc&parentID=${id}`,
+        ),
+      ].toSorted(),
+    )
+  } finally {
+    deepest.resolve()
+    setup.dispose()
+  }
+})
+
+test("shares one listing limit across concurrent walks and keeps a tree whose nested listing fails", async () => {
+  const children: Record<string, string[]> = Object.fromEntries(
+    ["ses_one", "ses_two"].map((root) => [root, Array.from({ length: 10 }, (_, index) => `${root}_c${index}`)]),
+  )
+  const gate = Promise.withResolvers<void>()
+  const flight = { now: 0, most: 0 }
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      const root = url.pathname.match(/^\/api\/session\/(ses_one|ses_two)$/)?.[1]
+      if (root) return Response.json({ data: { ...session(0), id: root } })
+      const parentID = url.searchParams.get("parentID") ?? ""
+      const direct = children[parentID]
+      if (direct) return Response.json({ data: direct.map((id) => ({ ...session(0), id, parentID })), cursor: {} })
+      flight.now++
+      flight.most = Math.max(flight.most, flight.now)
+      await gate.promise
+      flight.now--
+      if (parentID === "ses_one_c0") return new Response(null, { status: 500 })
+      return Response.json({
+        data: parentID === "ses_two_c1" ? [{ ...session(0), id: "ses_two_c1_child", parentID }] : [],
+        cursor: {},
+      })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    const synced = Promise.all(["ses_one", "ses_two"].map((root) => setup.data.session.sync(root, { children: true })))
+    // All twenty direct children wait for a listing, but both walks together start only eight.
+    await wait(
+      () =>
+        flight.now === 8 &&
+        Object.values(children)
+          .flat()
+          .every((id) => setup.data.session.get(id)),
+    )
+    expect(flight.most).toBe(8)
+    gate.resolve()
+    await synced
+
+    expect(flight.most).toBe(8)
+    expect(setup.data.session.get("ses_two_c1_child")?.parentID).toBe("ses_two_c1")
+    expect(setup.data.session.family("ses_one")).toHaveLength(11)
+    expect(setup.data.session.family("ses_two")).toHaveLength(12)
+  } finally {
+    gate.resolve()
+    setup.dispose()
+  }
+})
+
+test("keeps a live rename that lands while discovery lists the renamed subagent", async () => {
+  const listed = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
+  const info = (id: string, parentID?: string): SessionInfo => ({ ...session(0), id, parentID, title: "Old title" })
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      if (url.pathname === "/api/session/ses_root") return Response.json({ data: info("ses_root") })
+      if (url.pathname === "/api/session/ses_grandchild")
+        return Response.json({ data: info("ses_grandchild", "ses_child") })
+      const parentID = url.searchParams.get("parentID")
+      if (parentID === "ses_root") return Response.json({ data: [info("ses_child", "ses_root")], cursor: {} })
+      if (parentID !== "ses_child") return Response.json({ data: [], cursor: {} })
+      // The listing reads the grandchild before the rename, and its response lands after it.
+      listed.resolve()
+      await release.promise
+      return Response.json({ data: [info("ses_grandchild", "ses_child")], cursor: {} })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({
+      api: () => api,
+      directory: "/project",
+      event: {
+        on: () => () => {},
+        listen(handler) {
+          listeners.add(handler)
+          return () => listeners.delete(handler)
+        },
+      },
+    }),
+    dispose,
+  }))
+
+  try {
+    await setup.data.session.sync("ses_grandchild")
+    const synced = setup.data.session.sync("ses_root", { children: true })
+    await listed.promise
+    const renamed: OpenCodeEvent = {
+      id: "evt_renamed",
+      created: 1,
+      type: "session.renamed",
+      durable: { aggregateID: "ses_grandchild", seq: 1, version: 1 },
+      data: { sessionID: "ses_grandchild", title: "New title" },
+    }
+    listeners.forEach((listener) => listener({ name: renamed.type, details: renamed }))
+    await wait(() => setup.data.session.get("ses_grandchild")?.title === "New title")
+    release.resolve()
+    await synced
+
+    expect(setup.data.session.get("ses_grandchild")?.title).toBe("New title")
+    expect(setup.data.session.family("ses_root").toSorted()).toEqual(["ses_child", "ses_grandchild", "ses_root"])
+  } finally {
+    release.resolve()
+    setup.dispose()
+  }
+})
+
+test("fills a subagent from discovery while its own read is in flight, and keeps it when that read fails", async () => {
+  const reading = Promise.withResolvers<void>()
+  const failRead = Promise.withResolvers<void>()
+  const info = (id: string, parentID?: string): SessionInfo => ({ ...session(0), id, parentID })
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      if (url.pathname === "/api/session/ses_root") return Response.json({ data: info("ses_root") })
+      if (url.pathname === "/api/session/ses_grandchild") {
+        reading.resolve()
+        await failRead.promise
+        return new Response(null, { status: 503 })
+      }
+      const parentID = url.searchParams.get("parentID")
+      if (parentID === "ses_root") return Response.json({ data: [info("ses_child", "ses_root")], cursor: {} })
+      if (parentID === "ses_child") return Response.json({ data: [info("ses_grandchild", "ses_child")], cursor: {} })
+      return Response.json({ data: [], cursor: {} })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    // Something else, such as a notification, starts the grandchild's own read before discovery lists it.
+    const read = setup.data.session.sync("ses_grandchild").catch(() => undefined)
+    await reading.promise
+    await setup.data.session.sync("ses_root", { children: true })
+    failRead.resolve()
+    await read
+
+    expect(setup.data.session.get("ses_grandchild")?.parentID).toBe("ses_child")
+    expect(setup.data.session.family("ses_root").toSorted()).toEqual(["ses_child", "ses_grandchild", "ses_root"])
+  } finally {
+    failRead.resolve()
+    setup.dispose()
+  }
+})
+
+test("lists a branch again on the next sync after its listing failed", async () => {
+  const failures = { left: 1 }
+  const info = (id: string, parentID?: string): SessionInfo => ({ ...session(0), id, parentID })
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      if (url.pathname === "/api/session/ses_root") return Response.json({ data: info("ses_root") })
+      const parentID = url.searchParams.get("parentID")
+      if (parentID === "ses_root") return Response.json({ data: [info("ses_child", "ses_root")], cursor: {} })
+      if (parentID === "ses_child" && failures.left > 0) {
+        failures.left--
+        return new Response(null, { status: 500 })
+      }
+      if (parentID === "ses_child") return Response.json({ data: [info("ses_grandchild", "ses_child")], cursor: {} })
+      return Response.json({ data: [], cursor: {} })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    await setup.data.session.sync("ses_root", { children: true })
+    expect(setup.data.session.get("ses_grandchild")).toBeUndefined()
+
+    await setup.data.session.sync("ses_root", { children: true })
+    expect(setup.data.session.get("ses_grandchild")?.parentID).toBe("ses_child")
+    expect(setup.data.session.family("ses_root").toSorted()).toEqual(["ses_child", "ses_grandchild", "ses_root"])
+  } finally {
+    setup.dispose()
+  }
+})
+
+test("lists each session once when parent links form a cycle", async () => {
+  const requests: string[] = []
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      requests.push(`${url.pathname}?${url.searchParams}`)
+      if (url.pathname === "/api/session/ses_x")
+        return Response.json({ data: { ...session(0), id: "ses_x", parentID: "ses_y" } })
+      const parentID = url.searchParams.get("parentID")
+      return Response.json({
+        data: [{ ...session(0), id: parentID === "ses_x" ? "ses_y" : "ses_x", parentID }],
+        cursor: {},
+      })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    await setup.data.session.sync("ses_x", { children: true })
+    expect(setup.data.session.get("ses_y")?.parentID).toBe("ses_x")
+    expect(requests.toSorted()).toEqual([
+      "/api/session/ses_x?",
+      "/api/session?limit=200&order=desc&parentID=ses_x",
+      "/api/session?limit=200&order=desc&parentID=ses_y",
     ])
   } finally {
     setup.dispose()

@@ -4,7 +4,7 @@ import { Option, Schema, SchemaGetter } from "effect"
 import { isRecord } from "../util/record"
 import { useTuiPaths } from "./runtime"
 import { createSimpleContext } from "./helper"
-import { editorIntegration } from "../editor"
+import { editorIntegration, parseEditorPort } from "../editor"
 
 const MCP_PROTOCOL_VERSION = "2025-11-25"
 
@@ -115,9 +115,7 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
     const paths = useTuiPaths()
     const editor = props.integration ?? editorIntegration
     const value = process.env.CLAUDE_CODE_SSE_PORT || process.env.OPENCODE_EDITOR_SSE_PORT
-    const parsedPort = value ? Number.parseInt(value, 10) : undefined
-    const port =
-      parsedPort && Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort <= 65535 ? parsedPort : undefined
+    const port = value ? parseEditorPort(value) : undefined
     const zedTerminal = process.env.ZED_TERM === "true" || process.env.TERM_PROGRAM?.toLowerCase() === "zed"
     const mentionListeners = new Set<(mention: EditorMention) => void>()
     const WebSocketImpl = props.WebSocketImpl ?? WebSocket

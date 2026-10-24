@@ -8,6 +8,9 @@ export const handler = Effect.fn("cli.web-ui.handler")(function* (options?: {
   readonly assets?: AssetMap
   readonly brotli?: BrotliMap
 }) {
+  // The desktop sets this on every launch: its windows never load the embedded web UI, so its
+  // server must not serve it either. Assets are never loaded in that case.
+  const disabled = truthy(process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI)
   const fileSystem = yield* FileSystem.FileSystem
   const assets = options?.assets
     ? Effect.succeed({ files: options.assets, brotli: options.brotli })
@@ -26,6 +29,7 @@ export const handler = Effect.fn("cli.web-ui.handler")(function* (options?: {
         return yield* api.pipe(
           Effect.catchIf(isRouteNotFound, () => Effect.succeed(HttpServerResponse.empty({ status: 404 }))),
         )
+      if (disabled) return HttpServerResponse.empty({ status: 404 })
       return yield* assets.pipe(Effect.flatMap((loaded) => serveUI(request, url, loaded.files, loaded.brotli)))
     })
 })
@@ -65,6 +69,10 @@ function serveUI(
       ? HttpServerResponse.empty({ status: 200, headers })
       : HttpServerResponse.raw(file, { headers, contentType: headers["content-type"] }),
   )
+}
+
+function truthy(value?: string) {
+  return value === "1" || value?.toLowerCase() === "true"
 }
 
 function acceptsBrotli(header: string | undefined) {

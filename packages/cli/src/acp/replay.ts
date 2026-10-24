@@ -33,6 +33,11 @@ export function history(
         (update) =>
           ACPPermission.withCompletedDiffs(update, completedSource(message, update), attached.cwd).pipe(
             Effect.flatMap((enriched) => connection.sessionUpdate({ sessionId: attached.id, update: enriched })),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                if (update.sessionUpdate === "tool_call") attached.sent.add(update.toolCallId)
+              }),
+            ),
           ),
         { discard: true },
       ),

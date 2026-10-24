@@ -11,6 +11,7 @@ import { Global } from "@opencode/util/global"
 import { Npm } from "@opencode/util/npm"
 import { Bus } from "@opencode/core/bus"
 import { Command } from "@opencode/core/command"
+import { Config } from "@opencode/core/config"
 import { Database } from "@opencode/core/database/database"
 import { Watcher } from "@opencode/core/filesystem/watcher"
 import { ManagedPolicy } from "@opencode/core/managed-policy"
@@ -19,6 +20,7 @@ import { LocationServiceMap } from "@opencode/core/location-services"
 import { Location } from "@opencode/core/location"
 import { Plugin } from "@opencode/core/plugin"
 import { Rpc } from "@opencode/core/rpc"
+import { Tool } from "@opencode/core/tool"
 import { SdkPlugins } from "@opencode/core/plugin/sdk"
 import { AbsolutePath } from "@opencode/core/schema"
 import { tempGlobalLayer } from "../fixture/global"
@@ -364,12 +366,15 @@ it.live("applies organization integration changes to running external plugins", 
       const plugins = yield* Plugin.Service
       const commands = yield* Command.Service
       const managed = yield* ManagedPolicy.Service
-      const bus = yield* Bus.Service
+      const config = yield* Config.Service
       yield* plugins.awaitActivation
       expect(yield* commands.get("policy-greet")).toBeUndefined()
       expect(yield* Effect.promise(() => Bun.file(entered).exists())).toBe(false)
       yield* Effect.promise(() => Bun.write(configuration, JSON.stringify({ plugins: [root] })))
-      yield* bus.publish(Event.Updated, { sections: ["*"] })
+      // Drive the real reload path: Config re-reads the file, refreshes its
+      // cached entries, and publishes config.updated with the changed sections.
+      // Publishing the bus event by hand left the cached deny policy in place.
+      yield* config.reload()
       yield* commands.get("policy-greet").pipe(
         Effect.flatMap((command) => (command ? Effect.void : Effect.fail("pending"))),
         Effect.retry({ times: 200, schedule: Schedule.spaced("10 millis") }),
@@ -393,3 +398,115 @@ it.live("applies organization integration changes to running external plugins", 
     )
   }),
 )
+
+describe("PluginSupervisor shell tool timeout description", () => {
+  it.live("re-renders the shell timeout description after a mid-session shell_timeout edit", () =>
+    Effect.gen(function* () {
+      const directory = yield* tmpdirScoped()
+      const configuration = path.join(directory.path, ".opencode/opencode.json")
+      yield* Effect.promise(() => Bun.write(configuration, JSON.stringify({ experimental: { shell_timeout: 100 } })))
+      const locations = yield* LocationServiceMap.Service
+      yield* Effect.gen(function* () {
+        const plugins = yield* Plugin.Service
+        const config = yield* Config.Service
+        const tools = yield* Tool.Service
+        yield* plugins.awaitActivation
+        const description = tools
+          .snapshot()
+          .pipe(
+            Effect.map((snapshot) =>
+              JSON.stringify(snapshot.definitions.find((tool) => tool.name === "shell")?.inputSchema ?? {}),
+            ),
+          )
+        expect(yield* description).toContain("Defaults to 100 for foreground commands")
+        yield* Effect.promise(() =>
+          Bun.write(configuration, JSON.stringify({ experimental: { shell_timeout: 60000 } })),
+        )
+        // Drive the real reload path: Config re-reads the file and publishes
+        // config.updated; the shell tool definition must follow without a restart.
+        yield* config.reload()
+        yield* description.pipe(
+          Effect.flatMap((text) =>
+            text.includes("Defaults to 60000 for foreground commands") ? Effect.void : Effect.fail("pending" as const),
+          ),
+          Effect.retry({ times: 200, schedule: Schedule.spaced("10 millis") }),
+        )
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(directory.path) }))),
+      )
+    }),
+  )
+})
+
+describe("PluginSupervisor reload after an entrypoint load failure", () => {
+  const recovered = (plugins: Plugin.Interface) =>
+    plugins.list().pipe(
+      Effect.flatMap((inventory) => {
+        const local = inventory.filter((plugin) => plugin.source.type === "local")
+        return local.some((plugin) => plugin.id === "greeter" && plugin.state.status === "active") &&
+          !local.some((plugin) => plugin.state.status === "failed")
+          ? Effect.void
+          : Effect.fail("activation pending" as const)
+      }),
+      Effect.retry({ times: 80, schedule: Schedule.spaced("25 millis") }),
+    )
+
+  it.live("recovers a discovered plugin fixed in place after a decode failure", () =>
+    Effect.gen(function* () {
+      const directory = yield* tmpdirScoped()
+      const file = path.join(directory.path, ".opencode/plugins/greeter.ts")
+      yield* Effect.promise(() => Bun.write(file, `export default async () => ({})`))
+      const watcher = yield* Watcher.Test
+      const locations = yield* LocationServiceMap.Service
+      yield* Effect.gen(function* () {
+        const plugins = yield* Plugin.Service
+        const commands = yield* Command.Service
+        yield* plugins.awaitActivation
+        const failure = yield* failed(plugins)
+        expect(failure.state).toMatchObject({
+          status: "failed",
+          error: "Plugin must export a default definition with an id and an effect or setup function.",
+        })
+        yield* Effect.promise(() => Bun.write(file, greeter("greet-fixed")))
+        yield* watcher.emit({ path: file, type: "update" })
+        yield* recovered(plugins)
+        expect(yield* commands.get("greet-fixed")).toBeDefined()
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(directory.path) }))),
+      )
+    }),
+  )
+
+  it.live("recovers a discovered plugin replaced by a symlink to a working plugin after a decode failure", () =>
+    Effect.gen(function* () {
+      const directory = yield* tmpdirScoped()
+      const file = path.join(directory.path, ".opencode/plugins/greeter.ts")
+      const target = path.join(directory.path, "elsewhere/greeter.ts")
+      yield* Effect.promise(async () => {
+        await Bun.write(file, `export default async () => ({})`)
+        await Bun.write(target, greeter("greet-good"))
+      })
+      const watcher = yield* Watcher.Test
+      const locations = yield* LocationServiceMap.Service
+      yield* Effect.gen(function* () {
+        const plugins = yield* Plugin.Service
+        const commands = yield* Command.Service
+        yield* plugins.awaitActivation
+        yield* failed(plugins)
+        // The swap reported in #18: the failing file is replaced by a symlink to the working source.
+        yield* Effect.promise(async () => {
+          await fs.rm(file)
+          await fs.symlink(target, file)
+        })
+        yield* watcher.emit({ path: file, type: "update" })
+        yield* recovered(plugins)
+        expect(yield* commands.get("greet-good")).toBeDefined()
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(directory.path) }))),
+      )
+    }),
+  )
+})

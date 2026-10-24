@@ -90,6 +90,68 @@ describe("web UI", () => {
     }).pipe(Effect.provide(NodeFileSystem.layer)),
   )
 
+  test("serves no web UI when OPENCODE_DISABLE_EMBEDDED_WEB_UI is set, while API routes still pass through", async () => {
+    const previous = process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI
+    const assets = { "index.html": "<html><body>embedded</body></html>", "_assets/app.js": "console.log('embedded')" }
+    const probe = (disabled: boolean, pathnames: ReadonlyArray<string>) =>
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            if (disabled) process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
+            else delete process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI
+            const transform = yield* WebUi.handler({ assets })
+            const http = yield* NodeHttpServer.make(createServer, { host: "127.0.0.1", port: 0 })
+            yield* http.serve(
+              transform(
+                Effect.gen(function* () {
+                  const request = yield* HttpServerRequest.HttpServerRequest
+                  const pathname = new URL(request.url, "http://localhost").pathname
+                  if (pathname === "/api/info" || pathname === "/openapi.json" || pathname.startsWith("/auth/"))
+                    return HttpServerResponse.jsonUnsafe({ via: "api" })
+                  return yield* Effect.fail(
+                    new HttpServerError.HttpServerError({
+                      reason: new HttpServerError.RouteNotFound({ request }),
+                    }),
+                  )
+                }),
+              ),
+            )
+            const origin = HttpServer.formatAddress(http.address)
+            return yield* Effect.forEach(pathnames, (pathname) =>
+              Effect.promise(async () => {
+                const response = await fetch(`${origin}${pathname}`)
+                return { pathname, status: response.status, body: await response.text() }
+              }),
+            )
+          }),
+        ).pipe(Effect.provide(NodeFileSystem.layer)),
+      )
+    try {
+      const disabled = await probe(true, [
+        "/",
+        "/workspace/example",
+        "/_assets/app.js",
+        "/index.html",
+        "/api/info",
+        "/openapi.json",
+        "/auth/connect/example",
+        "/api/missing",
+      ])
+      for (const result of disabled.slice(0, 4)) expect(result).toMatchObject({ status: 404, body: "" })
+      for (const result of disabled.slice(4, 7))
+        expect(result).toEqual({ pathname: result.pathname, status: 200, body: '{"via":"api"}' })
+      expect(disabled[7]).toMatchObject({ status: 404, body: "" })
+
+      const enabled = await probe(false, ["/", "/_assets/app.js"])
+      expect(enabled[0]?.status).toBe(200)
+      expect(enabled[0]?.body).toContain("embedded")
+      expect(enabled[1]).toEqual({ pathname: "/_assets/app.js", status: 200, body: "console.log('embedded')" })
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI
+      else process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = previous
+    }
+  })
+
   test("sends embedded brotli bytes as they are to browsers that accept them", async () => {
     const script = "console.log('compressed')".repeat(50)
     const html = "<html><body>compressed</body></html>"

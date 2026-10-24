@@ -12,6 +12,7 @@ import { Provider } from "../../provider.js"
 import { SessionAffinity } from "../../session/affinity.js"
 import type { PluginInternal } from "../internal.js"
 import { configuredSettings } from "./configured.js"
+import { eachInstance } from "./instance.js"
 
 const clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
 const issuer = "https://auth.openai.com"
@@ -48,9 +49,9 @@ const Claims = Schema.fromJsonString(
 )
 const decodeClaims = Schema.decodeUnknownOption(Claims)
 
-const browser = (app: App.Info) =>
+const browser = (app: App.Info, integrationID: Integration.ID) =>
   ({
-    integrationID: Integration.ID.make("openai"),
+    integrationID,
     method: {
       id: browserMethodID,
       type: "oauth",
@@ -175,9 +176,9 @@ function addressInUse(error: Error) {
   return "code" in error && error.code === "EADDRINUSE"
 }
 
-const headless = (app: App.Info) =>
+const headless = (app: App.Info, integrationID: Integration.ID) =>
   ({
-    integrationID: Integration.ID.make("openai"),
+    integrationID,
     method: {
       id: headlessMethodID,
       type: "oauth",
@@ -240,105 +241,118 @@ export const OpenAIPlugin = define({
   id: "opencode.provider.openai",
   effect: Effect.fn(function* (ctx) {
     const bus = yield* Bus.Service
-    const loading = Semaphore.makeUnsafe(1)
-    let chatgpt: Credential.OAuth | undefined
+    yield* eachInstance(
+      ctx.event,
+      Provider.ID.openai,
+      Effect.fnUntraced(function* (ids) {
+        const loading = Semaphore.makeUnsafe(1)
+        const roots = SessionAffinity.rootCache()
+        let chatgpt: Credential.OAuth | undefined
 
-    const load = Effect.fn("OpenAIPlugin.load")(function* () {
-      const connection = yield* ctx.integration.connection.active("openai")
-      const credential = connection
-        ? yield* ctx.integration.connection.resolve(connection).pipe(Effect.orElseSucceed(() => undefined))
-        : undefined
-      chatgpt =
-        credential?.type === "oauth" &&
-        (credential.methodID === browserMethodID || credential.methodID === headlessMethodID)
-          ? credential
-          : undefined
-    })
+        const load = Effect.fn("OpenAIPlugin.load")(function* () {
+          const connection = yield* ctx.integration.connection.active(ids.integrationID)
+          const credential = connection
+            ? yield* ctx.integration.connection.resolve(connection).pipe(Effect.orElseSucceed(() => undefined))
+            : undefined
+          chatgpt =
+            credential?.type === "oauth" &&
+            (credential.methodID === browserMethodID || credential.methodID === headlessMethodID)
+              ? credential
+              : undefined
+        })
 
-    yield* ctx.integration.transform((editor) => {
-      editor.method.update(browser(ctx.app))
-      editor.method.update(headless(ctx.app))
-    })
-    yield* load()
-    // Config applies after provider plugins, so read it here: a custom baseURL may not decode zstd.
-    const configured = yield* configuredSettings(Provider.ID.openai)
-    yield* ctx.provider.transform((providers) => {
-      const item = providers.get(Provider.ID.openai)
-      if (!item) return
-      const account = chatgpt?.metadata?.accountID
-      providers.update(item.provider.id, (provider) => {
-        provider.settings = Provider.mergeOverlay(provider.settings, {
-          transport: provider.settings?.transport ?? "websocket",
-          ...(chatgpt ? { baseURL: codexBaseURL } : {}),
-          // The ChatGPT backend rejects uncompressed bodies over ~1 MiB and decodes zstd.
-          ...(chatgpt && configured?.baseURL === undefined ? { encoding: provider.settings?.encoding ?? "zstd" } : {}),
+        yield* ctx.integration.transform((editor) => {
+          editor.method.update(browser(ctx.app, ids.integrationID))
+          editor.method.update(headless(ctx.app, ids.integrationID))
         })
-        if (!chatgpt) return
-        provider.headers = Provider.mergeHeaders(provider.headers, {
-          originator: "opencode",
-          "x-codex-beta-features": "remote_compaction_v2",
-          ...(typeof account === "string" ? { "chatgpt-account-id": account } : {}),
+        yield* load()
+        // Config applies after provider plugins, so read it here: a custom baseURL may not decode zstd.
+        const configured = yield* configuredSettings(ids.providerID)
+        yield* ctx.provider.transform((providers) => {
+          const item = providers.get(ids.providerID)
+          if (!item) return
+          const account = chatgpt?.metadata?.accountID
+          providers.update(item.provider.id, (provider) => {
+            provider.settings = Provider.mergeOverlay(provider.settings, {
+              transport: provider.settings?.transport ?? "websocket",
+              ...(chatgpt ? { baseURL: codexBaseURL } : {}),
+              // The ChatGPT backend rejects uncompressed bodies over ~1 MiB and decodes zstd.
+              ...(chatgpt && configured?.baseURL === undefined
+                ? { encoding: provider.settings?.encoding ?? "zstd" }
+                : {}),
+            })
+            if (!chatgpt) return
+            provider.headers = Provider.mergeHeaders(provider.headers, {
+              originator: "opencode",
+              "x-codex-beta-features": "remote_compaction_v2",
+              ...(typeof account === "string" ? { "chatgpt-account-id": account } : {}),
+            })
+          })
         })
-      })
-    })
-    yield* ctx.model.transform((models) => {
-      for (const model of models.list(Provider.ID.openai)) {
-        // ChatGPT-plan tokens only authorize codex-eligible models, and the
-        // subscription covers usage, so hide the rest and zero the cost.
-        models.update(model.providerID, model.id, (draft) => {
-          if (!chatgpt) return
-          if (Schema.is(Schema.Struct({ mode: Schema.Literal("pro") }))(draft.body?.reasoning)) {
-            draft.enabled = false
-            return
+        yield* ctx.model.transform((models) => {
+          for (const model of models.list(ids.providerID)) {
+            // ChatGPT-plan tokens only authorize codex-eligible models, and the
+            // subscription covers usage, so hide the rest and zero the cost.
+            models.update(model.providerID, model.id, (draft) => {
+              if (!chatgpt) return
+              if (Schema.is(Schema.Struct({ mode: Schema.Literal("pro") }))(draft.body?.reasoning)) {
+                draft.enabled = false
+                return
+              }
+              const apiID = draft.modelID ?? draft.id
+              const match = apiID.match(/^gpt-(\d+)(?:\.(\d+))?/)
+              const major = Number(match?.[1])
+              const minor = Number(match?.[2] ?? 0)
+              if (
+                !codexAllowed.has(apiID) &&
+                (codexDisallowed.has(apiID) || !match || !(major > 5 || (major === 5 && minor > 4)))
+              ) {
+                draft.enabled = false
+                return
+              }
+              draft.cost = []
+              // Match Codex CLI so context consumption and subscription usage stay consistent between clients.
+              draft.limit =
+                apiID === "gpt-6.1-sol"
+                  ? { ...draft.limit, context: 628_000, input: 500_000 }
+                  : { ...draft.limit, context: 400_000, input: 272_000 }
+            })
           }
-          const apiID = draft.modelID ?? draft.id
-          const match = apiID.match(/^gpt-(\d+)(?:\.(\d+))?/)
-          const major = Number(match?.[1])
-          const minor = Number(match?.[2] ?? 0)
-          if (
-            !codexAllowed.has(apiID) &&
-            (codexDisallowed.has(apiID) || !match || !(major > 5 || (major === 5 && minor > 4)))
-          ) {
-            draft.enabled = false
-            return
-          }
-          draft.cost = []
-          // Match Codex CLI so context consumption and subscription usage stay consistent between clients.
-          draft.limit =
-            apiID === "gpt-6.1-sol"
-              ? { ...draft.limit, context: 628_000, input: 500_000 }
-              : { ...draft.limit, context: 400_000, input: 272_000 }
         })
-      }
-    })
-    yield* ctx.session.hook(
-      "model.request",
-      (evt) =>
-        Effect.gen(function* () {
-          if (!chatgpt) return
-          if (evt.baseURL && URL.canParse(evt.baseURL) && new URL(evt.baseURL).origin === "https://api.openai.com")
-            evt.baseURL = codexBaseURL
-          const session = yield* ctx.session
-            .get({ sessionID: evt.sessionID })
-            .pipe(Effect.orElseSucceed(() => undefined))
-          evt.headers.originator = "opencode"
-          // ChatGPT routes its prompt cache on this header, so children share the parent's.
-          evt.headers["session-id"] = session ? SessionAffinity.get(session) : evt.sessionID
-        }),
-      { providerID: Provider.ID.openai },
-    )
-    // The ChatGPT backend rejects a requested output limit, and OpenAI counts one against rate limits.
-    const omitOutputLimit = (evt: SessionRequest) =>
-      Effect.sync(() => {
-        delete evt.options.maxTokens
-      })
-    for (const name of ["context", "compaction"] as const)
-      yield* ctx.session.hook(name, omitOutputLimit, { providerID: Provider.ID.openai })
-    const refresh = () => loading.withPermit(load().pipe(Effect.andThen(ctx.provider.reload())))
-    yield* bus.subscribe(Credential.Event.Switched).pipe(
-      Stream.filter((event) => event.data.integrationID === Integration.ID.make("openai")),
-      Stream.runForEach(refresh),
-      Effect.forkScoped({ startImmediately: true }),
+        yield* ctx.session.hook(
+          "model.request",
+          (evt) =>
+            Effect.gen(function* () {
+              if (!chatgpt) return
+              if (evt.baseURL && URL.canParse(evt.baseURL) && new URL(evt.baseURL).origin === "https://api.openai.com")
+                evt.baseURL = codexBaseURL
+              const session = yield* ctx.session
+                .get({ sessionID: evt.sessionID })
+                .pipe(Effect.orElseSucceed(() => undefined))
+              evt.headers.originator = "opencode"
+              // ChatGPT routes its prompt cache on this header, so a Session tree shares its root's.
+              evt.headers["session-id"] = session
+                ? yield* SessionAffinity.resolveRoot(roots, session, (sessionID) =>
+                    ctx.session.get({ sessionID }).pipe(Effect.orElseSucceed(() => undefined)),
+                  )
+                : evt.sessionID
+            }),
+          { providerID: ids.providerID },
+        )
+        // The ChatGPT backend rejects a requested output limit, and OpenAI counts one against rate limits.
+        const omitOutputLimit = (evt: SessionRequest) =>
+          Effect.sync(() => {
+            delete evt.options.maxTokens
+          })
+        for (const name of ["context", "compaction"] as const)
+          yield* ctx.session.hook(name, omitOutputLimit, { providerID: ids.providerID })
+        const refresh = () => loading.withPermit(load().pipe(Effect.andThen(ctx.provider.reload())))
+        yield* bus.subscribe(Credential.Event.Switched).pipe(
+          Stream.filter((event) => event.data.integrationID === ids.integrationID),
+          Stream.runForEach(refresh),
+          Effect.forkScoped({ startImmediately: true }),
+        )
+      }),
     )
   }),
 } satisfies PluginInternal.InternalPlugin)

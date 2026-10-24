@@ -302,6 +302,10 @@ export const make = Effect.gen(function* () {
               )
             : yield* Fiber.join(streamFiber)
         }
+        // The provider's response ends here. Tools or an overflow compaction can keep the step running for
+        // minutes after it. That time counts in the step's end (`time_ended`, `time.completed`), while the
+        // response time and speed that the route log and pool health judge the model by stop here.
+        const streamedAt = performance.now()
         const streamFailure = Option.getOrUndefined(Exit.findErrorOption(stream))
         const streamInterrupted = Exit.hasInterrupts(stream)
         // Cancelled before the start snapshot existed: record nothing, as when the capture preceded the request.
@@ -340,7 +344,7 @@ export const make = Effect.gen(function* () {
               error_message: overflow?.message,
               retryable: false,
               output_started: false,
-              response_ms: performance.now() - requestStarted,
+              response_ms: streamedAt - requestStarted,
             },
           })
           return Outcome.Compacted()
@@ -369,7 +373,6 @@ export const make = Effect.gen(function* () {
         // failure that fails over, retries or recovers is recorded like any other. Routed or not, so
         // provider-wide trouble is visible across models.
         {
-          const finishedAt = performance.now()
           const failed = llmFailure !== undefined
           const timedOut = failed && llmFailure.reason._tag === "Transport" && llmFailure.reason.code === "Timeout"
           const tokens = recorded.finish?.tokens
@@ -401,10 +404,10 @@ export const make = Effect.gen(function* () {
               retryable: failed ? SessionRunnerRetry.isRetryable(llmFailure) : undefined,
               output_started: recorded.outputStarted,
               first_token_ms: firstOutputAt === undefined ? undefined : firstOutputAt - requestStarted,
-              response_ms: finishedAt - requestStarted,
+              response_ms: streamedAt - requestStarted,
               tokens_per_second:
                 tokens && firstOutputAt !== undefined
-                  ? ((tokens.output + tokens.reasoning) * 1_000) / Math.max(1, finishedAt - firstOutputAt)
+                  ? ((tokens.output + tokens.reasoning) * 1_000) / Math.max(1, streamedAt - firstOutputAt)
                   : undefined,
               tokens_input: tokens?.input,
               tokens_estimated: false,
@@ -524,11 +527,10 @@ export const make = Effect.gen(function* () {
           !record.providerFailed &&
           firstOutputAt !== undefined
         ) {
-          const completedAt = performance.now()
-          const outputDuration = Math.max(1, completedAt - firstOutputAt)
+          const outputDuration = Math.max(1, streamedAt - firstOutputAt)
           ModelRoute.completed(input.model.routing.target, input.model.routing.policy, {
             firstTokenMs: firstOutputAt - requestStarted,
-            responseMs: completedAt - requestStarted,
+            responseMs: streamedAt - requestStarted,
             tokensPerSecond: ((record.finish.tokens.output + record.finish.tokens.reasoning) * 1_000) / outputDuration,
           })
           if (input.sessionID)
@@ -636,7 +638,7 @@ export const make = Effect.gen(function* () {
                 }),
               ),
         ),
-        Effect.catch(() => Effect.succeed(Option.none())),
+        Effect.orElseSucceed(() => Option.none()),
       ),
     })
     if (raced.hedgeStarted) {

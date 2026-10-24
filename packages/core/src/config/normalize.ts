@@ -228,6 +228,7 @@ export function normalize(input: unknown): Result {
     websearch: Info.fields.websearch,
     worktree: Info.fields.worktree,
     warming: Info.fields.warming,
+    messaging: Info.fields.messaging,
   }
   Object.entries(nativeAtomic).forEach(([key, schema]) => {
     if (!own(input, key)) return
@@ -488,6 +489,15 @@ function normalizeExperimental(
           diagnostics,
         )
         if (value !== undefined) result.subagent_depth = value
+      }
+      if (own(experimental, "shell_timeout")) {
+        const value = decodeEncoded(
+          ConfigExperimental.Info.fields.shell_timeout,
+          experimental.shell_timeout,
+          ["experimental", "shell_timeout"],
+          diagnostics,
+        )
+        if (value !== undefined) result.shell_timeout = value
       }
       if (own(experimental, "model_route_tuning")) {
         unknownKeys(

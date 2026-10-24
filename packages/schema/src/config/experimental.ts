@@ -14,7 +14,12 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
     description: "Enable the experimental portable shell permission scanner. Defaults to false.",
   }),
   subagent_depth: NonNegativeInt.pipe(optional).annotate({
-    description: "Maximum subagent nesting depth. Defaults to 1.",
+    description:
+      "Maximum subagent nesting depth below a top-level session. 0 disables subagents and 1 stops subagents from launching their own. Defaults to 5.",
+  }),
+  shell_timeout: NonNegativeInt.pipe(optional).annotate({
+    description:
+      "Default timeout in milliseconds for foreground shell commands. 0 disables the timeout. Defaults to 120000.",
   }),
   policies: ConfigPolicy.Info.pipe(Schema.Array, optional).annotate({
     description: "Deprecated: use top-level policies. Ordered policies controlling access to configured resources",

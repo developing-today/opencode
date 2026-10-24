@@ -274,6 +274,7 @@ export default defineConfig({
             "mcp-servers",
             "acp",
             "skills",
+            "messaging",
             "references",
             "custom-tools",
           ],

@@ -1,5 +1,10 @@
 name: Jules Daily Upstream Sync (OpenCode)
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
 # Daily automated upstream sync, conflict resolution, feature-opportunity triage,
 # and safe merging for developing-today/opencode using Google Jules.
 
@@ -25,15 +30,16 @@ permissions:
 
 jobs:
   daily-upstream-sync:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
 
       - name: Run Jules Upstream Sync Agent
-        uses: google-labs-code/jules-action@v1
+        uses: google-labs-code/jules-action@bff7875eaa123cac6742b7cfc51005b95ba4d566 # v1.0.0
         with:
           jules_api_key: ${{ secrets.JULES_API_KEY }}
           include_commit_log: true

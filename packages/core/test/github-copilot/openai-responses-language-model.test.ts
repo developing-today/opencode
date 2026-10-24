@@ -260,6 +260,32 @@ describe("doGenerate", () => {
     expect(requests[0]).toMatchObject({ tool_choice: { type: testCase.wireType } })
   })
 
+  test("sends prompt_cache_key from the copilot promptCacheKey provider option", async () => {
+    const requests: unknown[] = []
+    const model = createModel(
+      mock(async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        requests.push(await new Response(init?.body).json())
+        return new Response(
+          JSON.stringify({
+            id: "resp_1",
+            created_at: 0,
+            model: "test-model",
+            output: [],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        )
+      }),
+    )
+
+    await model.doGenerate({
+      prompt: TEST_PROMPT,
+      providerOptions: { copilot: { promptCacheKey: "session-123" } },
+    })
+
+    expect(requests[0]).toMatchObject({ prompt_cache_key: "session-123" })
+  })
+
   test("does not mistake a colliding function name for a hosted tool", async () => {
     const requests: unknown[] = []
     const model = createModel(

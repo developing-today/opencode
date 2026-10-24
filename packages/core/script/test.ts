@@ -7,6 +7,23 @@ const home = directory.path
 const temporary = path.join(home, "tmp")
 await fs.mkdir(temporary)
 
+// Suites that drive a real rg binary (ripgrep, search tools) resolve it
+// from PATH or the global bin cache, which is always cold under the fresh
+// test HOME below. Seed the cache with an ambient rg up front: without
+// one on the runner the resolution would fall through to a network
+// download the test harness forbids, failing those suites wholesale
+// instead of surfacing the missing setup once (#72). CI provisions rg.
+{
+  const name = process.platform === "win32" ? "rg.exe" : "rg"
+  const system = Bun.which(name) ?? Bun.which("rg")
+  if (system) {
+    const target = path.join(home, ".cache", "opencode", "bin", name)
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.copyFile(system, target)
+    if (process.platform !== "win32") await fs.chmod(target, 0o755)
+  }
+}
+
 const environment = {
   ...Object.fromEntries(
     Object.entries(process.env).filter(([name]) => {
@@ -23,6 +40,9 @@ const environment = {
   ),
   HOME: home,
   OPENCODE_TEST_HOME: home,
+  // Tests must never spawn a detached mcpx daemon per test home (#14); the
+  // plugin also refuses on OPENCODE_TEST_HOME, this keeps it explicit.
+  OPENCODE_MCPX_DAEMON: "0",
   XDG_CONFIG_HOME: path.join(home, ".config"),
   XDG_DATA_HOME: path.join(home, ".local", "share"),
   XDG_CACHE_HOME: path.join(home, ".cache"),

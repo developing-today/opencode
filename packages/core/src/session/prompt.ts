@@ -30,6 +30,8 @@ export const prepare = Effect.fn("SessionPrompt.prepare")(function* (request: {
   session: Session.Info
   messageID: SessionMessage.ID
   input: Input
+  /** Renders template variables for skills whose frontmatter opts in with `vars`. */
+  render?: (text: string) => Effect.Effect<string>
 }) {
   const fs = yield* FSUtil.Service
   const instances = yield* Instance.Service
@@ -65,10 +67,11 @@ export const prepare = Effect.fn("SessionPrompt.prepare")(function* (request: {
           const skill = yield* skillService.get(attachment.id)
           if (!skill) return yield* new SkillNotFoundError({ skill: attachment.id })
           prepared.set(skill.id, skill.name)
+          const content = skill.vars && request.render ? yield* request.render(skill.content) : skill.content
           return {
             id: skill.id,
             name: skill.name,
-            text: (yield* Skill.prepare(fs, skill).pipe(Effect.orDie)).output,
+            text: (yield* Skill.prepare(fs, { ...skill, content }).pipe(Effect.orDie)).output,
             mention: attachment.mention,
           }
         }),

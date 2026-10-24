@@ -20,6 +20,11 @@ async function setup(route: Route = { type: "session", sessionID: "session" }) {
     abort: session("abort", "Abort session"),
     timeout: session("timeout", "Timeout session"),
   }
+  // Known to the server but not yet loaded by this client, such as a subagent nested under a root that is not open.
+  const remote: Record<string, Session> = {
+    nested: session("nested", "Nested subagent session", "subagent"),
+  }
+  const synced: Promise<void>[] = []
 
   await Notifications.setup({
     ui: {
@@ -51,6 +56,15 @@ async function setup(route: Route = { type: "session", sessionID: "session" }) {
       session: {
         get: (sessionID: string) => sessions[sessionID],
         status: () => "running" as const,
+        sync: (sessionID: string) => {
+          const loaded = Promise.resolve().then(() => {
+            const info = remote[sessionID]
+            if (!info) throw new Error(`Session not found: ${sessionID}`)
+            sessions[sessionID] = info
+          })
+          synced.push(loaded.catch(() => undefined))
+          return loaded
+        },
       },
     },
   } as unknown as Context)
@@ -60,6 +74,11 @@ async function setup(route: Route = { type: "session", sessionID: "session" }) {
     toasts,
     emit(event: OpenCodeEvent) {
       for (const handler of handlers.get(event.type) ?? []) handler(event)
+    },
+    // Settles session loads the plugin started, then the notifications that waited for them.
+    async settled() {
+      await Promise.all(synced)
+      await Promise.resolve()
     },
   }
 }
@@ -293,6 +312,75 @@ describe("internal notifications TUI plugin", () => {
         message: "boom",
         notification: { when: "blurred" },
         sound: { name: "error", when: "always" },
+      },
+    ])
+  })
+
+  test("loads a session this client has not seen before announcing it", async () => {
+    const harness = await setup()
+
+    harness.emit({ id: "event-1", created: 0, type: "permission.asked", data: permission("permission-1", "nested") })
+    harness.emit(executionStarted("event-2", "nested"))
+    harness.emit(executionSucceeded("event-3", "nested"))
+    harness.emit(executionSucceeded("event-4", "deleted"))
+    await harness.settled()
+
+    expect(harness.notifications).toEqual([
+      {
+        title: "Nested subagent session",
+        message: "Permission needs input",
+        notification: false,
+        sound: { name: "permission", when: "always" },
+      },
+      {
+        title: "Nested subagent session",
+        message: "Session done",
+        notification: false,
+        sound: { name: "subagent_done", when: "always" },
+      },
+      {
+        message: "Session done",
+        notification: { when: "blurred" },
+        sound: { name: "done", when: "always" },
+      },
+    ])
+  })
+
+  test("drops an announcement settled by another client while its session loads", async () => {
+    const harness = await setup()
+
+    harness.emit({ id: "event-1", created: 0, type: "permission.asked", data: permission("permission-1", "nested") })
+    harness.emit({
+      id: "event-2",
+      created: 0,
+      type: "permission.replied",
+      data: { sessionID: "nested", requestID: "permission-1", reply: "once" },
+    })
+    harness.emit({ id: "event-3", created: 0, type: "form.created", data: { form: form("form-1", "nested") } })
+    harness.emit({ id: "event-4", created: 0, type: "form.cancelled", data: { sessionID: "nested", id: "form-1" } })
+    harness.emit(executionStarted("event-5", "nested"))
+    harness.emit(executionFailed("event-6", "nested"))
+    harness.emit(executionStarted("event-7", "nested"))
+    await harness.settled()
+
+    expect(harness.notifications).toEqual([])
+  })
+
+  test("announces only the latest completion deferred while its session loads", async () => {
+    const harness = await setup()
+
+    harness.emit(executionStarted("event-1", "nested"))
+    harness.emit(executionSucceeded("event-2", "nested"))
+    harness.emit(executionStarted("event-3", "nested"))
+    harness.emit(executionSucceeded("event-4", "nested"))
+    await harness.settled()
+
+    expect(harness.notifications).toEqual([
+      {
+        title: "Nested subagent session",
+        message: "Session done",
+        notification: false,
+        sound: { name: "subagent_done", when: "always" },
       },
     ])
   })

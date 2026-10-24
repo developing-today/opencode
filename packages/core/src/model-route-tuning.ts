@@ -157,8 +157,10 @@ export const parseQuotaReset = (message: string | undefined, now: number): numbe
   if (!message) return undefined
   const text = message.toLowerCase()
   if (!/(?:quota|limit|rate limit)/.test(text)) return undefined
+  // The zone designator stays in the capture so Date.parse honours it instead of reading the
+  // timestamp as local time (see ModelRouteLimits.resetAtFromMessage).
   const absolute =
-    /(?:reset|resume|back|available|return)[a-z ]{0,20}(?:at|on)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2})?)?)/.exec(
+    /(?:reset|resume|back|available|return)[a-z ]{0,20}(?:at|on)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?)/.exec(
       text,
     )?.[1]
   if (absolute) {

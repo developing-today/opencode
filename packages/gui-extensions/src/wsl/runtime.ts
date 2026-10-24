@@ -66,6 +66,46 @@ export function shellEscape(value: string) {
   return `'${value.replace(/'/g, `'"'"'`)}'`
 }
 
+// Probe scripts run in a login shell (`sh -lc`), so banner, MOTD, or profile output can precede
+// the answer and can end without a trailing newline. The script therefore prints its `yes`/`no`
+// answer with a leading newline, putting the answer on its own line, and parseProbeAnswer reads
+// that last line: preceding output is never part of the answer, and a banner ending in `yes`
+// cannot become the answer when the tool is missing.
+export function probeScript(tool: string) {
+  return `command -v ${tool} >/dev/null && printf '\\nyes\\n' || printf '\\nno\\n'`
+}
+
+export function parseProbeAnswer(output: string) {
+  return (
+    output
+      .split(/\r?\n/g)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(-1) ?? null
+  )
+}
+
+export function parseDiscoveredCli(output: string) {
+  // Discovery runs in a login shell (`sh -lc`), so a banner, MOTD or profile echo can precede
+  // the discovered path on stdout, and a banner line can itself end in the one path
+  // discoverScript can print (`$HOME/.opencode/bin/opencode`). No ordering or suffix rule can
+  // tell such a banner line from the script's own line when the script prints nothing — the
+  // managed CLI is not installed — so discoverScript frames its output with
+  // OPENCODE_CLI_DISCOVERY_BEGIN/END markers, like versionScript's frame, and only a framed
+  // line ending in that exact suffix is a discovery. Within the frame, take the last such
+  // line, the same last-candidate rule parseVersion follows.
+  const lines = output.split(/\r?\n/g).map((line) => line.trim())
+  const begin = lines.lastIndexOf("OPENCODE_CLI_DISCOVERY_BEGIN")
+  const end = begin === -1 ? -1 : lines.indexOf("OPENCODE_CLI_DISCOVERY_END", begin + 1)
+
+  if (end === -1) return null
+
+  return (
+    lines.slice(begin + 1, end).findLast((line) => line.startsWith("/") && line.endsWith("/.opencode/bin/opencode")) ??
+    null
+  )
+}
+
 /** WSL commands; `t` resolves the extension's copy for errors the user sees. */
 export function createWslRuntime(t: MainContext["t"]) {
   const runWsl = (args: string[], opts: RunWslOptions = {}) => runCommand("wsl", args, opts)
@@ -326,21 +366,21 @@ export function createWslRuntime(t: MainContext["t"]) {
       }
 
       const [bash, curl] = await Promise.all([
-        runWslSh("command -v bash >/dev/null && printf yes || printf no", name, opts),
-        runWslSh("command -v curl >/dev/null && printf yes || printf no", name, opts),
+        runWslSh(probeScript("bash"), name, opts),
+        runWslSh(probeScript("curl"), name, opts),
       ])
 
       return {
         name,
         canExecute: true,
-        hasBash: bash.code === 0 && summarize(bash.stdout) === "yes",
-        hasCurl: curl.code === 0 && summarize(curl.stdout) === "yes",
+        hasBash: bash.code === 0 && parseProbeAnswer(bash.stdout) === "yes",
+        hasCurl: curl.code === 0 && parseProbeAnswer(curl.stdout) === "yes",
         error: null,
       }
     },
 
     async resolveCli(distro: string, opts?: RunWslOptions) {
-      return firstLine((await runWslSh(discoverScript(), distro, opts)).stdout)
+      return parseDiscoveredCli((await runWslSh(discoverScript(), distro, opts)).stdout)
     },
 
     async readCliVersion(command: string, distro: string, opts?: RunWslOptions) {
