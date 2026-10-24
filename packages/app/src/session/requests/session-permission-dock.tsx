@@ -7,6 +7,7 @@ import { useLanguage } from "@/runtime/i18n/language"
 
 export function SessionPermissionDock(props: {
   request: PermissionRequest
+  source?: string
   responding: boolean
   onDecide: (response: "once" | "always" | "reject") => void
 }) {
@@ -29,7 +30,13 @@ export function SessionPermissionDock(props: {
           <span data-slot="permission-icon">
             <Icon name="warning" size="normal" />
           </span>
-          <div data-slot="permission-header-title">{language.t("notification.permission.title")}</div>
+          <div data-slot="permission-header-title">
+            {language.t("notification.permission.title")}
+            <Show when={props.source}>
+              {" — "}
+              <span data-slot="permission-source">{props.source}</span>
+            </Show>
+          </div>
         </div>
       }
       footer={

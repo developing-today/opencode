@@ -48,6 +48,10 @@
     overflow-wrap: anywhere;
   }
 
+  [data-slot="question-source"] {
+    color: var(--v2-text-text-base);
+  }
+
   [data-slot="question-header-actions"] {
     display: flex;
     align-items: center;

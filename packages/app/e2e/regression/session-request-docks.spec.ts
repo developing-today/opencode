@@ -41,6 +41,7 @@ test("shows a pending question dock", async ({ page }) => {
   const question = page.locator('[data-component="dock-prompt"][data-kind="question"]')
   await expect(question).toBeVisible()
   await expect(question.getByText("Which implementation should be used?")).toBeVisible()
+  await expect(question.locator('[data-slot="question-source"]')).toHaveCount(0)
   await expect(question.getByRole("radio", { name: /Minimal/ })).toBeVisible()
   await expect(question.getByRole("radio", { name: /Extended/ })).toBeVisible()
   await expect(page.locator('[data-component="composer"]')).toHaveCount(0)
@@ -193,6 +194,7 @@ test("shows a pending permission dock", async ({ page }) => {
 
   const permission = page.locator('[data-component="dock-prompt"][data-kind="permission"]')
   await expect(permission).toBeVisible()
+  await expect(permission.locator('[data-slot="permission-source"]')).toHaveCount(0)
   await expect(permission.getByText("git status")).toBeVisible()
   await expect(permission.getByText("git diff")).toBeVisible()
   await expect(permission.locator('[data-slot="permission-footer-actions"] button')).toHaveCount(3)
@@ -232,11 +234,53 @@ test("answers a subagent's permission from the root session after a fresh load",
 
   const permission = page.locator('[data-component="dock-prompt"][data-kind="permission"]')
   await expect(permission.getByText("git log")).toBeVisible()
+  await expect(permission.getByText("From Inspect the history")).toBeVisible()
   await permission.getByRole("button", { name: "Allow once" }).click()
   await expect
     .poll(() => replies)
     .toEqual([{ sessionID: childID, permissionID: "permission-child", body: { decision: "once" } }])
   await expect(permission).toHaveCount(0)
+})
+
+test("shows a subagent's question in the root session with its name", async ({ page }) => {
+  const childID = "ses_request_docks_child"
+  // Only the root has a tab: an inactive child tab would load the child's requests on its own.
+  await mockServer(page, {
+    sessions: [
+      { id: sessionID, title },
+      { id: childID, title: "Inspect the history", parentID: sessionID },
+    ],
+    seed: { tabs: [sessionID] },
+    forms: [
+      {
+        id: "frm_question_child",
+        sessionID: childID,
+        title: "Questions",
+        metadata: { kind: "question" },
+        fields: [
+          {
+            key: "q0",
+            type: "string",
+            title: "Implementation",
+            description: "Which implementation should be used?",
+            options: [
+              { value: "minimal", label: "Minimal", description: "Use the smallest correct change" },
+              { value: "extended", label: "Extended", description: "Include additional behavior" },
+            ],
+            custom: true,
+          },
+        ],
+      },
+    ],
+  })
+
+  await page.goto(sessionHref(sessionID))
+  await expectSessionTitle(page, title)
+
+  const question = page.locator('[data-component="dock-prompt"][data-kind="question"]')
+  await expect(question).toBeVisible()
+  await expect(question.getByText("From Inspect the history")).toBeVisible()
+  await expect(question.getByText("Which implementation should be used?")).toBeVisible()
 })
 
 test("restores the draft caret before typing after a request dock closes", async ({ page }) => {
