@@ -160,6 +160,11 @@ export type Editor = {
   get: (id: ID) => Ref | undefined
   update: (id: ID, update: (integration: Types.DeepMutable<Ref>) => void) => void
   remove: (id: ID) => void
+  /**
+   * Gives `to` every connect method of `from` that `to` does not have yet. Environment methods stay with `from`,
+   * so a copy never connects with its source's environment key.
+   */
+  copy: (from: ID, to: ID) => void
   method: {
     list: (integrationID: ID) => readonly Method[]
     update: (implementation: Implementation) => void
@@ -314,10 +319,17 @@ const layer = Layer.effect(
     const statuses = new Map<string, IntegrationConnection.Status>()
     const statusKey = (integrationID: ID, connection: IntegrationConnection.Info) =>
       `${integrationID}:${IntegrationConnection.key(connection)}`
+    const sameMethod = (left: Method, right: Method) => {
+      if (left.type !== right.type) return false
+      if (left.type === "oauth" && right.type === "oauth") return left.id === right.id
+      if (left.type === "command" && right.type === "command") return left.id === right.id
+      if (left.type === "external" && right.type === "external") return left.id === right.id
+      return true
+    }
     const state = State.create<Data, Editor>({
       name: "integration",
       initial: () => ({ integrations: new Map<ID, Entry>() }),
-      editor: (editor) => ({
+      editor: (editor): Editor => ({
         list: () => Array.from(editor.integrations.values(), (entry) => entry.ref) as Ref[],
         get: (id) => editor.integrations.get(id)?.ref as Ref | undefined,
         update: (id, update) => {
@@ -331,6 +343,23 @@ const layer = Layer.effect(
           current.ref.id = id
         },
         remove: (id) => editor.integrations.delete(id),
+        copy: (from, to) => {
+          const source = editor.integrations.get(from)
+          if (!source) return
+          const target: Entry = editor.integrations.get(to) ?? {
+            ref: { id: to, name: to },
+            methods: [],
+            implementations: new Map(),
+          }
+          if (!editor.integrations.has(to)) editor.integrations.set(to, target)
+          for (const method of source.methods) {
+            if (method.type === "env" || target.methods.some((existing) => sameMethod(existing, method))) continue
+            target.methods.push(structuredClone(method))
+            const implementation = method.type === "oauth" ? source.implementations.get(method.id) : undefined
+            if (method.type === "oauth" && implementation)
+              target.implementations.set(method.id, { ...implementation, integrationID: to })
+          }
+        },
         method: {
           list: (integrationID) => (editor.integrations.get(integrationID)?.methods as Method[] | undefined) ?? [],
           update: (implementation) => {
@@ -345,16 +374,7 @@ const layer = Layer.effect(
             if (!editor.integrations.has(implementation.integrationID)) {
               editor.integrations.set(implementation.integrationID, current)
             }
-            const index = current.methods.findIndex((method) => {
-              if (method.type !== implementation.method.type) return false
-              if (method.type === "oauth" && implementation.method.type === "oauth")
-                return method.id === implementation.method.id
-              if (method.type === "command" && implementation.method.type === "command")
-                return method.id === implementation.method.id
-              if (method.type === "external" && implementation.method.type === "external")
-                return method.id === implementation.method.id
-              return true
-            })
+            const index = current.methods.findIndex((method) => sameMethod(method, implementation.method))
             if (index === -1) current.methods.push(implementation.method as Types.DeepMutable<Method>)
             else current.methods[index] = implementation.method as Types.DeepMutable<Method>
             if (implementation.method.type === "oauth") {
@@ -367,13 +387,7 @@ const layer = Layer.effect(
           remove: (integrationID, method) => {
             const current = editor.integrations.get(integrationID)
             if (!current) return
-            const index = current.methods.findIndex((candidate) => {
-              if (candidate.type !== method.type) return false
-              if (candidate.type === "oauth" && method.type === "oauth") return candidate.id === method.id
-              if (candidate.type === "command" && method.type === "command") return candidate.id === method.id
-              if (candidate.type === "external" && method.type === "external") return candidate.id === method.id
-              return true
-            })
+            const index = current.methods.findIndex((candidate) => sameMethod(candidate, method))
             if (index !== -1) current.methods.splice(index, 1)
             if (method.type === "oauth") current.implementations.delete(method.id)
           },

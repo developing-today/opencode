@@ -61,6 +61,7 @@ The `providers` object is keyed by the provider ID used in model references, suc
 | `env` | Ordered environment variable names that can provide the credential. |
 | `package` | Runtime provider package. |
 | `canonical` | Built-in provider ID whose catalog defaults this provider inherits. |
+| `instanceOf` | Provider this one copies with its own sign-in, so several accounts can be used at once. See [Multiple accounts](#multiple-accounts). |
 | `compatibility` | Request and response compatibility overrides for every model of this provider. Model `compatibility` overrides individual fields. `supportsThinkingBlockBinding` and `supportsEffortUpdates` are model-only. |
 | `settings` | Typed OpenCode controls and JSON options passed to the runtime package. |
 | `headers` | String-valued HTTP headers added to requests. |
@@ -86,6 +87,46 @@ models, and connection still apply.
 ```
 
 `settings` is package-specific. A field only has an effect when the selected package supports it.
+
+## Multiple accounts
+
+A provider holds one active credential: signing in again, or `opencode auth switch`, replaces the account it uses.
+To use several accounts of the same provider at the same time, add an instance with `instanceOf`. An instance copies
+the provider's catalog definition and models under a new provider ID and gets its own integration, so it signs in
+separately and keeps its own credential.
+
+```jsonc title="opencode.jsonc"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "providers": {
+    "openai.work": { "instanceOf": "openai" },
+    "anthropic.team": { "instanceOf": "anthropic", "name": "Anthropic (team)" },
+    "opencode-go.2": { "instanceOf": "opencode-go" },
+  },
+}
+```
+
+Then sign each instance in, for example `opencode auth login openai.work`, and select its models as
+`openai.work/gpt-5.5`. An instance offers every sign-in method of its provider, including ChatGPT sign-in for OpenAI,
+but never reads the provider's environment variables. It becomes available once its own account is connected, unless
+its configuration sets `settings.apiKey`. The part after `<provider>.` names the account in the provider's display
+name; any other ID works too. Configure an instance like any provider: `settings`, `headers`, `models` and the other
+fields overlay the copied definition. `instanceOf` must name a built-in or catalog provider, not another instance.
+
+An instance of `opencode` is a second OpenCode Console account. Sign it in with `opencode auth login opencode.work`
+and pick its organization; the providers its Console configuration delivers appear with the same suffix, such as
+`opencode-go.work` for an OpenCode Go subscription. Organization policy, hosted web search and Console MCP servers
+come only from the main `opencode` connection. An instance whose organization sends policies is not used, since its
+policies could not be enforced alongside the main one's; sign that organization in as `opencode` instead.
+
+```jsonc title="opencode.jsonc"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "providers": {
+    "opencode.work": { "instanceOf": "opencode" },
+  },
+}
+```
 
 ## Requests
 

@@ -10,6 +10,7 @@ import { Model } from "../../model.js"
 import { ModelRoute } from "../../model-route.js"
 import { Provider } from "../../provider.js"
 import { Variant } from "../../variant.js"
+import { configuredInstances } from "../../plugin/provider/instance.js"
 import { ConfigEntryObserver } from "./entry-observer.js"
 
 export const Plugin = define({
@@ -23,11 +24,15 @@ export const Plugin = define({
       ctx.integration.reload().pipe(Effect.andThen(ctx.provider.reload())),
     )
     yield* ctx.integration.transform((integrations) => {
+      const instances = configuredInstances(loaded.entries)
       for (const [id, provider] of configuredProviders(loaded.entries)) {
         // The route provider is built by the model-routes plugin, not backed by a credential.
         if (id === ModelRoute.PROVIDER_ID) continue
         const integrationID = id
-        if (!integrations.get(integrationID)) {
+        // Provider plugins have registered their sign-in methods by now, so an instance offers all of them.
+        const base = instances.get(Provider.ID.make(id))
+        if (base) integrations.copy(base, integrationID)
+        if (!integrations.get(integrationID) || (base && integrations.method.list(integrationID).length === 0)) {
           integrations.method.update({
             integrationID,
             method: { type: "key", label: "Manually enter API Key" },
@@ -57,6 +62,7 @@ export const Plugin = define({
     }
     yield* ctx.provider.transform((providers) => {
       const next: typeof sources.models = new Map()
+      const instances = configuredInstances(loaded.entries)
       for (const [id, item] of configuredProviders(loaded.entries)) {
         const providerID = id
         const current = providers.get(providerID)
@@ -74,7 +80,9 @@ export const Plugin = define({
                 id: provider.id,
                 integrationID: provider.integrationID,
               })
-            provider.activation = "enabled"
+            // An instance is available once its own account is connected, unless config supplies the key.
+            if (!instances.has(Provider.ID.make(providerID)) || item.settings?.apiKey !== undefined)
+              provider.activation = "enabled"
             if (item.canonical !== undefined) provider.canonical = item.canonical
             if (item.name) provider.name = item.name
             if (item.package !== undefined) provider.package = item.package

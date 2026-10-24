@@ -282,6 +282,12 @@ describe("ConfigNormalize", () => {
     })
   })
 
+  test("keeps a legacy provider's instanceOf", () => {
+    expect(decoded({ provider: { "openai.work": { instanceOf: "openai", name: "Work" } } }).providers).toEqual({
+      "openai.work": expect.objectContaining({ instanceOf: "openai", name: "Work" }),
+    })
+  })
+
   test("uses a valid retired provider alias when the canonical legacy entry is malformed", () => {
     const result = normalized({
       provider: {
