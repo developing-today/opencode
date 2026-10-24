@@ -75,6 +75,8 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| Running menu rooted at the session tree root                     | 2026-10-24 | #370     |
+| ROADMAP Done records the #368 completion                         | 2026-10-24 | #369     |
 | ROADMAP Done records the #362 and #240 bulk completions          | 2026-10-24 | #367     |
 | Model-route pool descriptions reach the OpenAPI document         | 2026-10-24 | #364     |
 | ROADMAP Done records the #358 and #360 completions               | 2026-10-24 | #363     |
