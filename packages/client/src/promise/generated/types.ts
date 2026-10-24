@@ -2159,6 +2159,7 @@ export type ProviderInfo = {
   id: ProviderID
   canonical?: ProviderID
   integrationID?: IntegrationID
+  instanceOf?: ProviderID
   name: string
   activation: "auto" | "enabled" | "disabled"
   package: string
@@ -2591,6 +2592,7 @@ export type ConfigEntry =
         providers?: {
           [x: string]: {
             canonical?: ProviderID
+            instanceOf?: ProviderID
             name?: string
             env?: Array<string>
             package?: string
