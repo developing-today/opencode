@@ -2055,4 +2055,61 @@ describe("OpencodePlugin instances", () => {
       (server) => Effect.promise(() => server.stop(true)),
     ),
   )
+
+  it.effect("keeps a refused Console account refused when a later load fails", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const state = { failing: false }
+        const server = Bun.serve({
+          port: 0,
+          fetch: (request) => {
+            if (state.failing) return new Response("Unavailable", { status: 502 })
+            const orgID = request.headers.get("x-org-id") ?? ""
+            return Response.json({
+              providers: { "opencode-go": { name: "OpenCode Go", models: { glm: { name: "GLM" } } } },
+              ...(orgID === "org_strict"
+                ? { policies: [{ action: "tool.use", resource: "shell:sudo *", effect: "deny" }] }
+                : {}),
+            })
+          },
+        })
+        return { server, state }
+      }),
+      ({ server, state }) =>
+        Effect.gen(function* () {
+          const providers = yield* Provider.Service
+          const integrations = yield* Integration.Service
+          // The instance's own copy of the Zen catalog, as ProviderInstancePlugin adds it.
+          yield* providers.transform((editor) => {
+            editor.update(Provider.ID.make("opencode.work"), (provider) => {
+              provider.integrationID = work
+              provider.instanceOf = Provider.ID.opencode
+            })
+          })
+          yield* account(work, server.url.origin, "org_strict", "Strict")
+          yield* addInstancePlugin().pipe(inProcess(server))
+          yield* drain
+
+          expect((yield* providers.available()).map((provider) => provider.id)).not.toContain(
+            Provider.ID.make("opencode.work"),
+          )
+
+          state.failing = true
+          yield* TestClock.adjust("1 minute")
+          yield* drain
+
+          // The failed reload keeps the previous snapshot's refusal, so the catalog
+          // copy stays disabled and the connection still reports the refusal.
+          expect(yield* providers.get(Provider.ID.make("opencode-go.work"))).toBeUndefined()
+          expect((yield* providers.available()).map((provider) => provider.id)).not.toContain(
+            Provider.ID.make("opencode.work"),
+          )
+          expect(required(yield* integrations.get(work)).connections[0]?.status).toMatchObject({
+            status: "needs_auth",
+            message: expect.stringContaining("Strict has policies"),
+          })
+        }),
+      ({ server }) => Effect.promise(() => server.stop(true)),
+    ),
+  )
 })

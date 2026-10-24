@@ -262,9 +262,16 @@ export const OpencodePlugin = define<HttpClient.HttpClient | Bus.Service | Manag
                   cause,
                 })
                 // A load that fails for the connection already in place keeps its last config: dropping it
-                // would lift organization policy while personal credentials keep working.
+                // would lift organization policy while personal credentials keep working. A refusal is
+                // kept for the same reason: dropping it would re-enable the refused instance's catalog copy.
                 return IntegrationConnection.key(connection) === IntegrationConnection.key(snapshot.connection)
-                  ? { config: snapshot.config, connection, organization: snapshot.organization, mcp: snapshot.mcp }
+                  ? {
+                      config: snapshot.config,
+                      connection,
+                      organization: snapshot.organization,
+                      mcp: snapshot.mcp,
+                      ...(snapshot.refused ? { refused: snapshot.refused } : {}),
+                    }
                   : { config: undefined, connection, organization: undefined, mcp: undefined }
               }),
             ),
