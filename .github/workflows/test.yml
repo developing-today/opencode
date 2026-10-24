@@ -157,6 +157,18 @@ jobs:
         working-directory: script
         run: bun test turbo-json.test.ts
 
+      - name: Test doc env var guard
+        # Same script/ wiring as the mcpx-cleanup step above: script/ is
+        # not a workspace, so the test file is run explicitly (#116).
+        working-directory: script
+        run: bun test check-doc-env-vars.test.ts
+
+      - name: Check documented env vars have readers
+        # Every OPENCODE_* variable cli.mdx documents must be read
+        # somewhere outside the docs, or the row is a silent no-op (#116).
+        if: runner.os == 'Linux'
+        run: bun run check:doc-env-vars
+
       - name: Configure git identity
         run: |
           git config --global user.email "bot@opencode.ai"
