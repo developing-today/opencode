@@ -213,6 +213,8 @@ export const OpencodePlugin = define<HttpClient.HttpClient | Bus.Service | Manag
           mcp:
             | { servers: NonNullable<typeof RemoteResponse.Type.mcp>["servers"]; headers: Record<string, string> }
             | undefined
+          // An instance account whose organization sends policies, which cannot be enforced for it.
+          refused?: true
         } = { config: undefined, connection: undefined, organization: undefined, mcp: undefined }
         // Status last reported for the active connection, so inference failures can name the fix.
         let reported: IntegrationConnection.Status | undefined
@@ -248,7 +250,7 @@ export const OpencodePlugin = define<HttpClient.HttpClient | Bus.Service | Manag
               return status({
                 status: "needs_auth",
                 message: `${next.organization ?? "This organization"} has policies, which only apply to the main OpenCode Console connection: sign it in with \`opencode auth login opencode\``,
-              }).pipe(Effect.as({ ...next, config: undefined, mcp: undefined }))
+              }).pipe(Effect.as({ ...next, config: undefined, mcp: undefined, refused: true as const }))
             }),
             Effect.catch((cause) =>
               Effect.gen(function* () {
@@ -370,6 +372,11 @@ export const OpencodePlugin = define<HttpClient.HttpClient | Bus.Service | Manag
               })
           }
 
+          // The instance's own copy of the catalog would otherwise still serve the refused account.
+          if (snapshot.refused && providers.get(ids.providerID))
+            providers.update(ids.providerID, (provider) => {
+              provider.activation = "disabled"
+            })
           if (!main) return
           const item = providers.get(Provider.ID.opencode)
           if (!item) return

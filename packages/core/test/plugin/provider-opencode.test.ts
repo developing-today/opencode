@@ -2031,11 +2031,21 @@ describe("OpencodePlugin instances", () => {
           const providers = yield* Provider.Service
           const integrations = yield* Integration.Service
           const managed = yield* ManagedPolicy.Service
+          // The instance's own copy of the Zen catalog, as ProviderInstancePlugin adds it.
+          yield* providers.transform((editor) => {
+            editor.update(Provider.ID.make("opencode.work"), (provider) => {
+              provider.integrationID = work
+              provider.instanceOf = Provider.ID.opencode
+            })
+          })
           yield* account(work, server.url.origin, "org_strict", "Strict")
           yield* addInstancePlugin().pipe(inProcess(server))
           yield* drain
 
           expect(yield* providers.get(Provider.ID.make("opencode-go.work"))).toBeUndefined()
+          expect((yield* providers.available()).map((provider) => provider.id)).not.toContain(
+            Provider.ID.make("opencode.work"),
+          )
           expect(required(yield* integrations.get(work)).connections[0]?.status).toMatchObject({
             status: "needs_auth",
             message: expect.stringContaining("Strict has policies"),
