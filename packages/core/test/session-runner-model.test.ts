@@ -17,7 +17,7 @@ import { testEffect } from "./lib/effect"
 const catalog = Info.make({
   ...Info.default(Provider.ID.make("deepseek"), ID.make("deepseek-chat")),
   package: Provider.aisdk("@ai-sdk/openai"),
-  variants: [{ id: VariantID.make("high") }],
+  variants: [{ id: VariantID.make("high") }, { id: VariantID.make("low") }],
 })
 const runtime = LanguageModel.make({ id: "deepseek-chat", provider: "deepseek", route: OpenAIChat.route })
 
@@ -77,12 +77,20 @@ describe("SessionRunnerModel bare aliases", () => {
   it.effect("expands a bare-alias target that carries its own variant", () =>
     Effect.gen(function* () {
       const models = yield* SessionRunnerModel.Service
+      // The target's variant ("low") deliberately differs from the alias
+      // target's variant ("high" in flash -> deepseek/deepseek-chat#high):
+      // the user's variant must win, not be replaced by the alias's.
       const resolved = yield* models.resolve(
-        session(Ref.make({ providerID: Provider.ID.make("flash"), id: ID.make(""), variant: VariantID.make("high") })),
+        session(Ref.make({ providerID: Provider.ID.make("flash"), id: ID.make(""), variant: VariantID.make("low") })),
         () => Effect.succeed([catalog]),
       )
-      expect(resolved.ref.providerID).toBe(Provider.ID.make("deepseek"))
-      expect(resolved.ref.id).toBe(ID.make("deepseek-chat"))
+      expect(resolved.ref).toEqual(
+        Ref.make({
+          providerID: Provider.ID.make("deepseek"),
+          id: ID.make("deepseek-chat"),
+          variant: VariantID.make("low"),
+        }),
+      )
     }),
   )
 
