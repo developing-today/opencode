@@ -142,6 +142,49 @@ describe("Config.Entry", () => {
   })
 })
 
+describe("ConfigModelRoutes field descriptions", () => {
+  // A description annotated outside the package `optional` helper lands only on the decoded side, so the
+  // encoded JSON schema — what the OpenAPI document and editors are generated from — shows nothing (#240).
+  const described = (schema: Schema.Top) => {
+    const { definitions } = Schema.toJsonSchemaDocument(schema, { onExcessProperty: "error" })
+    const fields: Record<string, string | undefined> = {}
+    for (const definition of Object.values(
+      definitions as Record<string, { properties?: Record<string, { description?: string }> }>,
+    ))
+      for (const [name, property] of Object.entries(definition.properties ?? {})) fields[name] ??= property.description
+    return fields
+  }
+
+  test("every documented field carries its description in the encoded JSON schema", () => {
+    const cases: Array<[Schema.Top, string[]]> = [
+      [ConfigModelRoutes.Budget, ["softLimit"]],
+      [
+        ConfigModelRoutes.Health,
+        [
+          "firstTokenTimeoutMs",
+          "maxResponseTimeMs",
+          "minOutputTokensPerSecond",
+          "sampleWindow",
+          "slowThreshold",
+          "cooldownMs",
+          "quotaCooldownMs",
+        ],
+      ],
+      [ConfigModelRoutes.Window, ["daysOfWeek", "daysOfMonth", "start", "end", "timezone", "from", "until"]],
+      [ConfigModelRoutes.Schedule, ["id", "targets", "factor", "weight", "note"]],
+      [ConfigModelRoutes.GlobalSchedule, ["providers", "models", "targets", "routes", "factor", "weight"]],
+      [ConfigModelRoutes.Route, ["budgets", "hedgeAfterMs", "attempts"]],
+      [ConfigModelRoutes.Tuning, ["enabled", "intervalMinutes", "windowHours", "notes"]],
+      [ConfigModelRoutes.Log, ["captureErrorBodies"]],
+    ]
+    for (const [schema, names] of cases) {
+      const fields = described(schema)
+      for (const name of names) expect(fields[name], name).toBeString()
+    }
+    expect(described(ConfigModelRoutes.Budget).softLimit).toContain("Fraction of an allowance")
+  })
+})
+
 describe("ConfigModelRoutes.Tuning notes", () => {
   test("accepts any string as a note, so one bad line does not refuse the block; a non-string is refused", () => {
     const decode = Schema.decodeUnknownSync(ConfigModelRoutes.Tuning)
