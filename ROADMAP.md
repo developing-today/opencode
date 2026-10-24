@@ -75,6 +75,8 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| Docs stop promising twelve dead OPENCODE_EXPERIMENTAL_* env vars | 2026-10-23 | #357     |
+| ROADMAP Done records the #352 and #114 completions               | 2026-10-23 | #356     |
 | Docs stop promising eleven dead OPENCODE_* env vars              | 2026-10-23 | #354     |
 | ROADMAP Done records the #350 completion                         | 2026-10-23 | #353     |
 | ROADMAP Done records the #347 and #105 completions               | 2026-10-23 | #351     |
