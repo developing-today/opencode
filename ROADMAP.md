@@ -75,6 +75,9 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ModelAlias validates alias variants, settles chains at limit     | 2026-10-24 | #403     |
+| Mini permission prompt names the asking subagent                 | 2026-10-24 | #401     |
+| ROADMAP Done records the #397 completion                         | 2026-10-24 | #400     |
 | ROADMAP Done records the #395 completion                         | 2026-10-24 | #396     |
 | ROADMAP Done records the #387 and #385 completions               | 2026-10-24 | #393     |
 | Bare model aliases expand in the session runner                  | 2026-10-24 | #390     |
