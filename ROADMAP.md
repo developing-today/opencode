@@ -75,6 +75,8 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| Permission and question docks name the subagent that asked       | 2026-10-24 | #384     |
+| ROADMAP Done records the #375 completion                         | 2026-10-24 | #381     |
 | Failed Console reload keeps the policy refusal                   | 2026-10-24 | #377     |
 | ROADMAP Done records the #368 and #123 completions               | 2026-10-24 | #372     |
 | Running menu rooted at the session tree root                     | 2026-10-24 | #370     |
