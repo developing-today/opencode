@@ -113,6 +113,21 @@ its configuration sets `settings.apiKey`. The part after `<provider>.` names the
 name; any other ID works too. Configure an instance like any provider: `settings`, `headers`, `models` and the other
 fields overlay the copied definition. `instanceOf` must name a built-in or catalog provider, not another instance.
 
+An instance of `opencode` is a second OpenCode Console account. Sign it in with `opencode auth login opencode.work`
+and pick its organization; the providers its Console configuration delivers appear with the same suffix, such as
+`opencode-go.work` for an OpenCode Go subscription. Organization policy, hosted web search and Console MCP servers
+come only from the main `opencode` connection. An instance whose organization sends policies is not used, since its
+policies could not be enforced alongside the main one's; sign that organization in as `opencode` instead.
+
+```jsonc title="opencode.jsonc"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "providers": {
+    "opencode.work": { "instanceOf": "opencode" },
+  },
+}
+```
+
 ## Requests
 
 Use `headers` for additional HTTP headers and `body` for JSON fields that should be merged into every request body.
