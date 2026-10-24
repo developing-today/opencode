@@ -250,7 +250,7 @@ async function renderFooter(
 
 // OpenTUI image teardown crashes Bun 1.3.14's Windows test runner after the assertions pass.
 // Keep the native preview coverage on Linux while the attachment behavior remains covered on both platforms below.
-test.skipIf(process.platform === "win32").each([
+test.each([
   { width: 80, height: 24, mono: false, preview: true },
   { width: 24, height: 8, mono: false, preview: true },
   { width: 80, height: 24, mono: true, preview: true },
@@ -584,6 +584,10 @@ test("direct footer preserves a partial multi-field form draft across permission
   const app = await renderFooter({
     height: 16,
     view: { type: "form", request },
+    subagents: {
+      tabs: [{ sessionID: "ses_child", title: "My Subagent", status: "running", background: false }],
+      details: {}, permissions: [], forms: []
+    }
   })
 
   try {
@@ -604,7 +608,7 @@ test("direct footer preserves a partial multi-field form draft across permission
       },
     })
     await app.renderOnce()
-    expect(app.captureCharFrame()).toContain("Permission required")
+    expect(app.captureCharFrame()).toContain("From My Subagent")
 
     app.setView({ type: "form", request })
     await app.renderOnce()
