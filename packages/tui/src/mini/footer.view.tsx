@@ -251,6 +251,13 @@ export function RunFooterView(props: RunFooterViewProps) {
     const view = active()
     return view.type === "permission" ? view : undefined
   })
+  const permissionAskerName = createMemo(() => {
+    const req = permission()?.request
+    if (!req) return undefined
+    const sub = tabs().find((t) => t.sessionID === req.sessionID)
+    if (!sub) return undefined
+    return sub.title ? `From ${sub.title}` : "From subagent"
+  })
   const form = createMemo<Extract<FooterView, { type: "form" }> | undefined>(() => {
     const view = active()
     return view.type === "form" ? view : undefined
@@ -918,6 +925,7 @@ export function RunFooterView(props: RunFooterViewProps) {
                             block={block()}
                             onReply={props.onPermissionReply}
                             mono={props.mono}
+                            askerName={permissionAskerName()}
                           />
                         </Match>
                         <Match when={active().type === "form"}>

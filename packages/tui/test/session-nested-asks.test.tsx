@@ -28,12 +28,12 @@ test("the root view prompts for and answers asks a nested subagent left pending 
   const frame = () => setup.captureCharFrame()
 
   // The grandchild is two levels below the viewed root, so its asks appear only once the whole tree is discovered.
-  await until(() => frame().includes("Permission required") && frame().includes("echo nested-permission"), frame)
+  await until(() => frame().includes(`From ${grandchild.title}`) && frame().includes("echo nested-permission"), frame)
   setup.mockInput.pressEnter()
   await until(() => setup.replies.permission.length === 1, frame)
   expect(setup.replies.permission).toEqual([{ decision: "once" }])
 
-  await until(() => frame().includes(form.title) && !frame().includes("Permission required"), frame)
+  await until(() => frame().includes(form.title) && !frame().includes(`From ${grandchild.title}`), frame)
   setup.mockInput.pressEnter()
   await until(() => setup.replies.form.length === 1, frame)
   await until(() => !frame().includes(form.title), frame)

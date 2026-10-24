@@ -16,6 +16,7 @@ import { usePathFormatter } from "../../context/path-format"
 import { SimulationSemantics } from "../../simulation/semantics"
 import { PatchDiff } from "../../component/patch-diff"
 import { useToast } from "../../ui/toast"
+import { useRouteData } from "../../context/route"
 
 type PermissionStage = "permission" | "reject"
 
@@ -113,11 +114,20 @@ function EditBody(props: { file?: string; diff?: string; patch?: string }) {
 export function PermissionPrompt(props: { request: PermissionRequest; directory?: string }) {
   const data = useData()
   const toast = useToast()
+  const route = useRouteData("session")
   const [store, setStore] = createStore({
     stage: "permission" as PermissionStage,
   })
   const pathFormatter = usePathFormatter()
   const session = createMemo(() => data.session.get(props.request.sessionID))
+
+  const promptTitle = createMemo(() => {
+    if (route.sessionID && props.request.sessionID !== route.sessionID) {
+      const title = session()?.title
+      return title ? `From ${title}` : "From subagent"
+    }
+    return "Permission required"
+  })
 
   const source = createMemo(() => {
     const tool = props.request.source
@@ -201,7 +211,7 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
             <box flexDirection="column" gap={0}>
               <box flexDirection="row" gap={1} flexShrink={0}>
                 <text fg={theme.text.feedback.warning.base}>{"△"}</text>
-                <text fg={theme.text.base}>Permission required</text>
+                <text fg={theme.text.base}>{promptTitle()}</text>
               </box>
               <Show when={props.request.action !== "shell" && current.title}>
                 <box flexDirection="row" gap={1} paddingLeft={2} flexShrink={0}>
@@ -216,8 +226,8 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
 
           const body = (
             <SessionQuestion
-              title="Permission required"
-              semanticLabel={permissionSemanticLabel(props.request.action, current.title)}
+              title={promptTitle()}
+              semanticLabel={permissionSemanticLabel(props.request.action, current.title, promptTitle())}
               instance={props.request.id}
               header={header()}
               body={(option) => (
@@ -265,8 +275,8 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
   )
 }
 
-export function permissionSemanticLabel(action: string, title?: string) {
-  return `Permission required: ${title ?? action}`
+export function permissionSemanticLabel(action: string, title?: string, promptTitle?: string) {
+  return `${promptTitle ?? "Permission required"}: ${title ?? action}`
 }
 
 function RejectPrompt(props: {
