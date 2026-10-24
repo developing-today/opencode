@@ -33,7 +33,7 @@ type RunningItem = {
 
 export function SessionRunningMenu(props: {
   sessionID?: string
-  // The session whose running work is listed: this one, or its parent inside a subagent.
+  // The session whose running work is listed: this one, or the root of its tree inside a subagent.
   owner?: string
   blocking: readonly { type: "shell" | "subagent"; partID: string; id?: string; label?: string }[]
   tasks: readonly BackgroundTask[]
