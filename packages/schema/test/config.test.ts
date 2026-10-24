@@ -172,7 +172,7 @@ describe("ConfigModelRoutes field descriptions", () => {
       ],
       [ConfigModelRoutes.Window, ["daysOfWeek", "daysOfMonth", "start", "end", "timezone", "from", "until"]],
       [ConfigModelRoutes.Schedule, ["id", "targets", "factor", "weight", "note"]],
-      [ConfigModelRoutes.GlobalSchedule, ["providers", "models", "routes", "factor", "weight"]],
+      [ConfigModelRoutes.GlobalSchedule, ["providers", "models", "targets", "routes", "factor", "weight"]],
       [ConfigModelRoutes.Route, ["budgets", "hedgeAfterMs", "attempts"]],
       [ConfigModelRoutes.Tuning, ["enabled", "intervalMinutes", "windowHours", "notes"]],
       [ConfigModelRoutes.Log, ["captureErrorBodies"]],
