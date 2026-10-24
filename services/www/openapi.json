@@ -15400,23 +15400,27 @@
                 "type": "object",
                 "properties": {
                   "enabled": {
-                    "type": "boolean"
+                    "type": "boolean",
+                    "description": "Review routing history on a schedule and put the resulting adjustments in force without asking, for every route that uses rules as well as those at adaptive or higher. They only lower a target's share or skip it, and lapse on their own. Defaults to false."
                   },
                   "intervalMinutes": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
-                    "maximum": 1440
+                    "maximum": 1440,
+                    "description": "Minutes between reviews. Defaults to 15."
                   },
                   "windowHours": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
-                    "maximum": 336
+                    "maximum": 336,
+                    "description": "How much history each review looks at. Defaults to 24."
                   },
                   "notes": {
                     "type": "array",
                     "items": {
                       "type": "string"
-                    }
+                    },
+                    "description": "What the history cannot say, one note per line as `match: text`, where `match` is a case-insensitive substring of provider/model. A text that states when a limit returns, such as `reset at 2026-01-01` or `back in 3 hours`, skips the matching targets until then. The rest is shown to the agent by route_stats."
                   }
                 },
                 "additionalProperties": false
@@ -15425,7 +15429,8 @@
                 "type": "object",
                 "properties": {
                   "captureErrorBodies": {
-                    "type": "boolean"
+                    "type": "boolean",
+                    "description": "Keep the first 2 KB of a failed request's error body in the routing history, with credentials redacted. A provider body can echo the request, so this is off by default. Defaults to false."
                   }
                 },
                 "additionalProperties": false
@@ -15780,7 +15785,8 @@
           "softLimit": {
             "type": "number",
             "minimum": 0.125,
-            "maximum": 1
+            "maximum": 1,
+            "description": "Fraction of an allowance at which the target is passed over. Defaults to 0.9."
           }
         },
         "additionalProperties": false
@@ -15795,36 +15801,42 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Provider IDs the change covers, compared case-insensitively."
           },
           "models": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Model ID patterns the change covers, `*` allowed, e.g. [\"*flash*\"]."
           },
           "targets": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Full `provider/model` patterns, `*` allowed, e.g. [\"deepseek/*\", \"openai/gpt-6-*\"]."
           },
           "routes": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Route IDs the change is limited to, including nested ones. Empty or unset means every route."
           },
           "when": {
             "$ref": "#/components/schemas/Config.ModelRoute.WindowEncoded"
           },
           "factor": {
             "type": "number",
-            "exclusiveMinimum": 0
+            "exclusiveMinimum": 0,
+            "description": "Multiplies the target's configured weight while the window is active."
           },
           "weight": {
             "type": "number",
-            "exclusiveMinimum": 0
+            "exclusiveMinimum": 0,
+            "description": "Sets the target's weight outright while the window is active, instead of scaling it."
           },
           "note": {
             "type": "string"
@@ -15860,36 +15872,43 @@
                     "type": "boolean",
                     "enum": [false]
                   }
-                ]
+                ],
+                "description": "Fail over if the target produces no response output within this many milliseconds. Defaults to 10000."
               },
               "maxResponseTimeMs": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 3600000
+                "maximum": 3600000,
+                "description": "Count a completed response as slow when it exceeds this many milliseconds, measured to the end of the model's response. Tools that the step runs afterwards do not count."
               },
               "minOutputTokensPerSecond": {
                 "type": "number",
-                "exclusiveMinimum": 0
+                "exclusiveMinimum": 0,
+                "description": "Count a completed response as slow when output throughput, from the model's first output to the end of its response, falls below this rate."
               },
               "sampleWindow": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 50
+                "maximum": 50,
+                "description": "Number of completed requests in the rolling performance window. Defaults to 5."
               },
               "slowThreshold": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 50
+                "maximum": 50,
+                "description": "Slow requests in the window that mark a target degraded. Defaults to 3."
               },
               "cooldownMs": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 3600000
+                "maximum": 3600000,
+                "description": "How long a failed or degraded target is skipped. Defaults to 60000."
               },
               "quotaCooldownMs": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
-                "maximum": 3600000
+                "maximum": 3600000,
+                "description": "How long a target is skipped after the provider reports an exhausted quota without saying when it resets. A reported retry-after always wins. Defaults to 900000."
               }
             },
             "additionalProperties": false
@@ -15898,17 +15917,20 @@
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/Config.ModelRoute.BudgetEncoded"
-            }
+            },
+            "description": "Allowances keyed by target model reference, e.g. { \"openai/gpt-6-luna\": { \"requestsPerDay\": 500, \"tokensPerMinute\": 200000 } }. Usage is counted from every request OpenCode makes to the target and is restored from history after a restart."
           },
           "hedgeAfterMs": {
             "type": "integer",
             "exclusiveMinimum": 0,
-            "maximum": 3600000
+            "maximum": 3600000,
+            "description": "Send the same request to the next target when the current one has produced no output after this many milliseconds. The first to answer wins and the other is cancelled; nothing is shown or run before a winner is known. Costs a duplicate request whenever the first target is slow. Off by default."
           },
           "attempts": {
             "type": "integer",
             "exclusiveMinimum": 0,
-            "maximum": 50
+            "maximum": 50,
+            "description": "Total requests to make against one target before failing over to the next, so 2 allows one retry. Defaults to 2. Retries only happen before any response output, so no tool call ever runs twice."
           },
           "autonomy": {
             "type": "string",
@@ -15939,27 +15961,32 @@
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Name for the schedule, shown in decisions and editors."
           },
           "targets": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Target references this change covers, `*` allowed, e.g. [\"deepseek/*\", \"openai/gpt-6-*\"]. Empty or unset means every target of the route."
           },
           "when": {
             "$ref": "#/components/schemas/Config.ModelRoute.WindowEncoded"
           },
           "factor": {
             "type": "number",
-            "exclusiveMinimum": 0
+            "exclusiveMinimum": 0,
+            "description": "Multiplies the target's configured weight while the window is active. 0.8 makes a weight of 2 become 1.6; 1.2 makes it 2.4. Exactly one of factor and weight is expected."
           },
           "weight": {
             "type": "number",
-            "exclusiveMinimum": 0
+            "exclusiveMinimum": 0,
+            "description": "Sets the target's weight outright while the window is active, instead of scaling it. Applied before any user preference for the target."
           },
           "note": {
-            "type": "string"
+            "type": "string",
+            "description": "Why the schedule exists, kept for review."
           }
         },
         "required": ["when"],
@@ -16031,7 +16058,8 @@
                 }
               ],
               "description": "A weekday as a name or 0 (Sunday) to 6 (Saturday)."
-            }
+            },
+            "description": "Weekdays the window is active on. Empty or unset means every day."
           },
           "daysOfMonth": {
             "type": "array",
@@ -16048,24 +16076,30 @@
                 }
               ],
               "description": "A day of the month, 1 to 31, or -1 for the last day of the month."
-            }
+            },
+            "description": "Days of the month the window is active on. Empty or unset means every day."
           },
           "start": {
-            "type": "string"
+            "type": "string",
+            "description": "Local start of the daily window as \"HH:mm\". Unset means from the start of the day. A start later than the end runs past midnight into the following morning."
           },
           "end": {
-            "type": "string"
+            "type": "string",
+            "description": "Local end of the daily window as \"HH:mm\", exclusive. Unset means to the end of the day."
           },
           "timezone": {
-            "type": "string"
+            "type": "string",
+            "description": "IANA timezone such as \"America/Chicago\". Unset means the host's local timezone."
           },
           "from": {
             "type": "integer",
-            "exclusiveMinimum": 0
+            "exclusiveMinimum": 0,
+            "description": "Epoch milliseconds before which the window never applies."
           },
           "until": {
             "type": "integer",
-            "exclusiveMinimum": 0
+            "exclusiveMinimum": 0,
+            "description": "Epoch milliseconds after which the window never applies."
           }
         },
         "additionalProperties": false
