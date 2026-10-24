@@ -75,6 +75,8 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| Model-route pool descriptions reach the OpenAPI document         | 2026-10-24 | #364     |
+| ROADMAP Done records the #358 and #360 completions               | 2026-10-24 | #363     |
 | ROADMAP Done records the #355 and #116 completions               | 2026-10-24 | #361     |
 | Doc-env-var guard matches whole variable names                   | 2026-10-24 | #359     |
 | Docs stop promising twelve dead OPENCODE_EXPERIMENTAL_* env vars | 2026-10-23 | #357     |
