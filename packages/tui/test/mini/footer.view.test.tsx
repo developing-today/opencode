@@ -250,7 +250,7 @@ async function renderFooter(
 
 // OpenTUI image teardown crashes Bun 1.3.14's Windows test runner after the assertions pass.
 // Keep the native preview coverage on Linux while the attachment behavior remains covered on both platforms below.
-test.each([
+test.skipIf(process.platform === "win32").each([
   { width: 80, height: 24, mono: false, preview: true },
   { width: 24, height: 8, mono: false, preview: true },
   { width: 80, height: 24, mono: true, preview: true },
