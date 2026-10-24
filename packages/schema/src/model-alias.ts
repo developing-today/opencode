@@ -57,6 +57,7 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
   let explicitVariant: string | undefined
   const visited = new Set<string>()
   let depth = 0
+  let settled = false
 
   while (depth < MAX_DEPTH) {
     depth++
@@ -69,6 +70,9 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
     const hashIdx = current.indexOf("#")
     let base = hashIdx === -1 ? current : current.slice(0, hashIdx)
     const variantInCurrent = hashIdx === -1 ? undefined : current.slice(hashIdx + 1)
+    if (variantInCurrent !== undefined && (!variantInCurrent || variantInCurrent.includes("#"))) {
+      throw new Error(`Invalid model reference: ${current}`)
+    }
     if (variantInCurrent !== undefined && explicitVariant === undefined) {
       explicitVariant = variantInCurrent
     }
@@ -81,6 +85,7 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
         continue
       }
       // If it doesn't contain a slash and isn't an alias, cannot be a valid standard ref
+      settled = true
       break
     }
 
@@ -91,6 +96,7 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
 
     // Check if the exact provider/model exists; if so, real ID wins
     if (exists && exists({ providerID: provider, modelID: model })) {
+      settled = true
       break
     }
 
@@ -147,10 +153,11 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
       continue
     }
 
+    settled = true
     break
   }
 
-  if (depth >= MAX_DEPTH) {
+  if (!settled) {
     throw new AliasMaxDepthError(`Max alias resolution depth exceeded for: ${input}`)
   }
 
