@@ -8,6 +8,7 @@ import { Agent } from "../../agent.js"
 import { Config } from "../../config.js"
 import { Job } from "../../job.js"
 import { Model } from "../../model.js"
+import { ModelAlias } from "../../model-alias.js"
 import { Permission } from "../../permission.js"
 import { Session } from "../../session.js"
 import { SessionSchema } from "../../session/schema.js"
@@ -76,14 +77,22 @@ export const Plugin = {
     const subagents = yield* SubagentJob.Service
 
     const resolveModel = Effect.fn("SubagentTool.resolveModel")(function* (input: string) {
+      const aliases = Config.latest(yield* config.entries(), "aliases")
+      const availableModels = yield* models.available()
+      const exists = ({ providerID, modelID }: { providerID: string; modelID: string }) =>
+        availableModels.some((m) => m.providerID === providerID && m.id === modelID)
+      let resolved = input
+      try {
+        resolved = ModelAlias.resolve(aliases, input, exists)
+      } catch {}
       const ref = yield* Effect.try({
-        try: () => Model.Ref.parse(input),
+        try: () => Model.Ref.parse(resolved),
         catch: () =>
           new ToolFailure({
             message: `Invalid model "${input}". Use "providerID/modelID" or "providerID/modelID#variant".`,
           }),
       })
-      const model = (yield* models.available()).find(
+      const model = availableModels.find(
         (model) => model.providerID === ref.providerID && model.id === ref.id,
       )
       if (model === undefined)

@@ -232,6 +232,62 @@ explicit values replace the fallbacks. Add `disabled: true` to hide a model from
 }
 ```
 
+### Configured Aliases
+
+Configure short, reusable aliases for providers, models, and reasoning effort levels (variants) under the top-level `aliases` key (or `experimental.aliases`):
+
+```jsonc title="opencode.jsonc"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "aliases": {
+    // 1. Provider aliases: map short nicknames to real provider IDs
+    "providers": {
+      "ds": "deepseek",
+      "cf": "cloudflare-gateway"
+    },
+    // 2. Model aliases:
+    //    - Bare key ("flash"): global alias expanding to a full ref "provider/model[#variant]"
+    //    - Scoped key ("provider/name"): scoped alias within that provider
+    "models": {
+      "flash": "deepseek/deepseek-chat#high",
+      "deepseek/pro": "deepseek-v4-pro"
+    },
+    // 3. Effort / variant aliases:
+    //    Supports four levels of specificity (most specific pattern wins):
+    //    - Provider + model effort: "provider/model#alias"
+    //    - Model effort across providers: "*/model#alias"
+    //    - Provider effort across models: "provider/*#alias"
+    //    - Global effort across all: "alias" or "*/*#alias"
+    "variants": {
+      "hi": "high",
+      "deepseek/*#hi": "max",
+      "*/gpt-6-luna#hi": "xhigh",
+      "deepseek/deepseek-chat#lo": "low"
+    }
+  }
+}
+```
+
+#### The Six Alias Kinds
+
+| Kind | Key Pattern | Example | Resolves |
+| --- | --- | --- | --- |
+| **Model (global)** | `"<alias>"` | `"flash": "deepseek/deepseek-chat#high"` | `"flash"` &rarr; `deepseek/deepseek-chat#high` |
+| **Model (provider-scoped)** | `"<provider>/<alias>"` | `"deepseek/pro": "deepseek-v4-pro"` | `"deepseek/pro"` &rarr; `deepseek/deepseek-v4-pro` |
+| **Provider** | `"<alias>"` | `"ds": "deepseek"` | `"ds/deepseek-chat"` &rarr; `deepseek/deepseek-chat` |
+| **Effort level (bare)** | `"<alias>"` | `"hi": "high"` | `openai/gpt-4o#hi` &rarr; `openai/gpt-4o#high` |
+| **Provider effort** | `"<provider>/*#<alias>"` | `"deepseek/*#hi": "max"` | `deepseek/any-model#hi` &rarr; `deepseek/any-model#max` |
+| **Model effort** | `"*/<model>#<alias>"` | `"*/gpt-6-luna#hi": "xhigh"` | `any-provider/gpt-6-luna#hi` &rarr; `any-provider/gpt-6-luna#xhigh` |
+| **Provider model effort** | `"<provider>/<model>#<alias>"` | `"deepseek/deepseek-chat#lo": "low"` | `deepseek/deepseek-chat#lo` &rarr; `deepseek/deepseek-chat#low` |
+
+#### Resolution Rules & Precedence
+
+1. **Global model expansion**: If input has no `/`, it matches against `aliases.models`. Explicit `#variant` on the input overrides the alias's default variant (e.g. `flash#minimal` overrides `high`).
+2. **Provider resolution**: If the provider prefix matches an entry in `aliases.providers`, it is mapped to the real provider ID. Real provider and model IDs that already exist take precedence.
+3. **Provider-scoped models**: Evaluated after provider alias resolution. Scoped models without a `/` remain under their resolved provider.
+4. **Effort resolution**: Evaluated using strict specificity: `provider/model#v` &gt; `*/model#v` &gt; `provider/*#v` &gt; `*/*#v` &gt; bare `v`. Unaliased variants pass through unchanged.
+5. **Cycle safety**: Chained expansions are supported (e.g. `ds/pro` &rarr; `deepseek/pro` &rarr; `deepseek/deepseek-v4-pro`). Cyclic references are caught immediately with `AliasCycleError`.
+
 ## Reasoning
 
 For an OpenAI-compatible model that streams reasoning in a custom assistant-message field, set

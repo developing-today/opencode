@@ -3,7 +3,7 @@ export * as ModelResolver from "./model-resolver.js"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { HttpOptions, LanguageModel, mergeHttpOptions, ProviderConfigurationError } from "@opencode/ai"
 import { Auth } from "@opencode/ai/route"
-import { Context, Effect, Layer, Result, Schema, Struct } from "effect"
+import { Context, Effect, Layer, Option, Result, Schema, Struct } from "effect"
 import { AISDK } from "./aisdk.js"
 import { Credential } from "./credential.js"
 import { Integration } from "./integration.js"
@@ -11,6 +11,8 @@ import { Capabilities, ID, Info, Model, Ref, VariantID } from "./model.js"
 import type { RuntimeInfo } from "./model.js"
 import { Npm } from "@opencode/util/npm"
 import { Provider } from "./provider.js"
+import { Config } from "./config.js"
+import { ModelAlias } from "./model-alias.js"
 import { ModelRoute } from "./model-route.js"
 import { ModelRouteAutonomy } from "./model-route-autonomy.js"
 import { ModelRouteLog } from "./model-route-log.js"
@@ -401,6 +403,7 @@ export const layer = Layer.effect(
     const integrations = yield* Integration.Service
     const npm = yield* Npm.Service
     const aisdk = yield* AISDK.Service
+    const config = yield* Effect.serviceOption(Config.Service)
     const load = Effect.fn("ModelResolver.resolveModel")(function* (selected: Info, variant?: VariantID) {
       const provider = yield* providers.get(selected.providerID)
       const connection = yield* integrations.connection.active(
@@ -590,8 +593,30 @@ export const layer = Layer.effect(
 
     return Service.of({
       resolve: Effect.fn("ModelResolver.resolve")(function* (requested) {
-        const selected = requested
-          ? yield* models.get(requested.providerID, requested.id)
+        let target = requested
+        if (target && Option.isSome(config)) {
+          const cfg = config.value
+          const entries = yield* cfg.entries()
+          const aliases = Config.latest(entries, "aliases")
+          if (aliases) {
+            const availableModels = yield* models.available()
+            const exists = ({ providerID, modelID }: { providerID: string; modelID: string }) =>
+              availableModels.some((m) => m.providerID === providerID && m.id === modelID)
+            const refStr = target.variant
+              ? `${target.providerID}/${target.id}#${target.variant}`
+              : `${target.providerID}/${target.id}`
+            try {
+              const res = ModelAlias.resolveRef(aliases, refStr, exists)
+              target = Ref.make({
+                providerID: Provider.ID.make(res.providerID),
+                id: ID.make(res.id),
+                ...(res.variant ? { variant: VariantID.make(res.variant) } : {}),
+              })
+            } catch {}
+          }
+        }
+        const selected = target
+          ? yield* models.get(target.providerID, target.id)
           : yield* models
               .default()
               .pipe(
@@ -604,7 +629,7 @@ export const layer = Layer.effect(
                 ),
               )
         if (!selected) return undefined
-        return yield* resolveSelected(selected, requested?.variant)
+        return yield* resolveSelected(selected, target?.variant)
       }),
       resolveModel: (selected, variant, sessionID) => resolveSelected(selected, variant, sessionID),
     })

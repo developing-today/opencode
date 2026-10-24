@@ -16,6 +16,7 @@ import { ConfigPlugin } from "@opencode/schema/config/plugin"
 import { ConfigPolicy } from "@opencode/schema/config/policy"
 import { ConfigProvider } from "@opencode/schema/config/provider"
 import { ConfigReference } from "@opencode/schema/config/reference"
+import { ConfigAlias } from "@opencode/schema/config/aliases"
 import { ConfigExperimental } from "@opencode/schema/config/experimental"
 import { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
 import { Permission } from "@opencode/schema/permission"
@@ -26,6 +27,7 @@ import { ConfigPermissionV1 } from "../v1/config/permission.js"
 import { ConfigPluginV1 } from "../v1/config/plugin.js"
 import { ConfigProviderV1 } from "../v1/config/provider.js"
 import { ConfigMigrateV1 } from "../v1/config/migrate.js"
+import { ModelAlias } from "../model-alias.js"
 import { PositiveInt } from "../schema.js"
 
 export interface Diagnostic {
@@ -99,6 +101,8 @@ export function normalize(input: unknown): Result {
   if (update !== undefined) encoded.update = update
   if (legacyShare !== undefined) encoded.share = legacyShare
 
+  const aliases = normalizeAliases(input, encoded, diagnostics)
+
   const legacyReferences = decodeMap(input.reference, ConfigReference.Entry, ["reference"], diagnostics, decodeEncoded)
   const nativeReferences = decodeMap(
     input.references,
@@ -116,12 +120,14 @@ export function normalize(input: unknown): Result {
     diagnostics,
   )
 
-  const legacyCommands = decodeMap(input.command, ConfigCommandV1.Info, ["command"], diagnostics, decodeValue)
-  diagnoseSelectionMap(input.command, ["command"], diagnostics)
+  const inputCommand = resolveEntryModels(input.command, aliases)
+  const inputCommands = resolveEntryModels(input.commands, aliases)
+  const legacyCommands = decodeMap(inputCommand, ConfigCommandV1.Info, ["command"], diagnostics, decodeValue)
+  diagnoseSelectionMap(inputCommand, ["command"], diagnostics, aliases)
   const migratedCommands = mapValues(legacyCommands, (value) =>
     canonical(ConfigCommand.Info, ConfigMigrateV1.migrateCommand(value)),
   )
-  const nativeCommands = decodeMap(input.commands, ConfigCommand.Info, ["commands"], diagnostics, decodeEncoded)
+  const nativeCommands = decodeMap(inputCommands, ConfigCommand.Info, ["commands"], diagnostics, decodeEncoded)
   mergeMap(
     encoded,
     "commands",
@@ -131,8 +137,12 @@ export function normalize(input: unknown): Result {
     diagnostics,
   )
 
+  const inputAgent = resolveEntryModels(input.agent, aliases)
+  const inputMode = resolveEntryModels(input.mode, aliases)
+  const inputAgents = resolveEntryModels(input.agents, aliases)
+
   const legacyAgents = mapValues(
-    decodeMap(input.agent, ConfigAgentV1.Info, ["agent"], diagnostics, decodeValue),
+    decodeMap(inputAgent, ConfigAgentV1.Info, ["agent"], diagnostics, decodeValue),
     (value) => canonical(ConfigAgent.Info, ConfigMigrateV1.migrateAgent(value)),
   )
   const legacySmallModel = own(input, "small_model")
@@ -150,13 +160,13 @@ export function normalize(input: unknown): Result {
       model: migratedSmallModel,
       ...legacyAgents.title,
     }
-  const modeAgents = mapValues(decodeMap(input.mode, ConfigAgentV1.Info, ["mode"], diagnostics, decodeValue), (value) =>
+  const modeAgents = mapValues(decodeMap(inputMode, ConfigAgentV1.Info, ["mode"], diagnostics, decodeValue), (value) =>
     canonical(ConfigAgent.Info, ConfigMigrateV1.migrateAgent({ ...value, mode: "primary" })),
   )
   const migratedAgents = mergeMaps(legacyAgents, modeAgents, ["agents"], diagnostics)
-  const nativeAgents = decodeMap(input.agents, ConfigAgent.Info, ["agents"], diagnostics, decodeEncoded)
-  diagnoseAgentUnsupported(input.agent, ["agent"], diagnostics)
-  diagnoseAgentUnsupported(input.mode, ["mode"], diagnostics)
+  const nativeAgents = decodeMap(inputAgents, ConfigAgent.Info, ["agents"], diagnostics, decodeEncoded)
+  diagnoseAgentUnsupported(inputAgent, ["agent"], diagnostics, aliases)
+  diagnoseAgentUnsupported(inputMode, ["mode"], diagnostics, aliases)
   mergeMap(
     encoded,
     "agents",
@@ -194,13 +204,14 @@ export function normalize(input: unknown): Result {
   normalizeMcp(input, encoded, diagnostics)
   normalizeCompaction(input, encoded, diagnostics)
   normalizePolicies(input, encoded, diagnostics)
-  normalizeExperimental(input, encoded, diagnostics)
+  normalizeExperimental(input, encoded, diagnostics, aliases)
   normalizeWatcher(input, encoded, diagnostics)
   normalizeFormatter(input, encoded, diagnostics)
   normalizeLsp(input, encoded, diagnostics)
 
+  const rawModel = resolveModelString(input.model, aliases)
   const model = own(input, "model")
-    ? decodeValue(ConfigModel.Selection, input.model, ["model"], diagnostics)
+    ? decodeValue(ConfigModel.Selection, rawModel, ["model"], diagnostics)
     : undefined
   if (model) encoded.model = { ...model, providerID: ConfigMigrateV1.providerID(model.providerID) }
 
@@ -451,6 +462,7 @@ function normalizeExperimental(
   input: Record<string, unknown>,
   encoded: Record<string, unknown>,
   diagnostics: Diagnostic[],
+  aliases?: ModelAlias.Aliases,
 ) {
   const result: Record<string, unknown> = {}
   if (own(input, "experimental")) {
@@ -518,8 +530,9 @@ function normalizeExperimental(
         if (value !== undefined) result.model_route_log = value
       }
       if (own(experimental, "model_routes")) {
+        const resolvedRoutes = resolveRouteTargets(experimental.model_routes, aliases)
         const value = decodeMap(
-          experimental.model_routes,
+          resolvedRoutes,
           ConfigModelRoutes.Route,
           ["experimental", "model_routes"],
           diagnostics,
@@ -530,6 +543,18 @@ function normalizeExperimental(
           (isRecord(experimental.model_routes) && !Object.keys(experimental.model_routes).length)
         )
           result.model_routes = value
+      }
+      if (own(experimental, "aliases") && !encoded.aliases) {
+        const value = decodeEncoded(
+          ConfigAlias.Info,
+          experimental.aliases,
+          ["experimental", "aliases"],
+          diagnostics,
+        )
+        if (value !== undefined) {
+          result.aliases = value
+          encoded.aliases = value
+        }
       }
       if (own(experimental, "model_route_schedules")) {
         const value = decodeList(
@@ -546,6 +571,77 @@ function normalizeExperimental(
   }
   if (Object.keys(result).length || (isRecord(input.experimental) && !Object.keys(input.experimental).length))
     encoded.experimental = result
+}
+
+function normalizeAliases(
+  input: Record<string, unknown>,
+  encoded: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+): ModelAlias.Aliases | undefined {
+  const topAliases = isRecord(input.aliases) ? input.aliases : undefined
+  const expAliases =
+    isRecord(input.experimental) && isRecord(input.experimental.aliases)
+      ? input.experimental.aliases
+      : undefined
+  const raw = topAliases ?? expAliases
+  if (!raw) return undefined
+  const decoded = decodeEncoded(
+    ConfigAlias.Info,
+    raw,
+    topAliases ? ["aliases"] : ["experimental", "aliases"],
+    diagnostics,
+  )
+  if (decoded) {
+    encoded.aliases = decoded
+    return decoded
+  }
+  return undefined
+}
+
+function resolveModelString(model: unknown, aliases?: ModelAlias.Aliases): unknown {
+  if (typeof model === "string" && aliases) {
+    try {
+      return ModelAlias.resolve(aliases, model)
+    } catch {
+      return model
+    }
+  }
+  return model
+}
+
+function resolveEntryModels(map: unknown, aliases?: ModelAlias.Aliases): unknown {
+  if (!isRecord(map) || !aliases) return map
+  const res: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(map)) {
+    if (isRecord(v) && typeof v.model === "string") {
+      res[k] = { ...v, model: resolveModelString(v.model, aliases) }
+    } else {
+      res[k] = v
+    }
+  }
+  return res
+}
+
+function resolveRouteTargets(routes: unknown, aliases?: ModelAlias.Aliases): unknown {
+  if (!isRecord(routes) || !aliases) return routes
+  const res: Record<string, unknown> = {}
+  for (const [k, route] of Object.entries(routes)) {
+    if (isRecord(route) && Array.isArray(route.targets)) {
+      const targets = route.targets.map((target) => {
+        if (typeof target === "string") {
+          return resolveModelString(target, aliases)
+        }
+        if (isRecord(target) && typeof target.model === "string") {
+          return { ...target, model: resolveModelString(target.model, aliases) }
+        }
+        return target
+      })
+      res[k] = { ...route, targets }
+    } else {
+      res[k] = route
+    }
+  }
+  return res
 }
 
 function normalizeWatcher(input: Record<string, unknown>, encoded: Record<string, unknown>, diagnostics: Diagnostic[]) {
@@ -682,24 +778,45 @@ function diagnoseProviderUnsupported(value: unknown, path: string[], diagnostics
   })
 }
 
-function diagnoseAgentUnsupported(value: unknown, path: string[], diagnostics: Diagnostic[]) {
+function diagnoseAgentUnsupported(
+  value: unknown,
+  path: string[],
+  diagnostics: Diagnostic[],
+  aliases?: ModelAlias.Aliases,
+) {
   if (!isRecord(value)) return
   Object.entries(value).forEach(([name, agent]) => {
     if (!isRecord(agent)) return
     unsupportedIfPresent(agent, "name", [...path, name, "name"], diagnostics)
-    diagnoseSelection(agent, [...path, name], diagnostics)
+    diagnoseSelection(agent, [...path, name], diagnostics, aliases)
   })
 }
 
-function diagnoseSelectionMap(value: unknown, path: string[], diagnostics: Diagnostic[]) {
+function diagnoseSelectionMap(
+  value: unknown,
+  path: string[],
+  diagnostics: Diagnostic[],
+  aliases?: ModelAlias.Aliases,
+) {
   if (!isRecord(value)) return
   Object.entries(value).forEach(([name, entry]) => {
-    if (isRecord(entry)) diagnoseSelection(entry, [...path, name], diagnostics)
+    if (isRecord(entry)) diagnoseSelection(entry, [...path, name], diagnostics, aliases)
   })
 }
 
-function diagnoseSelection(value: Record<string, unknown>, path: string[], diagnostics: Diagnostic[]) {
-  const modelValid = typeof value.model === "string" && /^[^/#]+\/[^#]+$/.test(value.model)
+function diagnoseSelection(
+  value: Record<string, unknown>,
+  path: string[],
+  diagnostics: Diagnostic[],
+  aliases?: ModelAlias.Aliases,
+) {
+  let modelStr = typeof value.model === "string" ? value.model : undefined
+  if (modelStr && aliases) {
+    try {
+      modelStr = ModelAlias.resolve(aliases, modelStr)
+    } catch {}
+  }
+  const modelValid = typeof modelStr === "string" && /^[^/#]+\/[^#]+$/.test(modelStr)
   if (own(value, "model") && typeof value.model === "string" && !modelValid)
     diagnostics.push({
       kind: "unsupported",
