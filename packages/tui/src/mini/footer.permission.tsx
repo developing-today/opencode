@@ -146,6 +146,7 @@ export function RunPermissionBody(props: {
   block: RunBlockTheme
   onReply: (input: PermissionReply) => void | Promise<void>
   mono?: boolean
+  askerName?: string
 }) {
   const dims = useTerminalDimensions()
   const [size, setSize] = createSignal(dims())
@@ -182,7 +183,7 @@ export function RunPermissionBody(props: {
       return width() < 24 ? "Reject" : "Reject permission"
     }
 
-    return width() < 24 ? "Permission" : "Permission required"
+    return width() < 24 ? "Permission" : (props.askerName ?? "Permission required")
   })
 
   createEffect(() => {
