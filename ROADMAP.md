@@ -75,7 +75,9 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ModelAlias rejects segments with internal whitespace             | 2026-10-25 | #445     |
 | ROADMAP Done records the #442, #447 and #450 completions         | 2026-10-25 | #455     |
+| ConfigNormalize property test models the aliases relocation      | 2026-10-25 | #453     |
 | Generated client regenerated for ConfigEntry aliases             | 2026-10-25 | #451     |
 | TUI footer test fixture gains label and description              | 2026-10-25 | #449     |
 | Node build drops Bun globals from ACP and CPU-profile paths      | 2026-10-25 | #448     |
