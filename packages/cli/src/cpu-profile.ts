@@ -2,6 +2,7 @@ export * as CpuProfile from "./cpu-profile"
 
 import { Global } from "@opencode/util/global"
 import { Effect, FileSystem, Queue } from "effect"
+import { writeFile } from "node:fs/promises"
 import { Session } from "node:inspector"
 import path from "node:path"
 
@@ -51,7 +52,7 @@ function run<A, E, R>(file: string, effect: Effect.Effect<A, E, R>) {
             session.post("Profiler.stop", (error, result) => {
               session.disconnect()
               if (error) return reject(error)
-              Bun.write(target, JSON.stringify(result.profile)).then(() => resolve(), reject)
+              writeFile(target, JSON.stringify(result.profile)).then(() => resolve(), reject)
             })
           }),
       ).pipe(

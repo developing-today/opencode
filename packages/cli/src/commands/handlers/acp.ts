@@ -4,7 +4,7 @@ import { Service } from "@opencode/client/effect/service"
 import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
 import { Effect, Option } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
-import { Writable } from "node:stream"
+import { Readable, Writable } from "node:stream"
 import { ACP } from "../../acp/agent"
 import { Commands } from "../commands"
 import { Runtime } from "../../framework/runtime"
@@ -34,7 +34,9 @@ export default Runtime.handler(
       ),
       Effect.provide(FetchHttpClient.layer),
     )
-    const connection = yield* ACP.connect(client, ndJsonStream(Writable.toWeb(process.stdout), Bun.stdin.stream()))
+    // Node types `Readable.toWeb` as `ReadableStream<any>`; stdin is a byte stream, as `ndJsonStream` expects.
+    const stdin = Readable.toWeb(process.stdin) as unknown as ReadableStream<Uint8Array>
+    const connection = yield* ACP.connect(client, ndJsonStream(Writable.toWeb(process.stdout), stdin))
     const failure = yield* Effect.raceFirst(
       Effect.promise(() => connection.closed).pipe(
         Effect.map(() =>
