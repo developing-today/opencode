@@ -48,7 +48,7 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
   if (!trimmed) {
     throw new Error("Empty model reference cannot be resolved")
   }
-  if (hasPaddedSegment(trimmed) || hasEmptySegment(trimmed)) {
+  if (hasPaddedSegment(trimmed) || hasEmptySegment(trimmed) || hasWhitespaceSegment(trimmed)) {
     throw new Error(`Invalid model reference: ${trimmed}`)
   }
 
@@ -84,7 +84,7 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
     if (!base.includes("/")) {
       const aliasTarget = ownAlias(aliases.models, base)
       if (aliasTarget !== undefined) {
-        if (!aliasTarget || hasPaddedSegment(aliasTarget)) {
+        if (!aliasTarget || hasPaddedSegment(aliasTarget) || hasWhitespaceSegment(aliasTarget)) {
           throw new Error(`Invalid model reference: ${current}`)
         }
         current = aliasTarget
@@ -110,7 +110,7 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
     const origScopedKey = `${provider}/${model}`
     const origScopedAlias = ownAlias(aliases.models, origScopedKey)
     if (origScopedAlias !== undefined) {
-      if (!origScopedAlias || hasPaddedSegment(origScopedAlias)) {
+      if (!origScopedAlias || hasPaddedSegment(origScopedAlias) || hasWhitespaceSegment(origScopedAlias)) {
         throw new Error(`Invalid model reference: ${current}`)
       }
       const origHash = origScopedAlias.indexOf("#")
@@ -139,7 +139,8 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
         !providerAlias ||
         providerAlias.includes("/") ||
         providerAlias.includes("#") ||
-        providerAlias.trim() !== providerAlias
+        providerAlias.trim() !== providerAlias ||
+        /\s/.test(providerAlias)
       ) {
         throw new Error(`Invalid model reference: ${current}`)
       }
@@ -151,7 +152,7 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
     const scopedKey = `${provider}/${model}`
     const scopedAlias = ownAlias(aliases.models, scopedKey)
     if (scopedAlias !== undefined) {
-      if (!scopedAlias || hasPaddedSegment(scopedAlias)) {
+      if (!scopedAlias || hasPaddedSegment(scopedAlias) || hasWhitespaceSegment(scopedAlias)) {
         throw new Error(`Invalid model reference: ${current}`)
       }
       // Scoped alias target could be "newModel" or "newProvider/newModel"
@@ -194,7 +195,7 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
   if (slashIdx <= 0 || slashIdx === settledBase.length - 1) {
     throw new Error(`Invalid model reference after alias resolution: ${settledBase}`)
   }
-  if (hasPaddedSegment(settledBase) || hasEmptySegment(settledBase)) {
+  if (hasPaddedSegment(settledBase) || hasEmptySegment(settledBase) || hasWhitespaceSegment(settledBase)) {
     throw new Error(`Invalid model reference after alias resolution: ${settledBase}`)
   }
 
@@ -210,7 +211,10 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
       throw new Error(`Invalid model reference: ${finalProvider}/${finalModel}#${finalVariant}`)
     }
   }
-  if (finalVariant !== undefined && (hasPaddedSegment(finalVariant) || hasEmptySegment(finalVariant))) {
+  if (
+    finalVariant !== undefined &&
+    (hasPaddedSegment(finalVariant) || hasEmptySegment(finalVariant) || hasWhitespaceSegment(finalVariant))
+  ) {
     throw new Error(`Invalid model reference: ${finalProvider}/${finalModel}#${finalVariant}`)
   }
 
@@ -280,15 +284,19 @@ function hasEmptySegment(target: string): boolean {
   return target.split(/[/#]/).some((segment) => !segment)
 }
 
+function hasWhitespaceSegment(target: string): boolean {
+  return target.split(/[/#]/).some((segment) => /\s/.test(segment))
+}
+
 function checkedVariantTarget(target: string, provider: string, model: string): string {
-  if (hasPaddedSegment(target)) {
+  if (hasPaddedSegment(target) || hasWhitespaceSegment(target)) {
     throw new Error(`Invalid model reference: ${provider}/${model}#${target}`)
   }
   return target
 }
 
 function parseRefString(input: string): ResolvedRef {
-  if (hasPaddedSegment(input) || hasEmptySegment(input)) {
+  if (hasPaddedSegment(input) || hasEmptySegment(input) || hasWhitespaceSegment(input)) {
     throw new Error(`Invalid model reference: ${input}`)
   }
   const providerEnd = input.indexOf("/")

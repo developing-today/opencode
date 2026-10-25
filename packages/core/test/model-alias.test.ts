@@ -316,4 +316,31 @@ describe("ModelAlias", () => {
     )
   })
 
+  test("32. Segments with internal whitespace are rejected (#443)", () => {
+    const aliases: ModelAlias.Aliases = { models: { zzz: "a/b" } }
+    expect(() => ModelAlias.resolve(aliases, "open ai/gpt-4o")).toThrow("Invalid model reference: open ai/gpt-4o")
+    expect(() => ModelAlias.resolve(aliases, "openai/gpt 4o")).toThrow("Invalid model reference: openai/gpt 4o")
+    expect(() => ModelAlias.resolve(aliases, "openai/gpt-4o#hi there")).toThrow(
+      "Invalid model reference: openai/gpt-4o#hi there",
+    )
+    expect(() => ModelAlias.resolve(undefined, "open ai/gpt-4o")).toThrow("Invalid model reference: open ai/gpt-4o")
+    expect(() => ModelAlias.resolve(undefined, "openai/gpt\t4o")).toThrow("Invalid model reference: openai/gpt\t4o")
+    expect(() => ModelAlias.resolve(undefined, "openai/gpt-4o#hi there")).toThrow(
+      "Invalid model reference: openai/gpt-4o#hi there",
+    )
+    const modelTarget: ModelAlias.Aliases = { models: { f: "open ai/gpt-4o" } }
+    expect(() => ModelAlias.resolve(modelTarget, "f")).toThrow("Invalid model reference: f")
+    const scopedTarget: ModelAlias.Aliases = { models: { "openai/old": "openai/gpt 4o" } }
+    expect(() => ModelAlias.resolve(scopedTarget, "openai/old")).toThrow("Invalid model reference: openai/old")
+    const providerTarget: ModelAlias.Aliases = { providers: { x: "open ai" } }
+    expect(() => ModelAlias.resolve(providerTarget, "x/model")).toThrow("Invalid model reference: x/model")
+    const variantTarget: ModelAlias.Aliases = { variants: { hi: "hi there" } }
+    expect(() => ModelAlias.resolve(variantTarget, "openai/gpt-4o#hi")).toThrow(
+      "Invalid model reference: openai/gpt-4o#hi there",
+    )
+    expect(ModelAlias.resolve(aliases, "openrouter/anthropic/claude-sonnet-4")).toBe(
+      "openrouter/anthropic/claude-sonnet-4",
+    )
+  })
+
 })
