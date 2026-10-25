@@ -2637,7 +2637,17 @@ export type ConfigEntry =
             }
           }
         }
+        aliases?: {
+          providers?: { [x: string]: string }
+          models?: { [x: string]: string }
+          variants?: { [x: string]: string }
+        }
         experimental?: {
+          aliases?: {
+            providers?: { [x: string]: string }
+            models?: { [x: string]: string }
+            variants?: { [x: string]: string }
+          }
           portable_shell_scanner?: boolean
           subagent_depth?: number
           shell_timeout?: number
