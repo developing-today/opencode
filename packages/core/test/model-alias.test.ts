@@ -206,4 +206,14 @@ describe("ModelAlias", () => {
     const emptyTarget: ModelAlias.Aliases = { providers: { x: "" } }
     expect(() => ModelAlias.resolve(emptyTarget, "x/model")).toThrow("Invalid model reference: x/model")
   })
+  test("24. Empty model alias target is rejected (global, original-provider scoped, and resolved-provider scoped)", () => {
+    const global: ModelAlias.Aliases = { models: { bad: "" } }
+    expect(() => ModelAlias.resolve(global, "bad")).toThrow("Invalid model reference: bad")
+    const original: ModelAlias.Aliases = { models: { "openai/pro": "" } }
+    expect(() => ModelAlias.resolve(original, "openai/pro")).toThrow("Invalid model reference: openai/pro")
+    const viaOriginalKey: ModelAlias.Aliases = { providers: { ds: "deepseek" }, models: { "ds/pro": "" } }
+    expect(() => ModelAlias.resolve(viaOriginalKey, "ds/pro")).toThrow("Invalid model reference: ds/pro")
+    const viaResolvedKey: ModelAlias.Aliases = { providers: { ds: "deepseek" }, models: { "deepseek/pro": "" } }
+    expect(() => ModelAlias.resolve(viaResolvedKey, "ds/pro")).toThrow("Invalid model reference: ds/pro")
+  })
 })
