@@ -6,7 +6,7 @@ import { optional } from "./schema.js"
 import { Model } from "./model.js"
 import { Permission } from "./permission.js"
 import { Provider } from "./provider.js"
-import { PositiveInt, statics } from "./schema.js"
+import { NonNegativeInt, PositiveInt, statics } from "./schema.js"
 
 const Updated = ephemeral({ type: "agent.updated", schema: {} })
 
@@ -24,6 +24,11 @@ export const Info = Schema.Struct({
   id: ID,
   name: Name,
   model: Model.Ref.pipe(optional),
+  models: Schema.Array(Model.Selector).pipe(optional),
+  excludedModels: Schema.Array(Model.Selector).pipe(optional),
+  subagentModels: Schema.Array(Model.Selector).pipe(optional),
+  subagentExcludedModels: Schema.Array(Model.Selector).pipe(optional),
+  maxDepth: NonNegativeInt.pipe(optional),
   request: Provider.Request,
   system: Schema.String.pipe(optional),
   description: Schema.String.pipe(optional),

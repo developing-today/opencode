@@ -9,6 +9,7 @@ import { Model } from "./model.js"
 import { NonNegativeInt, PositiveInt, RelativePath } from "./schema.js"
 import { SessionID } from "./session-id.js"
 import { SessionMetadata } from "./session-metadata.js"
+import { SessionSubagentPolicy } from "./session-subagent-policy.js"
 import { Location } from "./location.js"
 import { SessionMessage } from "./session-message.js"
 import { Revert } from "./session-revert.js"
@@ -60,6 +61,7 @@ export const Created = Event.durable({
     model: Model.Ref.pipe(optional),
     /** Host-supplied annotations resolved at creation, including any inherited from a parent. */
     metadata: SessionMetadata.pipe(optional),
+    subagentPolicy: SessionSubagentPolicy.pipe(optional),
     permissions: Permission.Ruleset.pipe(optional),
     version: Schema.String,
   },
@@ -127,6 +129,16 @@ export const Permissions = Event.durable({
   },
 })
 export type Permissions = typeof Permissions.Type
+
+export const SubagentPolicyUpdated = Event.durable({
+  type: "session.subagent-policy.updated",
+  ...options,
+  schema: {
+    ...Base,
+    subagentPolicy: SessionSubagentPolicy,
+  },
+})
+export type SubagentPolicyUpdated = typeof SubagentPolicyUpdated.Type
 
 export const Viewed = Event.durable({
   type: "session.viewed",
@@ -657,6 +669,7 @@ export const Definitions = Event.inventory(
   Renamed,
   MetadataUpdated,
   Permissions,
+  SubagentPolicyUpdated,
   Viewed,
   UsageUpdated,
   Deleted,
