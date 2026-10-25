@@ -80,7 +80,10 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
     // Rule 1: Global model alias (no "/" in base)
     if (!base.includes("/")) {
       const aliasTarget = aliases.models?.[base]
-      if (aliasTarget) {
+      if (aliasTarget !== undefined) {
+        if (!aliasTarget) {
+          throw new Error(`Invalid model reference: ${current}`)
+        }
         current = aliasTarget
         continue
       }
@@ -103,7 +106,10 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
     // Check scoped model alias under current provider name first (e.g. "openai/gpt-4o")
     const origScopedKey = `${provider}/${model}`
     const origScopedAlias = aliases.models?.[origScopedKey]
-    if (origScopedAlias) {
+    if (origScopedAlias !== undefined) {
+      if (!origScopedAlias) {
+        throw new Error(`Invalid model reference: ${current}`)
+      }
       if (origScopedAlias.includes("/")) {
         current = origScopedAlias
       } else {
@@ -134,7 +140,10 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
     // Rule 3: Provider-scoped model alias under resolved provider
     const scopedKey = `${provider}/${model}`
     const scopedAlias = aliases.models?.[scopedKey]
-    if (scopedAlias) {
+    if (scopedAlias !== undefined) {
+      if (!scopedAlias) {
+        throw new Error(`Invalid model reference: ${current}`)
+      }
       // Scoped alias target could be "newModel" or "newProvider/newModel"
       if (scopedAlias.includes("/")) {
         current = scopedAlias
