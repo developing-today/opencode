@@ -257,7 +257,21 @@ describe("ModelAlias", () => {
     expect(() => ModelAlias.resolve(paddedSegment, "bad")).toThrow("Invalid model reference: bad")
   })
 
-  test("28. Whitespace-only or padded variant alias targets are rejected (#412)", () => {
+  test("28. Bare scoped alias target with a slash in its variant resolves (#422)", () => {
+    const original: ModelAlias.Aliases = { models: { "openai/old": "new#va/r" } }
+    expect(ModelAlias.resolve(original, "openai/old")).toBe("openai/new#va/r")
+    const viaResolved: ModelAlias.Aliases = {
+      providers: { ds: "openai" },
+      models: { "openai/old": "new#va/r" },
+    }
+    expect(ModelAlias.resolve(viaResolved, "ds/old")).toBe("openai/new#va/r")
+    const slashForm: ModelAlias.Aliases = { models: { "openai/old": "other/new#va/r" } }
+    expect(ModelAlias.resolve(slashForm, "openai/old")).toBe("other/new#va/r")
+    const slashFree: ModelAlias.Aliases = { models: { "openai/old": "new#fast" } }
+    expect(ModelAlias.resolve(slashFree, "openai/old")).toBe("openai/new#fast")
+  })
+
+  test("29. Whitespace-only or padded variant alias targets are rejected (#412)", () => {
     const bare: ModelAlias.Aliases = { variants: { hi: " " } }
     expect(() => ModelAlias.resolve(bare, "openai/gpt-4o#hi")).toThrow("Invalid model reference: openai/gpt-4o# ")
     const tab: ModelAlias.Aliases = { variants: { hi: "\t" } }
