@@ -48,6 +48,9 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
   if (!trimmed) {
     throw new Error("Empty model reference cannot be resolved")
   }
+  if (hasPaddedSegment(trimmed) || hasEmptySegment(trimmed)) {
+    throw new Error(`Invalid model reference: ${trimmed}`)
+  }
 
   if (!aliases || (!aliases.providers && !aliases.models && !aliases.variants)) {
     return parseRefString(trimmed)
@@ -191,6 +194,9 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
   if (slashIdx <= 0 || slashIdx === settledBase.length - 1) {
     throw new Error(`Invalid model reference after alias resolution: ${settledBase}`)
   }
+  if (hasPaddedSegment(settledBase) || hasEmptySegment(settledBase)) {
+    throw new Error(`Invalid model reference after alias resolution: ${settledBase}`)
+  }
 
   const finalProvider = settledBase.slice(0, slashIdx)
   const finalModel = settledBase.slice(slashIdx + 1)
@@ -203,6 +209,9 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
     if (!finalVariant || finalVariant.includes("#")) {
       throw new Error(`Invalid model reference: ${finalProvider}/${finalModel}#${finalVariant}`)
     }
+  }
+  if (finalVariant !== undefined && (hasPaddedSegment(finalVariant) || hasEmptySegment(finalVariant))) {
+    throw new Error(`Invalid model reference: ${finalProvider}/${finalModel}#${finalVariant}`)
   }
 
   const canonicalRef = finalVariant ? `${finalProvider}/${finalModel}#${finalVariant}` : `${finalProvider}/${finalModel}`
@@ -267,6 +276,10 @@ function hasPaddedSegment(target: string): boolean {
   return target.split(/[/#]/).some((segment) => segment !== segment.trim())
 }
 
+function hasEmptySegment(target: string): boolean {
+  return target.split(/[/#]/).some((segment) => !segment)
+}
+
 function checkedVariantTarget(target: string, provider: string, model: string): string {
   if (hasPaddedSegment(target)) {
     throw new Error(`Invalid model reference: ${provider}/${model}#${target}`)
@@ -275,6 +288,9 @@ function checkedVariantTarget(target: string, provider: string, model: string): 
 }
 
 function parseRefString(input: string): ResolvedRef {
+  if (hasPaddedSegment(input) || hasEmptySegment(input)) {
+    throw new Error(`Invalid model reference: ${input}`)
+  }
   const providerEnd = input.indexOf("/")
   if (providerEnd <= 0) {
     throw new Error(`Invalid model reference: ${input}`)

@@ -281,4 +281,39 @@ describe("ModelAlias", () => {
       "Invalid model reference: deepseek/other# max",
     )
   })
+  test("30. Padded input reference segments are rejected (#436)", () => {
+    const aliases: ModelAlias.Aliases = { models: { zzz: "a/b" } }
+    expect(() => ModelAlias.resolve(aliases, "openai /gpt-4o")).toThrow("Invalid model reference: openai /gpt-4o")
+    expect(() => ModelAlias.resolve(aliases, "openai/ gpt-4o")).toThrow("Invalid model reference: openai/ gpt-4o")
+    expect(() => ModelAlias.resolve(aliases, "openai/gpt-4o# fast")).toThrow(
+      "Invalid model reference: openai/gpt-4o# fast",
+    )
+    expect(() => ModelAlias.resolve(undefined, "openai /gpt-4o")).toThrow("Invalid model reference: openai /gpt-4o")
+    expect(() => ModelAlias.resolve(undefined, "openai/ gpt-4o")).toThrow("Invalid model reference: openai/ gpt-4o")
+    expect(() => ModelAlias.resolve(undefined, "openai/gpt-4o# fast")).toThrow(
+      "Invalid model reference: openai/gpt-4o# fast",
+    )
+    expect(ModelAlias.resolve(aliases, "  openai/gpt-4o  ")).toBe("openai/gpt-4o")
+  })
+
+  test("31. References with empty segments are rejected (#437)", () => {
+    const aliases: ModelAlias.Aliases = { models: { zzz: "a/b" } }
+    expect(() => ModelAlias.resolve(aliases, "openai//gpt")).toThrow("Invalid model reference: openai//gpt")
+    expect(() => ModelAlias.resolve(aliases, "openai/gpt/")).toThrow("Invalid model reference: openai/gpt/")
+    expect(() => ModelAlias.resolve(undefined, "openai//gpt")).toThrow("Invalid model reference: openai//gpt")
+    expect(() => ModelAlias.resolve(undefined, "openai/gpt/")).toThrow("Invalid model reference: openai/gpt/")
+    const doubledTarget: ModelAlias.Aliases = { models: { x: "openai//gpt" } }
+    expect(() => ModelAlias.resolve(doubledTarget, "x")).toThrow(
+      "Invalid model reference after alias resolution: openai//gpt",
+    )
+    const trailingTarget: ModelAlias.Aliases = { models: { x: "a//" } }
+    expect(() => ModelAlias.resolve(trailingTarget, "x")).toThrow("Invalid model reference after alias resolution: a//")
+    expect(ModelAlias.resolve(aliases, "openrouter/anthropic/claude-sonnet-4")).toBe(
+      "openrouter/anthropic/claude-sonnet-4",
+    )
+    expect(ModelAlias.resolve(undefined, "openrouter/anthropic/claude-sonnet-4")).toBe(
+      "openrouter/anthropic/claude-sonnet-4",
+    )
+  })
+
 })
