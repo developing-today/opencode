@@ -15,8 +15,9 @@ answer. Agent definitions also gain a `max_depth`, and the existing depth check 
 generalized so the effective cap for a subtree is the smallest of the global limit
 and, for every ancestor, that ancestor's depth plus its own agent's max depth.
 
-Two spec points meet existing architecture head-on and are resolved explicitly
-below rather than dropped: route-named model choices (§7) and session import (§6.4).
+One spec point meets existing architecture head-on and is resolved explicitly
+below rather than dropped: session import (§6.4). Route-named model choices use
+the existing `opencode-route/<id>` reference form (§7).
 
 ## Current state (verified in code)
 
@@ -44,10 +45,11 @@ below rather than dropped: route-named model choices (§7) and session import (�
   Its root check runs before the ancestor walk, so a limit of 0 already disables
   subagents from a top-level session; the bug in issue #89 is fixed in current
   `main` and must not regress.
-- Model routes (`experimental.model_routes`) are request-time failover sets
-  installed by the model-routes config plugin. A session's stored model is always
-  a concrete `Model.Ref`; routes are chosen by request hooks, never stored as a
-  session model. See §7 for what that means for the spec.
+- Model routes (`experimental.model_routes`) are failover sets installed by the
+  model-routes config plugin, and they do have a reference form: a `Model.Ref`
+  with provider `opencode-route` (`opencode-route/<id>`, defined in
+  `packages/core/src/model-route.ts`) can be stored as a session or agent model
+  today; the request layer expands it to one of its targets per call. See §7.
 
 ## Spec mapping
 
@@ -55,7 +57,7 @@ below rather than dropped: route-named model choices (§7) and session import (�
 | - | ---------- | -------------- |
 | 1 | A primary session sets allowed subsession models, at creation or live; changes apply immediately to later launches by the session or its descendants | `Session.Info.subagentPolicy`, set at create, replaced live by `setSubagentPolicy`; enforcement reads current projected state at child creation (§5, §6) |
 | 2 | OpenChamber UI checkbox model picker on the session | OpenChamber stage; contract in §10 |
-| 3 | Filter-down inheritance by intersection (DeepSeek/Haiku example) | Effective-set computation (§4), worked example §4.3 |
+| 3 | Filter-down inheritance by intersection (ClinePass/Haiku example) | Effective-set computation (§4), worked example §4.3 |
 | 4 | Agent definition `model` is a default; a definition's allowed list can lock it; overrides must be explicit (force flag or per-agent session override) | Config + resolved-agent fields (§3.1, §3.2); override rules §4.2 |
 | 5 | The Task tool lets any agent set the task's model, including a route or `auto` | Tool input changes (§8); route/`auto` resolution §7 |
 | 6 | Per-agent default model, allowed, excluded, allowed-subagent, excluded-subagent lists | §3.1, §3.2 |
@@ -193,13 +195,13 @@ For a child of parent P, with child agent A and would-be model M:
 
 ### 4.3 Worked example (spec point 3, becomes a test)
 
-Primary session policy allows `deepseek/*` and `anthropic/claude-haiku-5-5`
-("DeepSeek or Haiku"). Its child sets its own policy to `anthropic/claude-opus-5-5`
-and `anthropic/claude-haiku-5-5` ("Opus or Haiku"). A grandchild's effective
-allowed set is the intersection over both policies: only
-`anthropic/claude-haiku-5-5`. Opus matches nothing in the primary's list; DeepSeek
-matches nothing in the child's. A grandchild launch on Opus fails with the
-DeniedError naming the single allowed model.
+Primary session policy allows `cline-pass/*` and `anthropic/claude-haiku-5-5`
+("the ClinePass plan pool, or Haiku"). Its child sets its own policy to
+`anthropic/claude-opus-5-5` and `anthropic/claude-haiku-5-5` ("Opus or Haiku").
+A grandchild's effective allowed set is the intersection over both policies:
+only `anthropic/claude-haiku-5-5`. Opus matches nothing in the primary's list;
+the ClinePass pool matches nothing in the child's. A grandchild launch on Opus
+fails with the DeniedError naming the single allowed model.
 
 ### 4.4 Why the definition layer is not the subtree filter
 
@@ -274,27 +276,33 @@ constrains subsessions, not a user's own session.
 - Continuing an existing child through the Task tool with a new agent or model
   goes through `switchAgent` / `switchModel`, so §6.3 covers it.
 
-## 7. Routes and `auto` (spec point 5, conflict resolved)
+## 7. Routes and `auto` (spec point 5)
 
 The spec asks the Task tool to accept a model, an OpenCode route, or `auto`.
-In this codebase a stored model is always a concrete `Model.Ref`; routes are
-request-time failover overlays chosen by hooks, with no session-level
-representation, and `auto` has no existing meaning. Inventing a route variant of
-`Model.Ref` would touch the runner, the protocol, and every client for a
-selection the request layer already makes per call. The design therefore maps
-the spec's three forms onto what exists, and says so:
+Routes already have a reference form in this codebase: `opencode-route/<id>` is
+a `Model.Ref` with provider `opencode-route` (the pseudo-provider defined in
+`packages/core/src/model-route.ts`; nested routes are referenced exactly that
+way). It is usable as a session model and as an agent definition's default
+model today, and the governance fields carry it unchanged — no new pool
+concept is invented here. The accepted forms are:
 
 - A concrete ref (`provider/model[#variant]`) — as today, after alias resolution.
+- A route ref (`opencode-route/<id>`) — stored as-is; the governance check
+  judges it by its targets: *every* target of the route (following nested
+  route references) must pass the effective set, because a route may fail over
+  to any of them. The same rule applies wherever a route ref reaches the
+  check: an explicit choice, a per-call override, or an agent definition's
+  default model.
 - A name — resolved through the existing alias table (`ModelAlias.resolve`),
-  which is how fleet config already names models and route entry points; if the
-  resolved name is a configured route, the check requires *every* target of the
-  route to pass the effective set, because a route may fail over to any of them.
+  which is how fleet config already names models and route entry points; a
+  name that resolves to a route ref is then judged as a route, above.
 - `auto` — the literal string, meaning "no explicit choice": the default chain
   (agent default, then inherited) decides, and that model is what gets checked.
 
-If a future change gives routes a session-level representation, the governance
-check already knows how to judge one (all targets must pass), so nothing here
-has to be revisited.
+One honest boundary: what a route *contains* — its membership — is defined by
+the named-pools work over `experimental.model_routes`, not by governance.
+Governance only reads the membership that exists at check time and judges a
+route ref by it.
 
 ## 8. Task tool and prompts (spec points 5 and 7)
 
