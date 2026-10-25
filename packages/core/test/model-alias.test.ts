@@ -257,6 +257,18 @@ describe("ModelAlias", () => {
     expect(() => ModelAlias.resolve(paddedSegment, "bad")).toThrow("Invalid model reference: bad")
   })
 
+  test("29. Bare scoped alias target whose variant contains a / resolves under its provider (#422)", () => {
+    const original: ModelAlias.Aliases = { models: { "openai/old": "new#va/r" } }
+    expect(ModelAlias.resolve(original, "openai/old")).toBe("openai/new#va/r")
+    const viaResolved: ModelAlias.Aliases = {
+      providers: { ds: "openai" },
+      models: { "openai/old": "new#va/r" },
+    }
+    expect(ModelAlias.resolve(viaResolved, "ds/old")).toBe("openai/new#va/r")
+    const slashForm: ModelAlias.Aliases = { models: { "openai/old": "other/new#va/r" } }
+    expect(ModelAlias.resolve(slashForm, "openai/old")).toBe("other/new#va/r")
+  })
+
   test("28. Whitespace-only or padded variant alias targets are rejected (#412)", () => {
     const bare: ModelAlias.Aliases = { variants: { hi: " " } }
     expect(() => ModelAlias.resolve(bare, "openai/gpt-4o#hi")).toThrow("Invalid model reference: openai/gpt-4o# ")

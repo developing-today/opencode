@@ -110,17 +110,16 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
       if (!origScopedAlias || hasPaddedSegment(origScopedAlias)) {
         throw new Error(`Invalid model reference: ${current}`)
       }
-      if (origScopedAlias.includes("/")) {
+      const scopedHash = origScopedAlias.indexOf("#")
+      const scopedBase = scopedHash === -1 ? origScopedAlias : origScopedAlias.slice(0, scopedHash)
+      if (scopedBase.includes("/")) {
         current = origScopedAlias
+      } else if (scopedHash !== -1) {
+        const scopedModel = origScopedAlias.slice(0, scopedHash)
+        const scopedVar = origScopedAlias.slice(scopedHash + 1)
+        current = `${provider}/${scopedModel}#${scopedVar}`
       } else {
-        const scopedHash = origScopedAlias.indexOf("#")
-        if (scopedHash !== -1) {
-          const scopedModel = origScopedAlias.slice(0, scopedHash)
-          const scopedVar = origScopedAlias.slice(scopedHash + 1)
-          current = `${provider}/${scopedModel}#${scopedVar}`
-        } else {
-          current = `${provider}/${origScopedAlias}`
-        }
+        current = `${provider}/${origScopedAlias}`
       }
       continue
     }
@@ -150,17 +149,16 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
         throw new Error(`Invalid model reference: ${current}`)
       }
       // Scoped alias target could be "newModel" or "newProvider/newModel"
-      if (scopedAlias.includes("/")) {
+      const scopedHash = scopedAlias.indexOf("#")
+      const scopedBase = scopedHash === -1 ? scopedAlias : scopedAlias.slice(0, scopedHash)
+      if (scopedBase.includes("/")) {
         current = scopedAlias
+      } else if (scopedHash !== -1) {
+        const scopedModel = scopedAlias.slice(0, scopedHash)
+        const scopedVar = scopedAlias.slice(scopedHash + 1)
+        current = `${provider}/${scopedModel}#${scopedVar}`
       } else {
-        const scopedHash = scopedAlias.indexOf("#")
-        if (scopedHash !== -1) {
-          const scopedModel = scopedAlias.slice(0, scopedHash)
-          const scopedVar = scopedAlias.slice(scopedHash + 1)
-          current = `${provider}/${scopedModel}#${scopedVar}`
-        } else {
-          current = `${provider}/${scopedAlias}`
-        }
+        current = `${provider}/${scopedAlias}`
       }
       continue
     }
