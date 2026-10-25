@@ -205,6 +205,8 @@ describe("ConfigModel.Selection segment spelling (#456)", () => {
   test("accepts legitimate string and explicit selections", () => {
     expect(String(decode("openrouter/anthropic/claude-sonnet-4").model)).toBe("anthropic/claude-sonnet-4")
     expect(String(decode("anthropic/claude-sonnet#high").variant)).toBe("high")
+    expect(String(decode("openai/gpt-4#a/b").variant)).toBe("a/b")
+    expect(String(decode({ providerID: "openai", model: "gpt-4", variant: "a/b" }).variant)).toBe("a/b")
     const explicit = decode({ providerID: "openrouter", model: "anthropic/claude-sonnet-4", variant: "high" })
     expect(String(explicit.providerID)).toBe("openrouter")
     expect(String(explicit.model)).toBe("anthropic/claude-sonnet-4")

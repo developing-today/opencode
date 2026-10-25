@@ -16,7 +16,7 @@ const Explicit = Schema.Struct({
 })
 
 const Short = Schema.String.check(
-  Schema.isPattern(/^[^\s/#]+\/[^\s#/]+(?:\/[^\s#/]+)*(?:#[^\s#/]+)?$/u),
+  Schema.isPattern(/^[^\s/#]+\/[^\s#/]+(?:\/[^\s#/]+)*(?:#[^\s#]+)?$/u),
 )
 
 export interface Selection extends Schema.Schema.Type<typeof Explicit> {}

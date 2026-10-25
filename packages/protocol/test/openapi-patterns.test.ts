@@ -16,7 +16,7 @@ test("the OpenAPI document keeps string pattern constraints from protocol schema
 
   expect([...patterns]).toEqual(
     expect.arrayContaining([
-      "^[^\\s/#]+\\/[^\\s#/]+(?:\\/[^\\s#/]+)*(?:#[^\\s#/]+)?$",
+      "^[^\\s/#]+\\/[^\\s#/]+(?:\\/[^\\s#/]+)*(?:#[^\\s#]+)?$",
       "^[^/#\\s]+$",
       "^[^\\s#/]+(?:\\/[^\\s#/]+)*$",
       "^[^\\s#]+$",
