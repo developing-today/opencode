@@ -585,7 +585,16 @@ test("direct footer preserves a partial multi-field form draft across permission
     height: 16,
     view: { type: "form", request },
     subagents: {
-      tabs: [{ sessionID: "ses_child", title: "My Subagent", status: "running", background: false }],
+      tabs: [
+        {
+          sessionID: "ses_child",
+          title: "My Subagent",
+          label: "My Subagent",
+          description: "Deployment form",
+          status: "running",
+          background: false,
+        },
+      ],
       details: {}, permissions: [], forms: []
     }
   })
