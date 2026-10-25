@@ -7,6 +7,7 @@ import type { Permission } from "@opencode/schema/permission"
 import { Event } from "@opencode/schema/event"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Bus } from "../bus.js"
+import { Config } from "../config.js"
 import { Database } from "../database/database.js"
 import { Instance } from "../instance/service.js"
 import { MessagingVars } from "../messaging/vars.js"
@@ -28,6 +29,7 @@ import { SessionPrompt } from "./prompt.js"
 import { SessionRevert } from "./revert.js"
 import { SessionShell } from "./shell.js"
 import { SessionSkill } from "./skill.js"
+import { ModelGovernance } from "./model-governance.js"
 import { SessionSchema } from "./schema.js"
 import { SessionStore } from "./store.js"
 
@@ -90,6 +92,21 @@ export const make = Effect.fn("Session.make")(function* () {
     yield* get(sessionID)
     yield* bus.publish(SessionEvent.Permissions, { sessionID, permissions: input.permissions })
   })
+  const setSubagentPolicy = Effect.fn("Session.setSubagentPolicy")(function* (
+    sessionID: SessionSchema.ID,
+    input: { subagentPolicy: SessionSchema.SubagentPolicy },
+  ) {
+    yield* get(sessionID)
+    yield* bus.publish(SessionEvent.SubagentPolicyUpdated, { sessionID, subagentPolicy: input.subagentPolicy })
+  })
+  // Governance reads agent definitions from the session location's config
+  // entries. Locations whose services carry no Config (minimal test fixtures)
+  // simply have no definition layer; session policies still apply.
+  const governanceEntries = (session: SessionSchema.Info) =>
+    Effect.gen(function* () {
+      const config = yield* Effect.serviceOption(Config.Service)
+      return config._tag === "Some" ? yield* config.value.entries() : []
+    }).pipe(instances.provide(session), Effect.catch(() => Effect.succeed([])))
   const switchAgent = Effect.fn("Session.switchAgent")(function* (
     sessionID: SessionSchema.ID,
     input: { agent: Agent.ID },
@@ -108,6 +125,17 @@ export const make = Effect.fn("Session.make")(function* () {
       (session.model.variant ?? "default") === (input.model.variant ?? "default")
     )
       return
+    // A child session may only switch to a model its subtree's governance
+    // allows; top-level sessions are unchecked.
+    if (session.parentID) {
+      const parent = yield* get(session.parentID)
+      const entries = yield* governanceEntries(session)
+      yield* ModelGovernance.assertAllowed({ get }, { entries: () => Effect.succeed(entries) }, {
+        parent,
+        agent: session.agent,
+        model: input.model,
+      })
+    }
     yield* bus.publish(SessionEvent.ModelSelected, { sessionID, model: input.model, previous: session.model })
   })
   const mutatePending = (
@@ -356,6 +384,7 @@ export const make = Effect.fn("Session.make")(function* () {
     rename,
     setMetadata,
     setPermissions,
+    setSubagentPolicy,
     switchAgent,
     switchModel,
     inbox,
@@ -380,6 +409,7 @@ export const make = Effect.fn("Session.make")(function* () {
     const rename = operations.rename.bind(undefined, sessionID)
     const setMetadata = operations.setMetadata.bind(undefined, sessionID)
     const setPermissions = operations.setPermissions.bind(undefined, sessionID)
+    const setSubagentPolicy = operations.setSubagentPolicy.bind(undefined, sessionID)
     const switchAgent = operations.switchAgent.bind(undefined, sessionID)
     const switchModel = operations.switchModel.bind(undefined, sessionID)
     const inbox = operations.inbox.bind(undefined, sessionID)
@@ -407,6 +437,7 @@ export const make = Effect.fn("Session.make")(function* () {
       rename,
       setMetadata,
       setPermissions,
+      setSubagentPolicy,
       switchAgent,
       switchModel,
       inbox,
