@@ -110,7 +110,9 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
       if (!origScopedAlias || hasPaddedSegment(origScopedAlias)) {
         throw new Error(`Invalid model reference: ${current}`)
       }
-      if (origScopedAlias.includes("/")) {
+      const origHash = origScopedAlias.indexOf("#")
+      const origBase = origHash === -1 ? origScopedAlias : origScopedAlias.slice(0, origHash)
+      if (origBase.includes("/")) {
         current = origScopedAlias
       } else {
         const scopedHash = origScopedAlias.indexOf("#")
@@ -150,7 +152,9 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
         throw new Error(`Invalid model reference: ${current}`)
       }
       // Scoped alias target could be "newModel" or "newProvider/newModel"
-      if (scopedAlias.includes("/")) {
+      const scopedBaseHash = scopedAlias.indexOf("#")
+      const scopedBase = scopedBaseHash === -1 ? scopedAlias : scopedAlias.slice(0, scopedBaseHash)
+      if (scopedBase.includes("/")) {
         current = scopedAlias
       } else {
         const scopedHash = scopedAlias.indexOf("#")
