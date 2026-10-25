@@ -75,6 +75,7 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ROADMAP Done records the #432 completion                         | 2026-10-25 | #433     |
 | ROADMAP Done records the #429 completion                         | 2026-10-25 | #430     |
 | ROADMAP Done records the #426 completion                         | 2026-10-25 | #427     |
 | ModelAlias bare scoped targets keep variant slashes              | 2026-10-25 | #425     |
