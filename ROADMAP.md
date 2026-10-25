@@ -75,6 +75,10 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ROADMAP Done records the #435-#438 completions                   | 2026-10-25 | #446     |
+| Import handlers read files with node fs, not Bun.file            | 2026-10-25 | #441     |
+| ModelAlias rejects padded and empty reference segments           | 2026-10-25 | #440     |
+| ROADMAP Done records the #432 completion                         | 2026-10-25 | #439     |
 | ROADMAP Done records the #432 completion                         | 2026-10-25 | #433     |
 | ROADMAP Done records the #429 completion                         | 2026-10-25 | #430     |
 | ROADMAP Done records the #426 completion                         | 2026-10-25 | #427     |
