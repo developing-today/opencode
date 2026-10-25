@@ -92,6 +92,19 @@ export const Plugin = define({
             if (item.headers !== undefined) provider.headers = Provider.mergeHeaders(provider.headers, item.headers)
             if (item.body !== undefined) provider.body = Provider.mergeOverlay(provider.body, item.body)
           })
+        // A provider-level baseURL replaces the catalog URL of every model of the provider, not only
+        // the models config names (the per-model deletion in the loop below): catalog models such as
+        // opencode-go's pin their own per-model `api`, which becomes a model-level baseURL that wins
+        // over the provider setting in the runtime merge, so a provider-only override never took
+        // effect for them (#434).
+        if (!routeProvider && item.settings?.baseURL !== undefined) {
+          const catalog = providers.get(providerID)
+          if (catalog)
+            for (const modelID of catalog.models.keys())
+              providers.models.update(providerID, modelID, (model) => {
+                if (model.settings) delete model.settings.baseURL
+              })
+        }
         const definitions = new Map<string, { readonly inherit: boolean; readonly base?: Model.Info }>()
         for (const [id, config] of Object.entries(item.models ?? {})) {
           // Route pools are not defined yet at this stage and have no source model to
