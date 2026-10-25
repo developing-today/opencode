@@ -5,9 +5,9 @@ import { Model } from "../model.js"
 import { Provider } from "../provider.js"
 import { optional } from "../schema.js"
 
-const ProviderID = Provider.ID.check(Schema.isPattern(/^[^/#]+$/u))
-const ModelID = Model.ID.check(Schema.isPattern(/^[^#]+$/u))
-const VariantID = Model.VariantID.check(Schema.isPattern(/^[^#]+$/u))
+const ProviderID = Provider.ID.check(Schema.isPattern(/^[^/#\s]+$/u))
+const ModelID = Model.ID.check(Schema.isPattern(/^[^\s#/]+(?:\/[^\s#/]+)*$/u))
+const VariantID = Model.VariantID.check(Schema.isPattern(/^[^\s#]+$/u))
 
 const Explicit = Schema.Struct({
   providerID: ProviderID,
@@ -15,7 +15,9 @@ const Explicit = Schema.Struct({
   variant: VariantID.pipe(optional),
 })
 
-const Short = Schema.String.check(Schema.isPattern(/^[^/#]+\/[^#]+(?:#[^#]+)?$/u))
+const Short = Schema.String.check(
+  Schema.isPattern(/^[^\s/#]+\/[^\s#/]+(?:\/[^\s#/]+)*(?:#[^\s#/]+)?$/u),
+)
 
 export interface Selection extends Schema.Schema.Type<typeof Explicit> {}
 export const Selection = Schema.Union([Short, Explicit])

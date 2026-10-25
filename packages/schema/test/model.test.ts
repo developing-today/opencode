@@ -21,6 +21,28 @@ describe("Model.Ref", () => {
     expect(() => Model.Ref.parse("openai/gpt-5#")).toThrow()
     expect(() => Model.Ref.parse("openai/gpt-5#high#extra")).toThrow()
   })
+
+  test("rejects padded, empty and internal-whitespace segments like ModelAlias (#456)", () => {
+    for (const input of [
+      "open ai/gpt-4",
+      "openai/gpt 4",
+      "openai/gpt\t4",
+      "openai/gpt-4#hi there",
+      " openai/gpt-4",
+      "openai/gpt-4 ",
+      "openai/gpt-4# hi",
+      "openai//gpt-4",
+      "openai/gpt-4#",
+    ])
+      expect(() => Model.Ref.parse(input)).toThrow(`Invalid model reference: ${input}`)
+  })
+
+  test("still accepts multi-slash model ids and variants (#456)", () => {
+    const nested = Model.Ref.parse("openrouter/anthropic/claude-sonnet-4")
+    expect(String(nested.providerID)).toBe("openrouter")
+    expect(String(nested.id)).toBe("anthropic/claude-sonnet-4")
+    expect(String(Model.Ref.parse("anthropic/claude-sonnet#high").variant)).toBe("high")
+  })
 })
 
 describe("Model.ReasoningField", () => {

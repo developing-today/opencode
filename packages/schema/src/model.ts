@@ -25,6 +25,8 @@ export const Ref = Schema.Struct({
   .pipe(
     statics((schema) => ({
       parse: (input: string) => {
+        if (hasPaddedSegment(input) || hasEmptySegment(input) || hasWhitespaceSegment(input))
+          throw new Error(`Invalid model reference: ${input}`)
         const providerEnd = input.indexOf("/")
         if (providerEnd <= 0) throw new Error(`Invalid model reference: ${input}`)
         const providerID = input.slice(0, providerEnd)
@@ -42,6 +44,18 @@ export const Ref = Schema.Struct({
     })),
   )
 export interface Ref extends Schema.Schema.Type<typeof Ref> {}
+
+function hasPaddedSegment(target: string): boolean {
+  return target.split(/[/#]/).some((segment) => segment !== segment.trim())
+}
+
+function hasEmptySegment(target: string): boolean {
+  return target.split(/[/#]/).some((segment) => !segment)
+}
+
+function hasWhitespaceSegment(target: string): boolean {
+  return target.split(/[/#]/).some((segment) => /\s/.test(segment))
+}
 
 export { Compatibility, MaxTokensField, ReasoningField }
 
