@@ -75,6 +75,8 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ROADMAP Done records the #416 completion                         | 2026-10-25 | #417     |
+| ModelAlias own-property lookups, rejects padded targets          | 2026-10-25 | #415     |
 | ModelAlias rejects empty model alias targets                     | 2026-10-24 | #413     |
 | ModelAlias validates provider and variant alias targets          | 2026-10-24 | #410     |
 | ROADMAP Done records the #408 completion                         | 2026-10-24 | #409     |
