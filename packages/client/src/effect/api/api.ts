@@ -208,6 +208,7 @@ export type SessionCreateInput = {
   readonly location?: Location.PublicRef | undefined
   readonly metadata?: Session.Metadata | undefined
   readonly permissions?: Permission.Ruleset | undefined
+  readonly subagentPolicy?: Session.SubagentPolicy | undefined
 }
 export type SessionCreateOutput = Session.Info
 export type SessionCreateOperation<E = never> = (input?: SessionCreateInput) => Effect.Effect<SessionCreateOutput, E>
@@ -256,6 +257,7 @@ export type SessionUpdateInput = {
   readonly title?: string | undefined
   readonly metadata?: Session.Metadata | undefined
   readonly permissions?: Permission.Ruleset | undefined
+  readonly subagentPolicy?: Session.SubagentPolicy | undefined
 }
 export type SessionUpdateOutput = void
 export type SessionUpdateOperation<E = never> = (input: SessionUpdateInput) => Effect.Effect<SessionUpdateOutput, E>
@@ -448,6 +450,7 @@ export type SessionLogOutput =
             readonly agent?: Agent.ID | undefined
             readonly model?: Model.Ref | undefined
             readonly metadata?: Session.Metadata | undefined
+            readonly subagentPolicy?: Session.SubagentPolicy | undefined
             readonly permissions?: Permission.Ruleset | undefined
             readonly version: string
           }
@@ -530,6 +533,17 @@ export type SessionLogOutput =
             | { readonly directory: AbsolutePath; readonly workspaceID?: Workspace.ID | undefined }
             | undefined
           readonly data: { readonly sessionID: Session.ID; readonly permissions: Permission.Ruleset }
+        }
+      | {
+          readonly id: Event.ID
+          readonly created: number
+          readonly metadata?: { readonly [x: string]: unknown } | undefined
+          readonly type: "session.subagent-policy.updated"
+          readonly durable: { readonly aggregateID: string; readonly seq: Event.Seq; readonly version: Event.Version }
+          readonly location?:
+            | { readonly directory: AbsolutePath; readonly workspaceID?: Workspace.ID | undefined }
+            | undefined
+          readonly data: { readonly sessionID: Session.ID; readonly subagentPolicy: Session.SubagentPolicy }
         }
       | {
           readonly id: Event.ID
