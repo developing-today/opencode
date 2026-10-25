@@ -75,6 +75,9 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| Generated client regenerated for ConfigEntry aliases             | 2026-10-25 | #451     |
+| TUI footer test fixture gains label and description              | 2026-10-25 | #449     |
+| Node build drops Bun globals from ACP and CPU-profile paths      | 2026-10-25 | #448     |
 | ROADMAP Done records the #435-#438 completions                   | 2026-10-25 | #446     |
 | Import handlers read files with node fs, not Bun.file            | 2026-10-25 | #441     |
 | ModelAlias rejects padded and empty reference segments           | 2026-10-25 | #440     |
