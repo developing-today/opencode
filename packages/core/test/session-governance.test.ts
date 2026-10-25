@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect } from "effect"
 import { Agent } from "@opencode/core/agent"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -78,7 +78,7 @@ describe("Session model governance", () => {
       const parent = yield* session.create({ location, model: model("kept") })
 
       const before = yield* session.create({ parentID: parent.id, model: model("kept") })
-      expect(before.model?.id).toBe("kept")
+      expect(before.model?.id).toBe(Model.ID.make("kept"))
 
       yield* session.setSubagentPolicy({ sessionID: parent.id, subagentPolicy: { models: ["test/other"] } })
       expect((yield* session.get(parent.id)).subagentPolicy).toEqual({ models: ["test/other"] })
@@ -94,7 +94,7 @@ describe("Session model governance", () => {
       const error = yield* session.create({ parentID: parent.id, model: model("kept") }).pipe(Effect.flip)
       expect(error).toBeInstanceOf(ModelGovernance.DeniedError)
       const allowed = yield* session.create({ parentID: parent.id, model: model("other") })
-      expect(allowed.model?.id).toBe("other")
+      expect(allowed.model?.id).toBe(Model.ID.make("other"))
 
       expect(
         yield* session
@@ -115,17 +115,17 @@ describe("Session model governance", () => {
       const child = yield* session.create({ parentID: parent.id, model: model("a") })
 
       yield* session.switchModel({ sessionID: child.id, model: model("b") })
-      expect((yield* session.get(child.id)).model?.id).toBe("b")
+      expect((yield* session.get(child.id)).model?.id).toBe(Model.ID.make("b"))
 
       yield* session.setSubagentPolicy({ sessionID: parent.id, subagentPolicy: { models: ["test/a"] } })
       yield* session.switchModel({ sessionID: child.id, model: model("a") })
       const error = yield* session.switchModel({ sessionID: child.id, model: model("b") }).pipe(Effect.flip)
       expect(error).toBeInstanceOf(ModelGovernance.DeniedError)
-      expect((yield* session.get(child.id)).model?.id).toBe("a")
+      expect((yield* session.get(child.id)).model?.id).toBe(Model.ID.make("a"))
 
       // Top-level sessions are unchecked.
       yield* session.switchModel({ sessionID: parent.id, model: model("b") })
-      expect((yield* session.get(parent.id)).model?.id).toBe("b")
+      expect((yield* session.get(parent.id)).model?.id).toBe(Model.ID.make("b"))
     }),
   )
 
@@ -163,7 +163,7 @@ describe("Session model governance", () => {
 
       const forked = yield* session.fork({ sessionID: parent.id })
       expect(forked.subagentPolicy).toEqual({ models: ["test/haiku"], excludedModels: ["test/opus"] })
-      expect(forked.model?.id).toBe("haiku")
+      expect(forked.model?.id).toBe(Model.ID.make("haiku"))
     }),
   )
 
@@ -186,14 +186,14 @@ describe("Session model governance", () => {
         agent: Agent.ID.make("worker"),
         model: model("a"),
       })
-      expect(child.model?.id).toBe("a")
+      expect(child.model?.id).toBe(Model.ID.make("a"))
       // Other agents are bound only by the policy's own list.
       const other = yield* session.create({
         parentID: parent.id,
         agent: Agent.ID.make("other"),
         model: model("b"),
       })
-      expect(other.model?.id).toBe("b")
+      expect(other.model?.id).toBe(Model.ID.make("b"))
     }),
   )
 })
