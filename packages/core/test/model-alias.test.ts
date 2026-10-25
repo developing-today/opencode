@@ -174,4 +174,36 @@ describe("ModelAlias", () => {
     for (let i = 0; i < 10; i++) models[`a${i}`] = i === 9 ? "openai/gpt-4o" : `a${i + 1}`
     expect(() => ModelAlias.resolve({ models }, "a0")).toThrow(AliasMaxDepthError)
   })
+
+  test("20. Variant alias target containing # is rejected (bare and scoped keys)", () => {
+    const bare: ModelAlias.Aliases = { variants: { hi: "high#extra" } }
+    expect(() => ModelAlias.resolve(bare, "openai/gpt-4o#hi")).toThrow(
+      "Invalid model reference: openai/gpt-4o#high#extra",
+    )
+    const scoped: ModelAlias.Aliases = { variants: { "deepseek/*#hi": "high#extra" } }
+    expect(() => ModelAlias.resolve(scoped, "deepseek/other-model#hi")).toThrow(
+      "Invalid model reference: deepseek/other-model#high#extra",
+    )
+    const hashOnly: ModelAlias.Aliases = { variants: { hi: "#" } }
+    expect(() => ModelAlias.resolve(hashOnly, "openai/gpt-4o#hi")).toThrow("Invalid model reference: openai/gpt-4o##")
+  })
+
+  test("21. Empty variant alias target is rejected (bare and wildcard keys)", () => {
+    const bare: ModelAlias.Aliases = { variants: { hi: "" } }
+    expect(() => ModelAlias.resolve(bare, "openai/gpt-4o#hi")).toThrow("Invalid model reference: openai/gpt-4o#")
+    const wildcard: ModelAlias.Aliases = { variants: { "*/*#hi": "" } }
+    expect(() => ModelAlias.resolve(wildcard, "openai/gpt-4o#hi")).toThrow("Invalid model reference: openai/gpt-4o#")
+  })
+
+  test("22. Provider alias target containing / is rejected instead of reshaping the ref", () => {
+    const aliases: ModelAlias.Aliases = { providers: { x: "a/b" } }
+    expect(() => ModelAlias.resolve(aliases, "x/model")).toThrow("Invalid model reference: x/model")
+  })
+
+  test("23. Provider alias target containing # or empty is rejected", () => {
+    const hashTarget: ModelAlias.Aliases = { providers: { x: "a#b" } }
+    expect(() => ModelAlias.resolve(hashTarget, "x/model")).toThrow("Invalid model reference: x/model")
+    const emptyTarget: ModelAlias.Aliases = { providers: { x: "" } }
+    expect(() => ModelAlias.resolve(emptyTarget, "x/model")).toThrow("Invalid model reference: x/model")
+  })
 })

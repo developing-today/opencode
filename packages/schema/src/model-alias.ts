@@ -123,7 +123,10 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
 
     // Rule 2: Provider alias
     const providerAlias = aliases.providers?.[provider]
-    if (providerAlias && providerAlias !== provider) {
+    if (providerAlias !== undefined && providerAlias !== provider) {
+      if (!providerAlias || providerAlias.includes("/") || providerAlias.includes("#")) {
+        throw new Error(`Invalid model reference: ${current}`)
+      }
       provider = providerAlias
       modified = true
     }
@@ -179,6 +182,9 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
   let finalVariant = initialVariant
   if (initialVariant !== undefined && aliases.variants) {
     finalVariant = resolveVariant(aliases.variants, finalProvider, finalModel, initialVariant)
+    if (!finalVariant || finalVariant.includes("#")) {
+      throw new Error(`Invalid model reference: ${finalProvider}/${finalModel}#${finalVariant}`)
+    }
   }
 
   const canonicalRef = finalVariant ? `${finalProvider}/${finalModel}#${finalVariant}` : `${finalProvider}/${finalModel}`
