@@ -62,8 +62,8 @@ function hasWhitespaceSegment(target: string): boolean {
  * `provider/model` matches that model with any variant, `provider/model#variant`
  * matches exactly that variant, and `provider/*` matches every model of the provider.
  */
-export const Selector = Schema.String.check(Schema.isPattern(/^[^/#]+\/(?:\*|[^#]+)(?:#[^#]+)?$/u))
-  .annotate({ identifier: "Model.Selector" })
+export const Selector = Schema.String.annotate({ identifier: "Model.Selector" })
+  .check(Schema.isPattern(/^[^/#]+\/(?:\*|[^#]+)(?:#[^#]+)?$/u))
   .pipe(
     statics((schema) => ({
       matches: (selector: string, ref: Ref): boolean => {
