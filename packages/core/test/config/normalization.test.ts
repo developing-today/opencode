@@ -55,6 +55,21 @@ function withoutEmptyCompatibilityContainers(input: Record<string, unknown>) {
       if (!Object.keys(experimental).length) delete result.experimental
     }
   }
+  // Deprecated experimental aliases normalize into top-level aliases (a top-level
+  // aliases block wins when both are present, matching normalizeAliases).
+  if (typeof result.experimental === "object" && result.experimental !== null && !Array.isArray(result.experimental)) {
+    const experimental = result.experimental as Record<string, unknown>
+    if (
+      typeof experimental.aliases === "object" &&
+      experimental.aliases !== null &&
+      !Array.isArray(experimental.aliases)
+    ) {
+      if (typeof result.aliases !== "object" || result.aliases === null || Array.isArray(result.aliases))
+        result.aliases = experimental.aliases
+      delete experimental.aliases
+      if (!Object.keys(experimental).length) delete result.experimental
+    }
+  }
   return result
 }
 

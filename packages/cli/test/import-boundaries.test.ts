@@ -25,6 +25,17 @@ describe("CLI frontend import boundaries", () => {
     expect(imports).toEqual([])
   })
 
+  test("does not reference the Bun global in CLI runtime code", async () => {
+    const glob = new Bun.Glob("src/**/*.{ts,tsx}")
+    const offenders: string[] = []
+    for await (const file of glob.scan({ cwd: path.join(root, "packages/cli") })) {
+      if (/\.test\.(ts|tsx)$/.test(file)) continue
+      const source = await Bun.file(path.join(root, "packages/cli", file)).text()
+      if (/\bBun\./.test(source)) offenders.push(file)
+    }
+    expect(offenders).toEqual([])
+  })
+
   test("exposes only the intentional package entrypoints", async () => {
     const run = await import("@opencode/cli/run")
     const mini = await import("@opencode/tui/mini")
