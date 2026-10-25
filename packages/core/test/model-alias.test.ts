@@ -216,4 +216,55 @@ describe("ModelAlias", () => {
     const viaResolvedKey: ModelAlias.Aliases = { providers: { ds: "deepseek" }, models: { "deepseek/pro": "" } }
     expect(() => ModelAlias.resolve(viaResolvedKey, "ds/pro")).toThrow("Invalid model reference: ds/pro")
   })
+
+  test("25. Prototype member names are not aliases when not configured (#414)", () => {
+    const models: ModelAlias.Aliases = { models: { other: "openai/gpt-4o" } }
+    expect(() => ModelAlias.resolve(models, "toString")).toThrow(
+      "Invalid model reference after alias resolution: toString",
+    )
+    expect(() => ModelAlias.resolve(models, "constructor")).toThrow(
+      "Invalid model reference after alias resolution: constructor",
+    )
+    const providers: ModelAlias.Aliases = { providers: { other: "openai" } }
+    expect(ModelAlias.resolve(providers, "toString/model")).toBe("toString/model")
+    expect(ModelAlias.resolve(providers, "hasOwnProperty/model")).toBe("hasOwnProperty/model")
+    const variants: ModelAlias.Aliases = { variants: { hi: "high" } }
+    expect(ModelAlias.resolve(variants, "openai/gpt-4o#toString")).toBe("openai/gpt-4o#toString")
+    expect(ModelAlias.resolve(variants, "openai/gpt-4o#constructor")).toBe("openai/gpt-4o#constructor")
+    expect(ModelAlias.resolve(variants, "openai/gpt-4o#__proto__")).toBe("openai/gpt-4o#__proto__")
+  })
+
+  test("26. A configured alias named like a prototype member still resolves (#414)", () => {
+    expect(ModelAlias.resolve({ models: { toString: "openai/gpt-4o" } }, "toString")).toBe("openai/gpt-4o")
+    expect(ModelAlias.resolve({ providers: { toString: "openai" } }, "toString/model")).toBe("openai/model")
+    expect(ModelAlias.resolve({ variants: { constructor: "high" } }, "openai/gpt-4o#constructor")).toBe(
+      "openai/gpt-4o#high",
+    )
+  })
+
+  test("27. Whitespace-only or padded alias targets are rejected (#412)", () => {
+    const provider: ModelAlias.Aliases = { providers: { x: " " } }
+    expect(() => ModelAlias.resolve(provider, "x/model")).toThrow("Invalid model reference: x/model")
+    const paddedProvider: ModelAlias.Aliases = { providers: { x: " openai" } }
+    expect(() => ModelAlias.resolve(paddedProvider, "x/model")).toThrow("Invalid model reference: x/model")
+    const scoped: ModelAlias.Aliases = { models: { "openai/pro": " " } }
+    expect(() => ModelAlias.resolve(scoped, "openai/pro")).toThrow("Invalid model reference: openai/pro")
+    const viaResolved: ModelAlias.Aliases = { providers: { ds: "deepseek" }, models: { "deepseek/pro": " " } }
+    expect(() => ModelAlias.resolve(viaResolved, "ds/pro")).toThrow("Invalid model reference: ds/pro")
+    const global: ModelAlias.Aliases = { models: { bad: "openai/gpt-4o " } }
+    expect(() => ModelAlias.resolve(global, "bad")).toThrow("Invalid model reference: bad")
+    const paddedSegment: ModelAlias.Aliases = { models: { bad: "openai /gpt-4o" } }
+    expect(() => ModelAlias.resolve(paddedSegment, "bad")).toThrow("Invalid model reference: bad")
+  })
+
+  test("28. Whitespace-only or padded variant alias targets are rejected (#412)", () => {
+    const bare: ModelAlias.Aliases = { variants: { hi: " " } }
+    expect(() => ModelAlias.resolve(bare, "openai/gpt-4o#hi")).toThrow("Invalid model reference: openai/gpt-4o# ")
+    const tab: ModelAlias.Aliases = { variants: { hi: "\t" } }
+    expect(() => ModelAlias.resolve(tab, "openai/gpt-4o#hi")).toThrow("Invalid model reference: openai/gpt-4o#\t")
+    const scoped: ModelAlias.Aliases = { variants: { "deepseek/*#hi": " max" } }
+    expect(() => ModelAlias.resolve(scoped, "deepseek/other#hi")).toThrow(
+      "Invalid model reference: deepseek/other# max",
+    )
+  })
 })
