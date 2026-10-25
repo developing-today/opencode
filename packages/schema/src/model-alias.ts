@@ -79,9 +79,9 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
 
     // Rule 1: Global model alias (no "/" in base)
     if (!base.includes("/")) {
-      const aliasTarget = aliases.models?.[base]
+      const aliasTarget = ownAlias(aliases.models, base)
       if (aliasTarget !== undefined) {
-        if (!aliasTarget) {
+        if (!aliasTarget || hasPaddedSegment(aliasTarget)) {
           throw new Error(`Invalid model reference: ${current}`)
         }
         current = aliasTarget
@@ -105,9 +105,9 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
 
     // Check scoped model alias under current provider name first (e.g. "openai/gpt-4o")
     const origScopedKey = `${provider}/${model}`
-    const origScopedAlias = aliases.models?.[origScopedKey]
+    const origScopedAlias = ownAlias(aliases.models, origScopedKey)
     if (origScopedAlias !== undefined) {
-      if (!origScopedAlias) {
+      if (!origScopedAlias || hasPaddedSegment(origScopedAlias)) {
         throw new Error(`Invalid model reference: ${current}`)
       }
       if (origScopedAlias.includes("/")) {
@@ -128,9 +128,14 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
     let modified = false
 
     // Rule 2: Provider alias
-    const providerAlias = aliases.providers?.[provider]
+    const providerAlias = ownAlias(aliases.providers, provider)
     if (providerAlias !== undefined && providerAlias !== provider) {
-      if (!providerAlias || providerAlias.includes("/") || providerAlias.includes("#")) {
+      if (
+        !providerAlias ||
+        providerAlias.includes("/") ||
+        providerAlias.includes("#") ||
+        providerAlias.trim() !== providerAlias
+      ) {
         throw new Error(`Invalid model reference: ${current}`)
       }
       provider = providerAlias
@@ -139,9 +144,9 @@ export function resolveRef(aliases: Aliases | undefined, input: string, exists?:
 
     // Rule 3: Provider-scoped model alias under resolved provider
     const scopedKey = `${provider}/${model}`
-    const scopedAlias = aliases.models?.[scopedKey]
+    const scopedAlias = ownAlias(aliases.models, scopedKey)
     if (scopedAlias !== undefined) {
-      if (!scopedAlias) {
+      if (!scopedAlias || hasPaddedSegment(scopedAlias)) {
         throw new Error(`Invalid model reference: ${current}`)
       }
       // Scoped alias target could be "newModel" or "newProvider/newModel"
@@ -222,25 +227,47 @@ function resolveVariant(
 ): string {
   // 1. provider/model#variant
   const key1 = `${provider}/${model}#${variant}`
-  if (key1 in variantAliases) return variantAliases[key1]
+  const value1 = ownAlias(variantAliases, key1)
+  if (value1 !== undefined) return checkedVariantTarget(value1, provider, model)
 
   // 2. */model#variant
   const key2 = `*/${model}#${variant}`
-  if (key2 in variantAliases) return variantAliases[key2]
+  const value2 = ownAlias(variantAliases, key2)
+  if (value2 !== undefined) return checkedVariantTarget(value2, provider, model)
 
   // 3. provider/*#variant
   const key3 = `${provider}/*#${variant}`
-  if (key3 in variantAliases) return variantAliases[key3]
+  const value3 = ownAlias(variantAliases, key3)
+  if (value3 !== undefined) return checkedVariantTarget(value3, provider, model)
 
   // 4. */*#variant
   const key4 = `*/*#${variant}`
-  if (key4 in variantAliases) return variantAliases[key4]
+  const value4 = ownAlias(variantAliases, key4)
+  if (value4 !== undefined) return checkedVariantTarget(value4, provider, model)
 
   // 5. bare variant
-  if (variant in variantAliases) return variantAliases[variant]
+  const value5 = ownAlias(variantAliases, variant)
+  if (value5 !== undefined) return checkedVariantTarget(value5, provider, model)
 
   // Real variant passes through
   return variant
+}
+
+function ownAlias(map: Readonly<Record<string, string>> | undefined, key: string): string | undefined {
+  if (!map || !Object.hasOwn(map, key)) return undefined
+  const value = map[key]
+  return typeof value === "string" ? value : undefined
+}
+
+function hasPaddedSegment(target: string): boolean {
+  return target.split(/[/#]/).some((segment) => segment !== segment.trim())
+}
+
+function checkedVariantTarget(target: string, provider: string, model: string): string {
+  if (hasPaddedSegment(target)) {
+    throw new Error(`Invalid model reference: ${provider}/${model}#${target}`)
+  }
+  return target
 }
 
 function parseRefString(input: string): ResolvedRef {
