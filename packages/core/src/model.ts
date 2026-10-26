@@ -318,6 +318,23 @@ export function compatibility(input: unknown): Compatibility | undefined {
   return typeof input.field === "string" ? { reasoningField: input.field } : undefined
 }
 
+// Config release dates are shape-checked only (YYYY-MM or YYYY-MM-DD), so a
+// calendar-invalid value reaches this parser: Date.parse yields NaN for it
+// (not finite, poisoning the released sort) and silently rolls overflow days
+// such as Feb 30 into the next month. The components must round-trip through
+// a real calendar date; anything else is not a release date.
+export function parseReleaseDate(value: string): number | undefined {
+  const parts = value.split("-").map(Number)
+  const year = parts[0]
+  const month = parts[1]
+  const day = parts[2] ?? 1
+  if (year === undefined || month === undefined) return undefined
+  const date = new Date(0)
+  date.setUTCFullYear(year, month - 1, day)
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return undefined
+  return date.getTime()
+}
+
 export function parse(input: string): { providerID: Provider.ID; modelID: ID } {
   const index = input.indexOf("/")
   return {

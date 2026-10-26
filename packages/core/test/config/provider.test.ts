@@ -863,6 +863,36 @@ describe("ConfigProviderPlugin.Plugin", () => {
     }),
   )
 
+  it.effect(
+    "ignores a calendar-invalid configured release date instead of storing NaN or a rolled-over date (#471)",
+    () =>
+      Effect.gen(function* () {
+        const models = yield* Model.Service
+        yield* addPlugin([
+          new Document({
+            type: "document",
+            info: decode({
+              providers: {
+                custom: {
+                  package: "aisdk:@ai-sdk/openai-compatible",
+                  models: {
+                    rollover: { releaseDate: "2026-02-30" },
+                    impossible: { releaseDate: "2026-13-01" },
+                  },
+                },
+              },
+            }),
+          }),
+        ])
+
+        for (const id of ["rollover", "impossible"]) {
+          const model = required(yield* models.get(Provider.ID.make("custom"), Model.ID.make(id)))
+          expect(Number.isFinite(model.time.released)).toBe(true)
+          expect(model.time.released).toBe(0)
+        }
+      }),
+  )
+
   it.effect("keeps configured model variant bodies unchanged", () =>
     Effect.gen(function* () {
       const models = yield* Model.Service
