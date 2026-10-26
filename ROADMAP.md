@@ -75,6 +75,7 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ROADMAP Done records the #499 completion                         | 2026-10-26 | #500     |
 | happy-dom bumped to 21.0.4 in app, lockfile rescued              | 2026-10-26 | #493     |
 | Electron bumped to 44.9.1 in desktop (security fix)              | 2026-10-26 | #494     |
 | Astro bumped to 7.3.3 in www, lockfile rescued                   | 2026-10-26 | #476     |
