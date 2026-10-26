@@ -58,6 +58,7 @@ import { Snapshot } from "./snapshot.js"
 import { Session } from "./session/session.js"
 import { ModelGovernance } from "./session/model-governance.js"
 import { Config } from "./config.js"
+import { Provider } from "./provider.js"
 import type { Entry } from "@opencode/schema/config"
 import { SessionDiff, TurnRangeError } from "./session/diff.js"
 import { LocationServiceMap } from "./location-service-map.js"
@@ -284,15 +285,37 @@ const layer = Layer.effect(
     // operations never initialize a location just to read them. An
     // uninitialized location has no definition layer; session policies,
     // which are read from the session store, still apply.
-    const governanceEntries = (location: Location.Ref) =>
+    // Governance also judges route targets against the location's provider
+    // catalog (#530), read from the same already-initialized context: the
+    // snapshot's per-model enabled flag and offered variants. A location
+    // with no provider service supplies no catalog and route targets are
+    // judged literally, as before.
+    const governanceConfig = (location: Location.Ref) =>
       Effect.scoped(
         Effect.gen(function* () {
           const context = yield* locations.contextEffectOption(location)
-          if (Option.isNone(context)) return [] as Entry[]
+          if (Option.isNone(context)) return { entries: [] as Entry[], catalog: undefined as ModelGovernance.Catalog | undefined }
           const config = Context.getOption(context.value, Config.Service)
-          return config._tag === "Some" ? yield* config.value.entries() : ([] as Entry[])
+          const entries = config._tag === "Some" ? yield* config.value.entries() : ([] as Entry[])
+          const provider = Context.getOption(context.value, Provider.Service)
+          if (provider._tag === "None") return { entries, catalog: undefined }
+          const snapshot = yield* provider.value.snapshot()
+          const catalog: ModelGovernance.Catalog = new Map(
+            Array.from(snapshot.records, ([providerID, record]) => [
+              providerID as string,
+              new Map(
+                Array.from(record.models, ([id, model]) => [
+                  id as string,
+                  { enabled: model.enabled, variants: model.variants },
+                ]),
+              ),
+            ]),
+          )
+          return { entries, catalog }
         }),
-      ).pipe(Effect.orElseSucceed(() => [] as Entry[]))
+      ).pipe(
+        Effect.orElseSucceed(() => ({ entries: [] as Entry[], catalog: undefined as ModelGovernance.Catalog | undefined })),
+      )
     const assertModelAllowed = (input: {
       location: Location.Ref
       parent: SessionSchema.Info
@@ -300,11 +323,11 @@ const layer = Layer.effect(
       model?: Model.Ref
       override?: SessionSchema.AgentOverride
     }) =>
-      governanceEntries(input.location).pipe(
-        Effect.flatMap((entries) =>
+      governanceConfig(input.location).pipe(
+        Effect.flatMap(({ entries, catalog }) =>
           ModelGovernance.assertAllowed(
             { get: (sessionID) => result.get(sessionID) },
-            { entries: () => Effect.succeed(entries) },
+            { entries: () => Effect.succeed(entries), catalog: () => Effect.succeed(catalog) },
             { parent: input.parent, agent: input.agent, model: input.model, override: input.override },
           ),
         ),
