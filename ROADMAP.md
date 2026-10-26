@@ -75,6 +75,7 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ROADMAP Done records the #515 completion                         | 2026-10-26 | #516     |
 | force overrides keep unmentioned list groups                     | 2026-10-26 | #514     |
 | Provider baseURL applies across config documents                 | 2026-10-26 | #513     |
 | Route targets judged at their effective variant                  | 2026-10-26 | #512     |
