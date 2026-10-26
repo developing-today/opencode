@@ -163,7 +163,10 @@ export const Plugin = define({
             if (config.family !== undefined) model.family = config.family
             if (config.name) model.name = config.name
             if (config.modelID !== undefined) model.modelID = config.modelID
-            if (config.releaseDate !== undefined) model.time = { released: Date.parse(config.releaseDate) }
+            if (config.releaseDate !== undefined) {
+              const released = Model.parseReleaseDate(config.releaseDate)
+              if (released !== undefined) model.time = { released }
+            }
             if (config.compatibility !== undefined)
               model.compatibility = { ...model.compatibility, ...config.compatibility }
             if (config.package !== undefined) model.package = config.package
