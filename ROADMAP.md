@@ -75,6 +75,7 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| Model.Selector rejects unmatchable selector segments           | 2026-10-26 | #490     |
 | ROADMAP Done records the #491 completion                         | 2026-10-26 | #492     |
 | Session.AgentOverride subagent lists are enforced                | 2026-10-25 | #487     |
 | switchAgent runs the governance check for child sessions         | 2026-10-25 | #486     |
