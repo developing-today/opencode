@@ -75,6 +75,12 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| force overrides keep unmentioned list groups                     | 2026-10-26 | #514     |
+| Provider baseURL applies across config documents                 | 2026-10-26 | #513     |
+| Route targets judged at their effective variant                  | 2026-10-26 | #512     |
+| v1 migration applies Selection segment rules                     | 2026-10-26 | #511     |
+| InstructionEntry.Key rejects trailing-dot keys                   | 2026-10-26 | #510     |
+| models-dev release dates validated as calendar dates             | 2026-10-26 | #509     |
 | ROADMAP Done records the #499 completion                         | 2026-10-26 | #500     |
 | happy-dom bumped to 21.0.4 in app, lockfile rescued              | 2026-10-26 | #493     |
 | Electron bumped to 44.9.1 in desktop (security fix)              | 2026-10-26 | #494     |
