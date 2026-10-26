@@ -75,6 +75,7 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ROADMAP Done records the #481 completion                         | 2026-10-25 | #485     |
 | Generated client regenerated for subsession governance schemas   | 2026-10-25 | #484     |
 | Calendar-invalid release dates are ignored                       | 2026-10-25 | #482     |
 | Instruction.Key requires segment form                            | 2026-10-25 | #474     |
