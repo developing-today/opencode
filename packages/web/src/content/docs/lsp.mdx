@@ -51,7 +51,7 @@ OpenCode comes with several built-in LSP servers for popular languages:
 LSP is disabled by default. When enabled, servers start when one of the above file extensions is detected and the requirements are met.
 
 :::note
-You can disable automatic LSP server downloads by setting the `OPENCODE_DISABLE_LSP_DOWNLOAD` environment variable to `true`.
+There is no environment variable to disable automatic LSP server downloads. A server that is disabled never starts, so it never downloads: set `lsp` to `false` to disable all servers, or `disabled` to `true` on an individual server — see [Disabling LSP servers](#disabling-lsp-servers) below.
 :::
 
 ---

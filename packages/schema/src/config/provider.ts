@@ -115,6 +115,10 @@ class Model extends Schema.Class<Model>("Config.Model")({
 
 export class Info extends Schema.Class<Info>("Config.Provider")({
   canonical: Provider.ID.pipe(optional),
+  instanceOf: Provider.ID.annotate({
+    description:
+      "Make this provider a copy of another provider with its own sign-in, such as `openai.work` with `openai`, so both accounts can be used at the same time",
+  }).pipe(optional),
   name: Schema.String.pipe(optional),
   env: Schema.String.pipe(Schema.Array, optional),
   package: Schema.String.pipe(optional),

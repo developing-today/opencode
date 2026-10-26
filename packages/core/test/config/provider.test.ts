@@ -79,6 +79,72 @@ describe("ConfigProviderPlugin.Plugin", () => {
     }),
   )
 
+  it.effect("applies a provider-level baseURL to catalog models that pin their own api", () =>
+    Effect.gen(function* () {
+      const providers = yield* Provider.Service
+      const models = yield* Model.Service
+      const providerID = Provider.ID.make("opencode-go")
+      yield* providers.transform((editor) => {
+        editor.update(providerID, (provider) => {
+          provider.package = "@opencode/ai/providers/openai-compatible"
+        })
+        editor.models.update(providerID, Model.ID.make("catalog"), (model) => {
+          model.settings = { baseURL: "https://catalog.example/v1" }
+        })
+      })
+      yield* addPlugin([
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              "opencode-go": { settings: { baseURL: "https://proxy.example/v1" } },
+            },
+          }),
+        }),
+      ])
+
+      const model = required(yield* models.get(providerID, Model.ID.make("catalog")))
+      expect(model.settings?.baseURL).toBe("https://proxy.example/v1")
+    }),
+  )
+
+  it.effect("applies a provider-level baseURL from a later document to an alias defined in an earlier one", () =>
+    Effect.gen(function* () {
+      const providers = yield* Provider.Service
+      const models = yield* Model.Service
+      const providerID = Provider.ID.make("opencode-go")
+      yield* providers.transform((editor) => {
+        editor.update(providerID, (provider) => {
+          provider.package = "@opencode/ai/providers/openai-compatible"
+        })
+        editor.models.update(providerID, Model.ID.make("catalog"), (model) => {
+          model.settings = { baseURL: "https://catalog.example/v1" }
+        })
+      })
+      yield* addPlugin([
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              "opencode-go": { models: { alias: { modelID: "catalog" } } },
+            },
+          }),
+        }),
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              "opencode-go": { settings: { baseURL: "https://proxy.example/v1" } },
+            },
+          }),
+        }),
+      ])
+
+      const model = required(yield* models.get(providerID, Model.ID.make("alias")))
+      expect(model.settings?.baseURL).toBe("https://proxy.example/v1")
+    }),
+  )
+
   it.effect("keeps provider and model compatibility precedence across config documents", () =>
     Effect.gen(function* () {
       const providers = yield* Provider.Service
@@ -832,6 +898,36 @@ describe("ConfigProviderPlugin.Plugin", () => {
       expect(model.capabilities.temperature).toBe(false)
       expect(model.compatibility?.reasoningField).toBe("reasoning_content")
     }),
+  )
+
+  it.effect(
+    "ignores a calendar-invalid configured release date instead of storing NaN or a rolled-over date (#471)",
+    () =>
+      Effect.gen(function* () {
+        const models = yield* Model.Service
+        yield* addPlugin([
+          new Document({
+            type: "document",
+            info: decode({
+              providers: {
+                custom: {
+                  package: "aisdk:@ai-sdk/openai-compatible",
+                  models: {
+                    rollover: { releaseDate: "2026-02-30" },
+                    impossible: { releaseDate: "2026-13-01" },
+                  },
+                },
+              },
+            }),
+          }),
+        ])
+
+        for (const id of ["rollover", "impossible"]) {
+          const model = required(yield* models.get(Provider.ID.make("custom"), Model.ID.make(id)))
+          expect(Number.isFinite(model.time.released)).toBe(true)
+          expect(model.time.released).toBe(0)
+        }
+      }),
   )
 
   it.effect("keeps configured model variant bodies unchanged", () =>

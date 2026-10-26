@@ -61,6 +61,24 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     runHook postBuild
   '';
 
+  # On a symlinked store (e.g. /nix itself is a symlink into a persistent
+  # directory) installPhase fails: gcc canonicalizes the store path through
+  # the symlink while linking makeBinaryWrapper's C wrapper, so the
+  # cc-wrapper purity check rejects the compiler's own store path as an
+  # "impure path ... liblto_plugin.so used in link". Detect exactly that
+  # layout — the store directory's canonical form differing from its
+  # literal path — and relax the check for the wrapper compile only. On a
+  # regular store the two are identical, nothing is exported, and the
+  # build is unchanged.
+  preInstall = ''
+    opencodeStoreDir=$(dirname "$out")
+    opencodeCanonicalStoreDir=$(readlink -f "$opencodeStoreDir" || true)
+    if [ -n "$opencodeCanonicalStoreDir" ] && [ "$opencodeCanonicalStoreDir" != "$opencodeStoreDir" ]; then
+      export NIX_ENFORCE_PURITY=0
+    fi
+    unset opencodeStoreDir opencodeCanonicalStoreDir
+  '';
+
   installPhase = ''
     runHook preInstall
 

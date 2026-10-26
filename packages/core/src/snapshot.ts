@@ -158,8 +158,37 @@ const layer = Layer.effect(
       source: Git.Repository,
       paths: readonly RelativePath[],
     ) {
+      // check-ignore dies on a path beyond a symlink, such as a file captured before its directory became one, so
+      // those paths are never sent and are reported as not ignored. dezren39/nix#665
+      const directories = [
+        ...new Set(
+          paths.flatMap((file) =>
+            file
+              .split("/")
+              .slice(0, -1)
+              .map((_, index, parts) => parts.slice(0, index + 1).join("/")),
+          ),
+        ),
+      ]
+      const linked = new Set(
+        (yield* Effect.forEach(
+          directories,
+          (directory) =>
+            fs.readLink(path.join(source.worktree, directory)).pipe(
+              Effect.as(directory),
+              Effect.orElseSucceed(() => undefined),
+            ),
+          { concurrency: 8 },
+        )).filter((directory): directory is string => directory !== undefined),
+      )
+      const checked = linked.size
+        ? paths.filter((file) => {
+            const parts = file.split("/")
+            return !parts.slice(0, -1).some((_, index) => linked.has(parts.slice(0, index + 1).join("/")))
+          })
+        : paths
       return yield* git.index
-        .ignored({ repository: source, paths })
+        .ignored({ repository: source, paths: checked })
         .pipe(Effect.mapError((cause) => failure(operation, cause)))
     })
 

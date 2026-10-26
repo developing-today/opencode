@@ -92,6 +92,8 @@ export interface IntegrationEditor {
   get(id: string): IntegrationRef | undefined
   update(id: string, update: (integration: IntegrationRef) => void): void
   remove(id: string): void
+  /** Gives `to` every connect method of `from` it lacks; environment methods stay with `from`. */
+  copy(from: string, to: string): void
   readonly method: {
     list(integrationID: string): readonly IntegrationMethod[]
     update(input: IntegrationMethodRegistration): void

@@ -81,11 +81,12 @@ export const isDayOfMonth = (value: unknown): value is number | string => dayOfM
 
 /** "9:30", "09:30", "23:59", "9:5" or "9:30:15" as minutes since local midnight. Seconds round down. */
 export const minutesOf = (value: string): number | undefined => {
-  const match = /^(\d{1,2}):(\d{1,2})(?::\d{2})?$/.exec(value.trim())
+  const match = /^(\d{1,2}):(\d{1,2})(?::(\d{2}))?$/.exec(value.trim())
   if (!match) return undefined
   const hours = Number(match[1])
   const minutes = Number(match[2])
-  if (hours > 23 || minutes > 59) return undefined
+  const seconds = match[3] === undefined ? 0 : Number(match[3])
+  if (hours > 23 || minutes > 59 || seconds > 59) return undefined
   return hours * 60 + minutes
 }
 
@@ -185,9 +186,9 @@ export interface Problem {
 }
 
 /**
- * Reads a window from user input, or lists every field it cannot use: a day list that is not a list
- * or has no valid day, a time that is not "HH:mm", a timezone the runtime does not know, or a `from`
- * that is not before `until`. An empty day list means every day, as an absent one does, so `{}` and
+ * Reads a window from user input, or lists every field it cannot use: a day list that is not a list or
+ * holds an entry that is not a day, a time that is not "HH:mm", a timezone the runtime does not know, or a
+ * `from` that is not before `until`. An empty day list means every day, as an absent one does, so `{}` and
  * `{ daysOfWeek: [] }` are both always active. Fields that read as empty lists are dropped so the
  * canonical value is as small as the config.
  */
@@ -202,9 +203,15 @@ export const read = (value: unknown): Result.Result<Window, readonly Problem[]> 
     const raw = field(value, name)
     if (raw === undefined) return undefined
     if (!Array.isArray(raw)) return refuse(name, "is not a list")
-    const valid = [...new Set(raw.map(day).filter((item): item is number => item !== undefined))]
-    if (valid.length > 0) return valid
-    return raw.length === 0 ? undefined : refuse(name, "has no valid day")
+    const parsed = raw.map(day)
+    const valid = parsed.filter((item): item is number => item !== undefined)
+    // Any entry that is not a day refuses the window: dropping it would narrow the days the rule applies
+    // on without a word.
+    if (valid.length < raw.length) {
+      const unreadable = raw.filter((_, index) => parsed[index] === undefined).map((item) => JSON.stringify(item))
+      return refuse(name, `${unreadable.join(", ")} ${unreadable.length === 1 ? "is not a day" : "are not days"}`)
+    }
+    return valid.length > 0 ? [...new Set(valid)] : undefined
   }
   const time = (name: "start" | "end") => {
     const raw = field(value, name)

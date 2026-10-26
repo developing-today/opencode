@@ -78,4 +78,4 @@ jobs:
             ### 5. PULL REQUEST & SAFE MERGE
             - Update the `README.md` fork notice with the latest upstream commit SHA and timestamp.
             - Open a clean, conflict-free Pull Request detailing all merged upstream commits and resolved conflicts.
-            - If tests pass cleanly and there are no regressions, proceed to merge the PR into `main`.
+            - Merge the PR into `main` only when you are reasonably certain it is correct: tests pass cleanly, there are no regressions, and the sync is conflict-free. Merging is permitted, never required — when any of that is uncertain, leave the PR open and state your confidence and what a human should check in the description.

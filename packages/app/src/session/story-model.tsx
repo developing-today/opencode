@@ -196,6 +196,7 @@ function SessionSurfaceState(props: SessionPreviewProps & { onReset: () => void 
   const region = {
     state: {
       questionRequest: () => (state.request?.type === "question" ? state.request.value : undefined),
+      questionSource: () => undefined,
       websearch: {
         request: () => (state.request?.type === "websearch" ? state.request.value : undefined),
         options: () => [
@@ -218,6 +219,7 @@ function SessionSurfaceState(props: SessionPreviewProps & { onReset: () => void 
         },
       } satisfies WebSearchRequestModel,
       permissionRequest: () => (state.request?.type === "permission" ? state.request.value : undefined),
+      permissionSource: () => undefined,
       permissionResponding: () => false,
       decide: (response) => {
         setState("request", undefined)

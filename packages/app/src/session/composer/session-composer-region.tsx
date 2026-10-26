@@ -7,7 +7,14 @@ import type { SessionComposerRegionController } from "./session-composer-region-
 
 type SessionComposerRegionState = Pick<
   SessionComposerRegionController["state"],
-  "questionRequest" | "websearch" | "permissionRequest" | "permissionResponding" | "decide" | "blocked"
+  | "questionRequest"
+  | "questionSource"
+  | "websearch"
+  | "permissionRequest"
+  | "permissionSource"
+  | "permissionResponding"
+  | "decide"
+  | "blocked"
 >
 
 export type SessionComposerRegionViewController = Pick<
@@ -40,7 +47,11 @@ export function SessionComposerRegion(props: {
         <Show when={controller.state.questionRequest()} keyed>
           {(request) => (
             <div>
-              <SessionQuestionDock request={request} onSubmit={controller.onResponseSubmit} />
+              <SessionQuestionDock
+                request={request}
+                source={controller.state.questionSource()}
+                onSubmit={controller.onResponseSubmit}
+              />
             </div>
           )}
         </Show>
@@ -50,6 +61,7 @@ export function SessionComposerRegion(props: {
             <div>
               <SessionPermissionDock
                 request={request}
+                source={controller.state.permissionSource()}
                 responding={controller.state.permissionResponding()}
                 onDecide={(response) => {
                   controller.onResponseSubmit()

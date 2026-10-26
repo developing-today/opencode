@@ -35,13 +35,13 @@ ${
 fi
 `
     : ""
-}if [ -n "$cli" ]; then printf '%s\\n' "$cli"; fi
+}if [ -n "$cli" ]; then printf '\\n%s\\n' "$cli"; fi
 `
 }
 
 // Adapters supply a quoted shell expression, including remote HOME or wslpath expansion.
 export function versionScript(command: string) {
-  return `if [ -x ${command} ]; then printf 'OPENCODE_CLI_VERSION_BEGIN\\n'; ${command} --version 2>/dev/null || true; printf 'OPENCODE_CLI_VERSION_END\\n'; fi\n`
+  return `if [ -x ${command} ]; then printf '\\nOPENCODE_CLI_VERSION_BEGIN\\n'; ${command} --version 2>/dev/null || true; printf '\\nOPENCODE_CLI_VERSION_END\\n'; fi\n`
 }
 
 export function parseVersion(output: string) {
@@ -81,7 +81,7 @@ if [ "$arch" = x64 ]; then target="$target-baseline"; fi
 if [ "$os" = linux ]; then
   if [ -f /etc/alpine-release ] || (ldd --version 2>&1 | grep -qi musl); then target="$target-musl"; fi
 fi
-printf 'OPENCODE_REMOTE_TARGET=%s\\n' "$target"
+printf '\\nOPENCODE_REMOTE_TARGET=%s\\n' "$target"
 `
 
 export function archiveUrl(target: string, version: string) {

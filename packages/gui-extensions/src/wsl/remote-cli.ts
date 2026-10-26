@@ -14,13 +14,13 @@ function requireVersion(version: string) {
 export function discoverScript() {
   return `cli=""
 if [ -z "$cli" ] && [ -x "$HOME/.opencode/bin/opencode" ]; then cli="$HOME/.opencode/bin/opencode"; fi
-if [ -n "$cli" ]; then printf '%s\\n' "$cli"; fi
+if [ -n "$cli" ]; then printf '\\nOPENCODE_CLI_DISCOVERY_BEGIN\\n%s\\nOPENCODE_CLI_DISCOVERY_END\\n' "$cli"; fi
 `
 }
 
 // Adapters supply a quoted shell expression, including remote HOME or wslpath expansion.
 export function versionScript(command: string) {
-  return `if [ -x ${command} ]; then printf 'OPENCODE_CLI_VERSION_BEGIN\\n'; ${command} --version 2>/dev/null || true; printf 'OPENCODE_CLI_VERSION_END\\n'; fi\n`
+  return `if [ -x ${command} ]; then printf '\\nOPENCODE_CLI_VERSION_BEGIN\\n'; ${command} --version 2>/dev/null || true; printf '\\nOPENCODE_CLI_VERSION_END\\n'; fi\n`
 }
 
 export function parseVersion(output: string) {

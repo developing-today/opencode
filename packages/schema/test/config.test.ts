@@ -3,9 +3,11 @@ import { Schema } from "effect"
 import { Config } from "../src/config.js"
 import { ConfigAgent } from "../src/config/agent.js"
 import { ConfigMCP } from "../src/config/mcp.js"
+import { ConfigModel } from "../src/config/model.js"
 import { ConfigModelRoutes } from "../src/config/model-routes.js"
 import { ConfigProvider } from "../src/config/provider.js"
 import { Mcp } from "../src/mcp.js"
+import { Model } from "../src/model.js"
 import { Provider } from "../src/provider.js"
 import { AbsolutePath } from "../src/schema.js"
 import { WebSearch } from "../src/websearch.js"
@@ -142,6 +144,49 @@ describe("Config.Entry", () => {
   })
 })
 
+describe("ConfigModelRoutes field descriptions", () => {
+  // A description annotated outside the package `optional` helper lands only on the decoded side, so the
+  // encoded JSON schema — what the OpenAPI document and editors are generated from — shows nothing (#240).
+  const described = (schema: Schema.Top) => {
+    const { definitions } = Schema.toJsonSchemaDocument(schema, { onExcessProperty: "error" })
+    const fields: Record<string, string | undefined> = {}
+    for (const definition of Object.values(
+      definitions as Record<string, { properties?: Record<string, { description?: string }> }>,
+    ))
+      for (const [name, property] of Object.entries(definition.properties ?? {})) fields[name] ??= property.description
+    return fields
+  }
+
+  test("every documented field carries its description in the encoded JSON schema", () => {
+    const cases: Array<[Schema.Top, string[]]> = [
+      [ConfigModelRoutes.Budget, ["softLimit"]],
+      [
+        ConfigModelRoutes.Health,
+        [
+          "firstTokenTimeoutMs",
+          "maxResponseTimeMs",
+          "minOutputTokensPerSecond",
+          "sampleWindow",
+          "slowThreshold",
+          "cooldownMs",
+          "quotaCooldownMs",
+        ],
+      ],
+      [ConfigModelRoutes.Window, ["daysOfWeek", "daysOfMonth", "start", "end", "timezone", "from", "until"]],
+      [ConfigModelRoutes.Schedule, ["id", "targets", "factor", "weight", "note"]],
+      [ConfigModelRoutes.GlobalSchedule, ["providers", "models", "targets", "routes", "factor", "weight"]],
+      [ConfigModelRoutes.Route, ["budgets", "hedgeAfterMs", "attempts"]],
+      [ConfigModelRoutes.Tuning, ["enabled", "intervalMinutes", "windowHours", "notes"]],
+      [ConfigModelRoutes.Log, ["captureErrorBodies"]],
+    ]
+    for (const [schema, names] of cases) {
+      const fields = described(schema)
+      for (const name of names) expect(fields[name], name).toBeString()
+    }
+    expect(described(ConfigModelRoutes.Budget).softLimit).toContain("Fraction of an allowance")
+  })
+})
+
 describe("ConfigModelRoutes.Tuning notes", () => {
   test("accepts any string as a note, so one bad line does not refuse the block; a non-string is refused", () => {
     const decode = Schema.decodeUnknownSync(ConfigModelRoutes.Tuning)
@@ -181,5 +226,65 @@ describe("ConfigModelRoutes.Route matching keys", () => {
     expect(() => decode({ match: "*", variantRules: [{ match: "*", map: { max: true } }] })).toThrow()
     expect(() => decode({ match: "*", variantRules: [{ map: { max: false } }] })).toThrow()
     expect(() => decode({ levels: "low" })).toThrow()
+  })
+})
+
+describe("ConfigModel.Selection segment spelling (#456)", () => {
+  const decode = Schema.decodeUnknownSync(ConfigModel.Selection)
+
+  test("accepts legitimate string and explicit selections", () => {
+    expect(String(decode("openrouter/anthropic/claude-sonnet-4").model)).toBe("anthropic/claude-sonnet-4")
+    expect(String(decode("anthropic/claude-sonnet#high").variant)).toBe("high")
+    expect(String(decode("openai/gpt-4#a/b").variant)).toBe("a/b")
+    expect(String(decode({ providerID: "openai", model: "gpt-4", variant: "a/b" }).variant)).toBe("a/b")
+    const explicit = decode({ providerID: "openrouter", model: "anthropic/claude-sonnet-4", variant: "high" })
+    expect(String(explicit.providerID)).toBe("openrouter")
+    expect(String(explicit.model)).toBe("anthropic/claude-sonnet-4")
+  })
+
+  test("rejects padded, empty and internal-whitespace segments in string form", () => {
+    for (const input of [
+      "open ai/gpt-4",
+      "openai/gpt 4",
+      "openai/gpt\t4",
+      "openai/gpt-4#hi there",
+      " openai/gpt-4",
+      "openai/gpt-4 ",
+      "openai/gpt-4# hi",
+      "openai//gpt-4",
+      "openai/gpt-4#a//b",
+      "openai/gpt-4#a/",
+      "openai/gpt-4#/b",
+      "openai/gpt-4#/",
+    ])
+      expect(() => decode(input)).toThrow()
+  })
+
+  test("rejects empty-sub-segment variant spellings as a SchemaError, not a raw Error, in string form (#467)", () => {
+    for (const input of ["openai/gpt-4#a//b", "openai/gpt-4#a/", "openai/gpt-4#/b", "openai/gpt-4#/"])
+      expect(() => decode(input)).toThrow(Schema.SchemaError)
+  })
+
+  test("rejects variant slash spellings with empty sub-segments like Model.Ref.parse (#467)", () => {
+    for (const variant of ["a//b", "a/", "/b", "/"])
+      expect(() => Model.Ref.parse(`openai/gpt-4#${variant}`)).toThrow()
+    expect(String(Model.Ref.parse("openai/gpt-4#a/b").variant)).toBe("a/b")
+  })
+
+  test("rejects padded, empty and internal-whitespace segments in explicit form", () => {
+    for (const input of [
+      { providerID: "open ai", model: "gpt-4" },
+      { providerID: " openai", model: "gpt-4" },
+      { providerID: "openai", model: "gpt 4" },
+      { providerID: "openai", model: "/gpt-4" },
+      { providerID: "openai", model: "anthropic//claude-sonnet-4" },
+      { providerID: "openai", model: "gpt-4", variant: "hi there" },
+      { providerID: "openai", model: "gpt-4", variant: " high" },
+      { providerID: "openai", model: "gpt-4", variant: "a//b" },
+      { providerID: "openai", model: "gpt-4", variant: "a/" },
+      { providerID: "openai", model: "gpt-4", variant: "/b" },
+      { providerID: "openai", model: "gpt-4", variant: "/" },
+    ])
+      expect(() => decode(input)).toThrow()
   })
 })

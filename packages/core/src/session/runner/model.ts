@@ -4,7 +4,9 @@ import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { LanguageModel } from "@opencode/ai"
 import { Model } from "@opencode/schema/model"
 import { Provider } from "@opencode/schema/provider"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
+import { Config } from "../../config.js"
+import { ModelAlias } from "../../model-alias.js"
 import { ModelResolver } from "../../model-resolver.js"
 import { SessionSchema } from "../schema.js"
 
@@ -22,6 +24,8 @@ export class ModelUnavailableError extends Schema.TaggedError<ModelUnavailableEr
   { providerID: Provider.ID, modelID: Model.ID },
 ) {
   override get message() {
+    // A bare alias target carries an empty model id; name the original input, not a trailing slash.
+    if (!this.modelID) return `Model unavailable: ${this.providerID}`
     if (this.providerID === "azure-cognitive-services")
       return `Model unavailable: ${this.providerID}/${this.modelID}. This provider has been deprecated; use azure/${this.modelID} instead.`
     if (this.providerID === "google-vertex-anthropic")
@@ -69,10 +73,11 @@ export const resolved = (
   ...(options.routing === undefined ? {} : { routing: options.routing }),
 })
 
-const layer = Layer.effect(
+export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const resolver = yield* ModelResolver.Service
+    const config = yield* Effect.serviceOption(Config.Service)
     return Service.of({
       resolve: Effect.fn("SessionRunnerModel.resolve")(function* (session, available) {
         // Location plugins populate and filter the catalog asynchronously during layer startup.
@@ -81,15 +86,44 @@ const layer = Layer.effect(
           if (resolved) return resolved
           return yield* new ModelNotSelectedError({ sessionID: session.id })
         }
+        let target = session.model
+        if (Option.isSome(config)) {
+          const cfg = config.value
+          const entries = yield* cfg.entries()
+          const aliases = Config.latest(entries, "aliases")
+          if (aliases) {
+            const allModels = yield* available()
+            const exists = ({ providerID, modelID }: { providerID: string; modelID: string }) =>
+              allModels.some((m) => m.providerID === providerID && m.id === modelID)
+            // A bare alias arrives as the provider field with an empty model id (PR #382's
+            // CLI passthrough); build the reference from the alias name alone, keeping any
+            // variant, instead of a trailing-slash string alias resolution rejects.
+            const refStr = target.id
+              ? target.variant
+                ? `${target.providerID}/${target.id}#${target.variant}`
+                : `${target.providerID}/${target.id}`
+              : target.variant
+                ? `${target.providerID}#${target.variant}`
+                : target.providerID
+            try {
+              const res = ModelAlias.resolveRef(aliases, refStr, exists)
+              target = Model.Ref.make({
+                providerID: Provider.ID.make(res.providerID),
+                id: Model.ID.make(res.id),
+                ...(res.variant ? { variant: Model.VariantID.make(res.variant) } : {}),
+              })
+            } catch {}
+          }
+        }
         const selected = (yield* available()).find(
-          (model) => model.providerID === session.model?.providerID && model.id === session.model.id,
+          (model) => model.providerID === target.providerID && model.id === target.id,
         )
         if (!selected)
           return yield* new ModelUnavailableError({
-            providerID: session.model.providerID,
-            modelID: session.model.id,
+            providerID: target.providerID,
+            modelID: target.id,
           })
-        return yield* resolver.resolveModel(selected, session.model.variant, session.id)
+        return yield* resolver.resolveModel(selected, target.variant, session.id)
       }),
     })
   }),

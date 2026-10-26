@@ -21,6 +21,97 @@ describe("Model.Ref", () => {
     expect(() => Model.Ref.parse("openai/gpt-5#")).toThrow()
     expect(() => Model.Ref.parse("openai/gpt-5#high#extra")).toThrow()
   })
+
+  test("rejects padded, empty and internal-whitespace segments like ModelAlias (#456)", () => {
+    for (const input of [
+      "open ai/gpt-4",
+      "openai/gpt 4",
+      "openai/gpt\t4",
+      "openai/gpt-4#hi there",
+      " openai/gpt-4",
+      "openai/gpt-4 ",
+      "openai/gpt-4# hi",
+      "openai//gpt-4",
+      "openai/gpt-4#",
+    ])
+      expect(() => Model.Ref.parse(input)).toThrow(`Invalid model reference: ${input}`)
+  })
+
+  test("still accepts multi-slash model ids and variants (#456)", () => {
+    const nested = Model.Ref.parse("openrouter/anthropic/claude-sonnet-4")
+    expect(String(nested.providerID)).toBe("openrouter")
+    expect(String(nested.id)).toBe("anthropic/claude-sonnet-4")
+    expect(String(Model.Ref.parse("anthropic/claude-sonnet#high").variant)).toBe("high")
+  })
+})
+
+describe("Model.Selector", () => {
+  const decode = Schema.decodeUnknownSync(Model.Selector)
+
+  test("accepts refs and provider wildcards, rejects bare names", () => {
+    expect(decode("anthropic/claude-haiku-5-5")).toBe("anthropic/claude-haiku-5-5")
+    expect(decode("anthropic/claude-haiku-5-5#high")).toBe("anthropic/claude-haiku-5-5#high")
+    expect(decode("cline-pass/*")).toBe("cline-pass/*")
+    expect(() => decode("claude-haiku-5-5")).toThrow()
+    expect(() => decode("anthropic/")).toThrow()
+    expect(() => decode("/claude-haiku-5-5")).toThrow()
+  })
+
+  test("rejects padded, whitespace, empty-segment and partial-wildcard selectors (#489)", () => {
+    for (const input of [
+      " anthropic/claude-haiku-5-5",
+      "anthropic/claude-haiku-5-5 ",
+      "anthropic /claude-haiku-5-5",
+      "anthropic/claude haiku-5-5",
+      "an thropic/claude-haiku-5-5",
+      "anthropic/claude-haiku-5-5# high",
+      "anthropic/claude-haiku-5-5#high ",
+      "anthropic//claude-haiku-5-5",
+      "anthropic/claude-haiku-5-5/",
+      "anthropic/claude-*",
+      "anthropic/*-haiku",
+      "anthropic/**",
+    ])
+      expect(() => decode(input)).toThrow()
+  })
+
+  test("still accepts multi-slash model ids and slash-containing variants (#489)", () => {
+    expect(decode("openrouter/openai/gpt-5")).toBe("openrouter/openai/gpt-5")
+    expect(decode("anthropic/claude-sonnet#vendor/high")).toBe("anthropic/claude-sonnet#vendor/high")
+  })
+
+  test("matches and intersect reject the unmatchable forms even for raw strings (#489)", () => {
+    const haiku = Model.Ref.parse("anthropic/claude-haiku-5-5")
+    expect(Model.Selector.matches(" anthropic/claude-haiku-5-5", haiku)).toBe(false)
+    expect(Model.Selector.matches("anthropic/claude-*", haiku)).toBe(false)
+    expect(Model.Selector.intersect("anthropic/claude-*", "anthropic/claude-haiku-5-5")).toBeUndefined()
+    expect(Model.Selector.intersect(" anthropic/*", "anthropic/claude-haiku-5-5")).toBeUndefined()
+  })
+
+  test("matches exact, variant, and wildcard selectors", () => {
+    const haiku = Model.Ref.parse("anthropic/claude-haiku-5-5")
+    const haikuHigh = Model.Ref.parse("anthropic/claude-haiku-5-5#high")
+    const opus = Model.Ref.parse("anthropic/claude-opus-5-5")
+    expect(Model.Selector.matches("anthropic/claude-haiku-5-5", haiku)).toBe(true)
+    expect(Model.Selector.matches("anthropic/claude-haiku-5-5", haikuHigh)).toBe(true)
+    expect(Model.Selector.matches("anthropic/claude-haiku-5-5#high", haikuHigh)).toBe(true)
+    expect(Model.Selector.matches("anthropic/claude-haiku-5-5#high", haiku)).toBe(false)
+    expect(Model.Selector.matches("anthropic/*", opus)).toBe(true)
+    expect(Model.Selector.matches("cline-pass/*", opus)).toBe(false)
+    expect(Model.Selector.matches("anthropic/claude-opus-5-5", haiku)).toBe(false)
+  })
+
+  test("intersect keeps the narrower selector", () => {
+    expect(Model.Selector.intersect("anthropic/*", "anthropic/claude-haiku-5-5")).toBe("anthropic/claude-haiku-5-5")
+    expect(Model.Selector.intersect("anthropic/claude-haiku-5-5", "anthropic/*")).toBe("anthropic/claude-haiku-5-5")
+    expect(Model.Selector.intersect("anthropic/claude-haiku-5-5", "anthropic/claude-haiku-5-5#high")).toBe(
+      "anthropic/claude-haiku-5-5#high",
+    )
+    expect(Model.Selector.intersect("anthropic/claude-haiku-5-5#high", "anthropic/claude-haiku-5-5#low")).toBeUndefined()
+    expect(Model.Selector.intersect("cline-pass/*", "anthropic/claude-haiku-5-5")).toBeUndefined()
+    expect(Model.Selector.intersect("anthropic/claude-opus-5-5", "anthropic/claude-haiku-5-5")).toBeUndefined()
+    expect(Model.Selector.intersect("anthropic/*", "anthropic/*")).toBe("anthropic/*")
+  })
 })
 
 describe("Model.ReasoningField", () => {

@@ -78,7 +78,7 @@ function Option(props: {
   )
 }
 
-export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () => void }> = (props) => {
+export const SessionQuestionDock: Component<{ request: FormInfo; source?: string; onSubmit: () => void }> = (props) => {
   const serverSDK = useServerSDK()
   const language = useLanguage()
   const command = useCommand()
@@ -552,6 +552,10 @@ export const SessionQuestionDock: Component<{ request: FormInfo; onSubmit: () =>
             <div data-slot="question-header-top">
               <div data-slot="question-header-title">
                 <bdi>{summary()}</bdi>
+                <Show when={props.source}>
+                  {" — "}
+                  <bdi data-slot="question-source">{props.source}</bdi>
+                </Show>
               </div>
               <div data-slot="question-header-actions">
                 <Show when={total() > 1}>

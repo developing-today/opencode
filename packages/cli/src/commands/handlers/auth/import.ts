@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises"
 import { EOL } from "node:os"
 import { isConflictError, type CredentialCreateInput } from "@opencode/client"
 import { Credential } from "@opencode/schema/credential"
@@ -15,7 +16,7 @@ export default Runtime.handler(
       const file = Option.getOrUndefined(input.file)
       if (!file && process.stdin.isTTY)
         return yield* Effect.fail(new Error("Pipe auth export output into stdin or pass a file to import"))
-      const text = yield* request(() => (file ? Bun.file(file).text() : readStdin()))
+      const text = yield* request(() => (file ? readFile(file, "utf8") : readStdin()))
       const credentials = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Credential.Entry)))(text)
       const client = yield* createClient({ server: Option.getOrUndefined(input.server), standalone: input.standalone })
       const existing = yield* request((signal) => client.credential.list({ signal }))

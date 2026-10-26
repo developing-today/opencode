@@ -9,6 +9,7 @@ import { DateTimeUtcFromMillis, optional, RelativePath } from "./schema.js"
 import { SessionEvent } from "./session-event.js"
 import { SessionID } from "./session-id.js"
 import { SessionMetadata } from "./session-metadata.js"
+import { SessionAgentOverride, SessionSubagentPolicy } from "./session-subagent-policy.js"
 import { Money } from "./money.js"
 import { Permission } from "./permission.js"
 import { TokenUsage } from "./token-usage.js"
@@ -20,6 +21,12 @@ export type ID = SessionID
 
 export const Metadata = SessionMetadata
 export type Metadata = SessionMetadata
+
+export const SubagentPolicy = SessionSubagentPolicy
+export type SubagentPolicy = SessionSubagentPolicy
+
+export const AgentOverride = SessionAgentOverride
+export type AgentOverride = SessionAgentOverride
 
 export const Event = SessionEvent
 
@@ -53,6 +60,8 @@ export const Info = Schema.Struct({
   location: Location.Ref,
   subpath: RelativePath.pipe(optional),
   metadata: Metadata.pipe(optional),
+  /** Models this session's descendants may run; replaced wholesale by `session.subagent-policy.updated`. */
+  subagentPolicy: SubagentPolicy.pipe(optional),
   /** Evaluated after the agent's rules; the last matching rule wins. */
   permissions: Permission.Ruleset.pipe(optional),
   revert: Revert.pipe(optional),

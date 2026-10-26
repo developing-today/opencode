@@ -376,6 +376,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
             get: (id) => mutable(editor.get(Integration.ID.make(id))),
             update: (id, update) => editor.update(Integration.ID.make(id), update),
             remove: (id) => editor.remove(Integration.ID.make(id)),
+            copy: (from, to) => editor.copy(Integration.ID.make(from), Integration.ID.make(to)),
             method: {
               list: (id) => editor.method.list(Integration.ID.make(id)),
               update: (input) => editor.method.update(methodImplementation(input)),

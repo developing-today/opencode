@@ -2,7 +2,9 @@ export * as Instruction from "./instruction.js"
 
 import { Schema } from "effect"
 
-export const Key = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._/-]*$/u)).pipe(
+export const Key = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?(?:\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?)+$/u),
+).pipe(
   Schema.brand("Instruction.Key"),
   Schema.annotate({ identifier: "Instruction.Key" }),
 )

@@ -130,6 +130,10 @@ describe("ModelRouteTuning.parseQuotaReset", () => {
       Date.UTC(2026, 0, 1, 18),
     )
     expect(ModelRouteTuning.parseQuotaReset("rate limit reached, back in 30 minutes", at)).toBe(at + 1_800_000)
+    // The documented short form: "in 45s" (and "sec") read as 45 seconds.
+    expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 45s", at)).toBe(at + 45_000)
+    expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 45 sec", at)).toBe(at + 45_000)
+    expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 45 seconds", at)).toBe(at + 45_000)
     expect(ModelRouteTuning.parseQuotaReset("try in 5 minutes", at)).toBeUndefined()
     expect(ModelRouteTuning.parseQuotaReset(undefined, at)).toBeUndefined()
   })

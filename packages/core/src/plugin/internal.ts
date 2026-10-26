@@ -104,6 +104,7 @@ import { ModelsDevPlugin } from "./models-dev.js"
 import { McpCodeModeDefaultsPlugin } from "./mcp-codemode-defaults.js"
 import { ProviderPlugins } from "./provider.js"
 import { OpencodePlugin } from "./provider/opencode.js"
+import { ProviderInstancePlugin } from "./provider/instance.js"
 import { WebSearchPlugins } from "./websearch/index.js"
 import { SkillPlugin } from "./skill.js"
 import { PlanInfoPlugin } from "./plan-info.js"
@@ -245,6 +246,8 @@ const pre = [
   PlanInfoPlugin.Plugin,
   VcsHgPlugin.Plugin,
   ModelsDevPlugin,
+  // Copy catalog providers into their configured instances before provider plugins adjust either one.
+  ProviderInstancePlugin,
   ...ProviderPlugins,
   ...WebSearchPlugins,
   PatchTool.Plugin,

@@ -57,6 +57,21 @@ function withoutEmptyCompatibilityContainers(input: Record<string, unknown>) {
       if (!Object.keys(experimental).length) delete result.experimental
     }
   }
+  // Deprecated experimental aliases normalize into top-level aliases (a top-level
+  // aliases block wins when both are present, matching normalizeAliases).
+  if (typeof result.experimental === "object" && result.experimental !== null && !Array.isArray(result.experimental)) {
+    const experimental = result.experimental as Record<string, unknown>
+    if (
+      typeof experimental.aliases === "object" &&
+      experimental.aliases !== null &&
+      !Array.isArray(experimental.aliases)
+    ) {
+      if (typeof result.aliases !== "object" || result.aliases === null || Array.isArray(result.aliases))
+        result.aliases = experimental.aliases
+      delete experimental.aliases
+      if (!Object.keys(experimental).length) delete result.experimental
+    }
+  }
   return result
 }
 
@@ -269,6 +284,35 @@ describe("ConfigNormalize", () => {
     expect(JSON.stringify(result.diagnostics)).not.toContain(secret)
   })
 
+  test("omits legacy small models that violate the Selection segment rules (#503)", () => {
+    for (const small_model of ["open ai/gpt-4", "openai//gpt-4", "openai/gpt 4", " openai/gpt-4"]) {
+      const result = normalized({ small_model })
+      expect(result.encoded.agents).toBeUndefined()
+      expect(result.diagnostics.map((item) => [item.kind, item.path])).toEqual([["unsupported", ["small_model"]]])
+    }
+  })
+
+  test("omits segment-invalid legacy agent and command models instead of throwing (#503)", () => {
+    const result = normalized({
+      agent: { custom: { model: "openai/gpt-4", variant: "a//b", prompt: "hi" } },
+      command: { run: { template: "t", model: "openai//gpt-4" } },
+    })
+    expect(result.encoded.agents).toEqual({ custom: { system: "hi" } })
+    expect(result.encoded.commands).toEqual({ run: { template: "t" } })
+  })
+
+  test("keeps multi-slash legacy models and slash variants (#503)", () => {
+    const small = normalized({ small_model: "openrouter/anthropic/claude-sonnet-4" })
+    expect(small.encoded.agents).toEqual({
+      title: { model: { providerID: "openrouter", model: "anthropic/claude-sonnet-4" } },
+    })
+    expect(small.diagnostics).toEqual([])
+    const agent = normalized({ agent: { custom: { model: "openai/gpt-4", variant: "a/b" } } })
+    expect(agent.encoded.agents).toEqual({
+      custom: { model: { providerID: "openai", model: "gpt-4", variant: "a/b" } },
+    })
+  })
+
   test("recovers malformed named entries and retains a valid legacy collision", () => {
     const result = normalized({
       command: { fallback: { template: "legacy" } },
@@ -300,6 +344,12 @@ describe("ConfigNormalize", () => {
     expect(result.diagnostics).toEqual([])
     expect(result.encoded.providers).toEqual({
       demo: { name: "Demo", models: { demo: { name: "Demo", capabilities: { input: ["text"], output: ["text"] } } } },
+    })
+  })
+
+  test("keeps a legacy provider's instanceOf", () => {
+    expect(decoded({ provider: { "openai.work": { instanceOf: "openai", name: "Work" } } }).providers).toEqual({
+      "openai.work": expect.objectContaining({ instanceOf: "openai", name: "Work" }),
     })
   })
 

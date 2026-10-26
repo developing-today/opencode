@@ -108,6 +108,12 @@ export const Plugin = define({
                 providerID: item.model.providerID,
                 ...(item.model.variant === undefined ? {} : { variant: item.model.variant }),
               }
+            if (item.models !== undefined) agent.models = [...item.models]
+            if (item.excluded_models !== undefined) agent.excludedModels = [...item.excluded_models]
+            if (item.subagent_models !== undefined) agent.subagentModels = [...item.subagent_models]
+            if (item.subagent_excluded_models !== undefined)
+              agent.subagentExcludedModels = [...item.subagent_excluded_models]
+            if (item.max_depth !== undefined) agent.maxDepth = item.max_depth
             if (item.request !== undefined) {
               Object.assign(agent.request.headers, item.request.headers ?? {})
               Object.assign(agent.request.body, item.request.body ?? {})

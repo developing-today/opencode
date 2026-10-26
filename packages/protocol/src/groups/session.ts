@@ -228,9 +228,10 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           location: Location.PublicRef.pipe(Schema.optional),
           metadata: Session.Metadata.pipe(Schema.optional),
           permissions: Permission.Ruleset.pipe(Schema.optional),
+          subagentPolicy: Session.SubagentPolicy.pipe(Schema.optional),
         }),
         success: Schema.Struct({ data: PublicSessionInfo }),
-        error: SessionNotFoundError,
+        error: [SessionNotFoundError, InvalidRequestError],
       }).annotateMerge(
         OpenApi.annotations({
           identifier: "session.create",
@@ -331,7 +332,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
         params: { sessionID: Session.ID },
         payload: Schema.Struct({ agent: Agent.ID }),
         success: HttpApiSchema.NoContent,
-        error: SessionNotFoundError,
+        error: [SessionNotFoundError, InvalidRequestError],
       })
         .middleware(sessionLocationMiddleware)
         .annotateMerge(
@@ -347,7 +348,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
         params: { sessionID: Session.ID },
         payload: Schema.Struct({ model: Model.Ref }),
         success: HttpApiSchema.NoContent,
-        error: SessionNotFoundError,
+        error: [SessionNotFoundError, InvalidRequestError],
       })
         .middleware(sessionLocationMiddleware)
         .annotateMerge(
@@ -365,6 +366,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           title: Schema.String.pipe(Schema.optional),
           metadata: Session.Metadata.pipe(Schema.optional),
           permissions: Permission.Ruleset.pipe(Schema.optional),
+          subagentPolicy: Session.SubagentPolicy.pipe(Schema.optional),
         }),
         success: HttpApiSchema.NoContent,
         error: SessionNotFoundError,

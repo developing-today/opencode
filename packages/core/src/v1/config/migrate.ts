@@ -66,12 +66,24 @@ export function migrateCommand(command: ConfigCommandV1.Info) {
   }
 }
 
+// The migrated selection must satisfy ConfigModel.Selection's segment rules
+// (no whitespace, no empty slash segments): a looser gate either inserts an
+// undecoded value (small_model) or throws through canonicalisation (agent /
+// command), so any invalid part omits the whole selection instead.
+const providerPattern = /^[^/#\s]+$/
+const segmentsPattern = /^[^\s#/]+(?:\/[^\s#/]+)*$/
+
 export function modelSelection(input?: string, variant?: string) {
   if (input === undefined || !/^[^/#]+\/[^#]+$/.test(input)) return undefined
   const separator = input.indexOf("/")
+  const provider = input.slice(0, separator)
+  const model = input.slice(separator + 1)
+  if (!providerPattern.test(provider) || !segmentsPattern.test(model)) return undefined
+  if (variant !== undefined && variant.length > 0 && !variant.includes("#") && !segmentsPattern.test(variant))
+    return undefined
   return {
-    providerID: providerID(input.slice(0, separator)),
-    model: input.slice(separator + 1),
+    providerID: providerID(provider),
+    model,
     ...(variant === undefined || variant.length === 0 || variant.includes("#") ? {} : { variant }),
   }
 }
@@ -119,6 +131,7 @@ function migrateStandardProvider(info: ConfigProviderV1.Info) {
   const { setCacheKey, ...rest } = info.options ?? {}
   const options = ConfigProviderOptionsV1.provider(rest)
   return {
+    instanceOf: info.instanceOf,
     name: info.name,
     env: info.env,
     package: info.npm ? packageSpecifier(info.npm) : undefined,

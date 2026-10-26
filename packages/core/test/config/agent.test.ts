@@ -36,6 +36,30 @@ test("rejects named agent color tokens", () => {
   expect(() => decode({ agents: { reviewer: { color: "warning" } } })).toThrow()
 })
 
+test("decodes the model governance fields from config documents", () => {
+  const info = decode({
+    agents: {
+      reviewer: {
+        model: "anthropic/claude-sonnet-5",
+        models: ["anthropic/claude-sonnet-5", "anthropic/claude-haiku-5-5"],
+        excluded_models: ["anthropic/claude-opus-5-5"],
+        subagent_models: ["cline-pass/*"],
+        subagent_excluded_models: ["openai/*"],
+        max_depth: 2,
+      },
+    },
+  })
+  expect(info.agents?.reviewer).toMatchObject({
+    models: ["anthropic/claude-sonnet-5", "anthropic/claude-haiku-5-5"],
+    excluded_models: ["anthropic/claude-opus-5-5"],
+    subagent_models: ["cline-pass/*"],
+    subagent_excluded_models: ["openai/*"],
+    max_depth: 2,
+  })
+  expect(() => decode({ agents: { reviewer: { models: ["bare-name"] } } })).toThrow()
+  expect(() => decode({ agents: { reviewer: { max_depth: -1 } } })).toThrow()
+})
+
 test("keeps schema fields and name out of legacy agent options", () => {
   const agent = Schema.decodeUnknownSync(ConfigAgentV1.Info)({
     name: "reviewer",
@@ -635,6 +659,27 @@ Use native v2 fields.`,
         }).pipe(Effect.provide(Config.testLayer([directoryEntry(tmp.path)]))),
       ),
     ),
+  )
+})
+
+describe("model governance fields", () => {
+  it.live("carries Markdown governance fields onto the resolved agent", () =>
+    Effect.gen(function* () {
+      const agent = yield* loadMarkdownAgent(`models:
+  - anthropic/claude-haiku-5-5
+excluded_models:
+  - anthropic/claude-opus-5-5
+subagent_models:
+  - cline-pass/*
+subagent_excluded_models:
+  - openai/*
+max_depth: 2`)
+      expect(agent.models).toEqual(["anthropic/claude-haiku-5-5"])
+      expect(agent.excludedModels).toEqual(["anthropic/claude-opus-5-5"])
+      expect(agent.subagentModels).toEqual(["cline-pass/*"])
+      expect(agent.subagentExcludedModels).toEqual(["openai/*"])
+      expect(agent.maxDepth).toBe(2)
+    }),
   )
 })
 

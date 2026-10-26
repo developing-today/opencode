@@ -8,6 +8,7 @@ import { Agent } from "../../agent.js"
 import { Config } from "../../config.js"
 import { Job } from "../../job.js"
 import { Model } from "../../model.js"
+import { ModelAlias } from "../../model-alias.js"
 import { Permission } from "../../permission.js"
 import { Session } from "../../session.js"
 import { SessionSchema } from "../../session/schema.js"
@@ -37,7 +38,11 @@ export const Input = Schema.Struct({
   prompt: Schema.String.annotate({ description: "The task for the subagent to perform" }),
   model: Schema.optionalKey(Schema.String).annotate({
     description:
-      'NEVER set this unless the user explicitly asks for a particular model or variant. The value is written as "providerID/modelID", or "providerID/modelID#variant" to include a variant. Do not guess the ID: look the model up with the models tool, filtering to your own provider first.',
+      'Set this when the user asks for a particular model or the task clearly warrants a different one. The value is a model ref ("providerID/modelID", or "providerID/modelID#variant" to include a variant), a configured alias or route name, or "auto" for the default chain (the agent\'s configured model, then the inherited model). Do not guess the ID: look unfamiliar models up with the models tool.',
+  }),
+  force: Schema.optionalKey(Schema.Boolean).annotate({
+    description:
+      "Set true only to explicitly override the agent definition's model lists for this call. Ancestor session policies still apply and cannot be forced past.",
   }),
   sessionID: Schema.optionalKey(SessionSchema.ID).annotate({
     description:
@@ -56,6 +61,8 @@ export const Output = Schema.Struct({
 })
 export const description = [
   "Spawns an agent in a child session to work on the specified task.",
+  "Subagents are the default way to delegate non-trivial work: launch one rather than doing everything in the current session.",
+  "A subagent may itself launch subagents, subject to the depth limit and to model governance; governance failures name the allowed models, so pick a permitted one and retry.",
   "The output includes a sessionID you can pass back later to continue that specific conversation with the subagent.",
   "New child sessions start with fresh context, so include all relevant context and instructions when you don't pass a sessionID.",
   "Foreground (default) runs the subagent to completion and returns its final response.",
@@ -76,14 +83,22 @@ export const Plugin = {
     const subagents = yield* SubagentJob.Service
 
     const resolveModel = Effect.fn("SubagentTool.resolveModel")(function* (input: string) {
+      const aliases = Config.latest(yield* config.entries(), "aliases")
+      const availableModels = yield* models.available()
+      const exists = ({ providerID, modelID }: { providerID: string; modelID: string }) =>
+        availableModels.some((m) => m.providerID === providerID && m.id === modelID)
+      let resolved = input
+      try {
+        resolved = ModelAlias.resolve(aliases, input, exists)
+      } catch {}
       const ref = yield* Effect.try({
-        try: () => Model.Ref.parse(input),
+        try: () => Model.Ref.parse(resolved),
         catch: () =>
           new ToolFailure({
             message: `Invalid model "${input}". Use "providerID/modelID" or "providerID/modelID#variant".`,
           }),
       })
-      const model = (yield* models.available()).find(
+      const model = availableModels.find(
         (model) => model.providerID === ref.providerID && model.id === ref.id,
       )
       if (model === undefined)
@@ -154,18 +169,32 @@ export const Plugin = {
                 return yield* new ToolFailure({
                   message: `Session ${existing.id} is not a child of the current session`,
                 })
-              const override = input.model === undefined ? undefined : yield* resolveModel(input.model)
+              // `auto` means no explicit choice: the default chain decides, and
+              // that model is what governance checks at creation.
+              const override =
+                input.model === undefined || input.model === "auto" ? undefined : yield* resolveModel(input.model)
               // Continuing with a different agent switches the child, mirroring create semantics
               // where an explicit model wins over the agent's configured model, which wins over the inherited one.
               if (existing !== undefined) {
                 const switched = existing.agent !== agent.id
                 const model = override ?? (switched ? agent.model : undefined)
-                yield* Effect.all([
-                  switched ? sessions.switchAgent({ sessionID: existing.id, agent: agent.id }) : Effect.void,
-                  model === undefined ? Effect.void : sessions.switchModel({ sessionID: existing.id, model }),
-                ]).pipe(
-                  Effect.mapError(
-                    (error) => new ToolFailure({ message: `Failed to switch subagent session: ${existing.id}`, error }),
+                // Sequential, agent first: the agent switch judges the model
+                // the child will run against the incoming agent, and the
+                // model switch that follows is then judged against that
+                // incoming agent too, not the outgoing one.
+                yield* Effect.gen(function* () {
+                  if (switched)
+                    yield* sessions.switchAgent({
+                      sessionID: existing.id,
+                      agent: agent.id,
+                      ...(model === undefined ? {} : { model }),
+                    })
+                  if (model !== undefined) yield* sessions.switchModel({ sessionID: existing.id, model })
+                }).pipe(
+                  Effect.mapError((error) =>
+                    error._tag === "ModelGovernance.DeniedError"
+                      ? new ToolFailure({ message: error.message })
+                      : new ToolFailure({ message: `Failed to switch subagent session: ${existing.id}`, error }),
                   ),
                 )
               }
@@ -179,10 +208,20 @@ export const Plugin = {
                     title: input.description,
                     agent: Agent.ID.make(input.agent),
                     model,
+                    ...(override !== undefined || input.force !== undefined
+                      ? {
+                          subagentOverride: {
+                            ...(override !== undefined ? { model: override } : {}),
+                            ...(input.force !== undefined ? { force: input.force } : {}),
+                          },
+                        }
+                      : {}),
                   })
                   .pipe(
-                    Effect.mapError(
-                      (error) => new ToolFailure({ message: `Parent session not found: ${context.sessionID}`, error }),
+                    Effect.mapError((error) =>
+                      error._tag === "ModelGovernance.DeniedError"
+                        ? new ToolFailure({ message: error.message })
+                        : new ToolFailure({ message: `Parent session not found: ${context.sessionID}`, error }),
                     ),
                   ))
 

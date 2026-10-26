@@ -12,6 +12,7 @@ import { ManagedPolicy } from "../../managed-policy.js"
 import { Model } from "../../model.js"
 import { Provider } from "../../provider.js"
 import { Variant } from "../../variant.js"
+import { eachInstance, instanceLabel } from "./instance.js"
 import { WebSearch } from "../../websearch.js"
 import { ConfigPolicy } from "@opencode/schema/config/policy"
 import { ConfigProvider } from "@opencode/schema/config/provider"
@@ -103,9 +104,9 @@ class SignedOutError extends Schema.TaggedError<SignedOutError>()("OpencodeConso
   }
 }
 
-function oauth(http: HttpClient.HttpClient) {
+function oauth(http: HttpClient.HttpClient, integrationID: Integration.ID) {
   return {
-    integrationID: Integration.ID.make("opencode"),
+    integrationID,
     method: {
       id: methodID,
       type: "oauth",
@@ -191,310 +192,366 @@ export const OpencodePlugin = define<HttpClient.HttpClient | Bus.Service | Manag
     // and whether it evaluates the policies it is being sent.
     const http = HttpClient.mapRequest(client, HttpClientRequest.setHeader("User-Agent", App.useragent(ctx.app)))
     const managed = yield* ManagedPolicy.Service
-    const scope = yield* Scope.Scope
-    const loading = Semaphore.makeUnsafe(1)
-    type ActiveConnection = Effect.Success<ReturnType<typeof ctx.integration.connection.active>>
-    let snapshot: {
-      config: typeof RemoteResponse.Type | undefined
-      connection: ActiveConnection
-      organization: string | undefined
-      // Console MCP servers carry the credential in their headers, so a rotated token changes the snapshot.
-      mcp:
-        | { servers: NonNullable<typeof RemoteResponse.Type.mcp>["servers"]; headers: Record<string, string> }
-        | undefined
-    } = { config: undefined, connection: undefined, organization: undefined, mcp: undefined }
-    // Status last reported for the active connection, so inference failures can name the fix.
-    let reported: IntegrationConnection.Status | undefined
-    let explainers: Effect.Success<ReturnType<typeof ctx.session.hook>>[] = []
+    // Each instance of `opencode` is another Console account. Only the main connection carries organization
+    // policy, web search and MCP servers; an instance contributes its providers under its own suffix.
+    yield* eachInstance(
+      ctx.event,
+      Provider.ID.opencode,
+      Effect.fnUntraced(function* (ids) {
+        const main = ids.providerID === Provider.ID.opencode
+        const label = instanceLabel(ids.providerID, Provider.ID.opencode)
+        // A Console provider such as `opencode-go` becomes `opencode-go.work` for the `opencode.work` account.
+        const target = (providerID: string) => (main ? providerID : `${providerID}.${label}`)
+        const scope = yield* Scope.Scope
+        const loading = Semaphore.makeUnsafe(1)
+        type ActiveConnection = Effect.Success<ReturnType<typeof ctx.integration.connection.active>>
+        let snapshot: {
+          config: typeof RemoteResponse.Type | undefined
+          connection: ActiveConnection
+          organization: string | undefined
+          // Console MCP servers carry the credential in their headers, so a rotated token changes the snapshot.
+          mcp:
+            | { servers: NonNullable<typeof RemoteResponse.Type.mcp>["servers"]; headers: Record<string, string> }
+            | undefined
+          // An instance account whose organization sends policies, which cannot be enforced for it.
+          refused?: true
+        } = { config: undefined, connection: undefined, organization: undefined, mcp: undefined }
+        // Status last reported for the active connection, so inference failures can name the fix.
+        let reported: IntegrationConnection.Status | undefined
+        let explainers: Effect.Success<ReturnType<typeof ctx.session.hook>>[] = []
 
-    const load = Effect.fn("OpencodePlugin.load")(function* () {
-      const connection = yield* ctx.integration.connection.active("opencode")
-      if (!connection) {
-        reported = undefined
-        return { config: undefined, connection, organization: undefined, mcp: undefined }
-      }
-      const status = (status: IntegrationConnection.Status | undefined) => {
-        reported = status
-        return ctx.integration.connection.status({ integrationID: "opencode", connection, status })
-      }
-      return yield* ctx.integration.connection.resolve(connection).pipe(
-        Effect.flatMap((credential) => {
-          if (!credential || credential.type === "external")
-            return Effect.succeed({ config: undefined, connection, organization: undefined, mcp: undefined })
-          return fetchConfig(http, credential).pipe(
-            Effect.map((config) => ({
-              config,
-              connection,
-              organization: organizationName(credential),
-              mcp: config?.mcp && { servers: config.mcp.servers, headers: credentialHeaders(credential) },
-            })),
-          )
-        }),
-        Effect.tap(() => status(undefined)),
-        Effect.catch((cause) =>
-          Effect.gen(function* () {
-            // Only well-formed Console errors change the connection status; anything else may be transient.
-            const next = connectionStatus(cause)
-            if (next) yield* status(next)
-            yield* Effect.logWarning("failed to load OpenCode provider config", { cause })
-            // A load that fails for the connection already in place keeps its last config: dropping it
-            // would lift organization policy while personal credentials keep working.
-            return IntegrationConnection.key(connection) === IntegrationConnection.key(snapshot.connection)
-              ? { config: snapshot.config, connection, organization: snapshot.organization, mcp: snapshot.mcp }
-              : { config: undefined, connection, organization: undefined, mcp: undefined }
-          }),
-        ),
-      )
-    })
-    // Statements ride on the snapshot, so a credential switch, disconnect, or 404 replaces them too.
-    const publish = (next: typeof snapshot) =>
-      managed.set({
-        statements: [...(next.config?.experimental?.policies ?? []), ...(next.config?.policies ?? [])],
-        organization: next.organization,
-      })
-
-    yield* ctx.integration.transform((editor) => {
-      editor.update("opencode", (integration) => {
-        integration.name = "OpenCode Console"
-      })
-      editor.method.update(oauth(http))
-      editor.method.update({ integrationID: "opencode", method: { type: "key", label: "API key (service account)" } })
-    })
-
-    snapshot = yield* load()
-    yield* publish(snapshot)
-    yield* ctx.provider.transform((providers) => {
-      for (const [providerID, item] of Object.entries(snapshot.config?.providers ?? {})) {
-        const source = providers.get(item.canonical ?? providerID)
-        providers.update(providerID, (provider) => {
-          if (source && source.provider !== provider)
-            Object.assign(provider, structuredClone(source.provider), { id: provider.id })
-          provider.integrationID = Integration.ID.make("opencode")
-          if (item.canonical !== undefined) provider.canonical = item.canonical
-          if (item.name !== undefined) provider.name = item.name
-          provider.package = item.package ?? provider.package
-          provider.settings = Provider.mergeOverlay(
-            withoutCredentials(provider.settings),
-            withoutCredentials(item.settings),
-          )
-          provider.headers = Provider.mergeHeaders(provider.headers, item.headers)
-          provider.body = Provider.mergeOverlay(provider.body, item.body)
-        })
-
-        for (const [modelID, config] of Object.entries(item.models ?? {})) {
-          const base = source?.models.get(config.modelID ?? modelID) ?? source?.models.get(modelID)
-          providers.models.update(providerID, modelID, (model) => {
-            Object.assign(model, structuredClone(base ?? model))
-            if (config.family !== undefined) model.family = config.family
-            if (config.name !== undefined) model.name = config.name
-            if (config.modelID !== undefined) model.modelID = config.modelID
-            if (config.releaseDate !== undefined) model.time = { released: Date.parse(config.releaseDate) }
-            if (config.compatibility !== undefined)
-              model.compatibility = { ...model.compatibility, ...config.compatibility }
-            model.package = config.package ?? (item.package !== undefined ? undefined : model.package)
-            if (item.settings?.baseURL !== undefined && model.settings) delete model.settings.baseURL
-            if (config.capabilities !== undefined)
-              model.capabilities = Model.mergeCapabilities(config.capabilities, model.capabilities)
-            model.settings = Provider.mergeOverlay(
-              withoutCredentials(model.settings),
-              withoutCredentials(config.settings),
-            )
-            model.headers = Provider.mergeHeaders(model.headers, config.headers)
-            model.body = Provider.mergeOverlay(model.body, config.body)
-            if (config.limit !== undefined) model.limit = { ...model.limit, ...config.limit }
-            // The Console's reasoning replaces the base variants; its variants still overlay them below.
-            if (config.capabilities?.reasoning !== undefined)
-              model.variants = [
-                ...Variant.resolve(
-                  { ...model, package: model.package ?? providers.get(providerID)?.provider.package },
-                  Variant.supports(config.capabilities.reasoning),
-                ),
-              ]
-            for (const variant of config.variants ?? []) {
-              let existing = model.variants.find((item) => item.id === variant.id)
-              if (!existing) {
-                existing = { id: variant.id }
-                model.variants.push(existing)
-              }
-              if (variant.settings !== undefined)
-                existing.settings = Provider.mergeOverlay(existing.settings, withoutCredentials(variant.settings))
-              if (variant.headers !== undefined)
-                existing.headers = Provider.mergeHeaders(existing.headers, variant.headers)
-              if (variant.body !== undefined) existing.body = Provider.mergeOverlay(existing.body, variant.body)
-            }
-            if (config.cost !== undefined)
-              model.cost = (Array.isArray(config.cost) ? config.cost : [config.cost]).map((cost) => ({
-                tier: cost.tier && { ...cost.tier },
-                input: cost.input,
-                output: cost.output,
-                cache: {
-                  read: cost.cache?.read ?? Money.USDPerMillionTokens.zero,
-                  write: cost.cache?.write ?? Money.USDPerMillionTokens.zero,
-                },
-              }))
-            model.enabled = !config.disabled
-          })
-        }
-        const configured = providers.get(providerID)
-        if (configured)
-          providers.add({
-            info: configured.provider,
-            models: Array.from(configured.models.values()),
-            sourceConnection: snapshot.connection,
-          })
-      }
-
-      const item = providers.get(Provider.ID.opencode)
-      if (!item) return
-      const hasKey = Boolean(process.env.OPENCODE_API_KEY || snapshot.connection || item.provider.settings?.apiKey)
-      providers.update(item.provider.id, (provider) => {
-        if (!hasKey) {
-          provider.activation = "enabled"
-          provider.settings = { ...provider.settings, apiKey: "public" }
-        }
-      })
-    })
-    yield* ctx.model.transform((models) => {
-      const item = models.provider.get(Provider.ID.opencode)
-      if (!item) return
-      const hasKey = Boolean(
-        process.env.OPENCODE_API_KEY ||
-          snapshot.connection ||
-          (item.provider.settings?.apiKey && item.provider.settings.apiKey !== "public"),
-      )
-      if (hasKey) return
-      for (const model of models.list(item.provider.id)) {
-        if (!model.cost.some((cost) => cost.input > 0)) continue
-        models.update(item.provider.id, model.id, (draft) => {
-          draft.enabled = false
-        })
-      }
-    })
-
-    yield* ctx.websearch.transform((editor) => {
-      const descriptor = snapshot.config?.websearch
-      const connection = snapshot.connection
-      if (!descriptor || !connection) return
-      editor.add({
-        id: descriptor.providerID,
-        name: "OpenCode Web Search",
-        execute: (input) =>
-          Effect.gen(function* () {
-            const active = yield* ctx.integration.connection.active("opencode")
-            if (
-              !active ||
-              (connection.type === "credential"
-                ? active.type !== "credential" || active.id !== connection.id
-                : active.type !== "env" || active.name !== connection.name)
-            ) {
-              return yield* Effect.fail(new Error("OpenCode Console connection changed"))
-            }
-            const credential = yield* ctx.integration.connection.resolve(active)
-            if (!credential || credential.type === "external")
-              return yield* Effect.fail(new Error("OpenCode Console is not connected"))
-            const metadata = credential.metadata
-            const orgID = typeof metadata?.orgID === "string" ? metadata.orgID : undefined
-            const token = credential.type === "oauth" ? credential.access : credential.key
-            const server = yield* normalizeServer(serverUrl(credential))
-            const request = yield* HttpClientRequest.post(`${server}/api/websearch`).pipe(
-              HttpClientRequest.acceptJson,
-              HttpClientRequest.bearerToken(token),
-              HttpClientRequest.setHeaders(orgID ? { "x-org-id": orgID } : {}),
-              HttpClientRequest.schemaBodyJson(WebSearch.Input)({
-                query: input.query,
-                providerID: descriptor.providerID,
+        const load = Effect.fn("OpencodePlugin.load")(function* () {
+          const connection = yield* ctx.integration.connection.active(ids.integrationID)
+          if (!connection) {
+            reported = undefined
+            return { config: undefined, connection, organization: undefined, mcp: undefined }
+          }
+          const status = (status: IntegrationConnection.Status | undefined) => {
+            reported = status
+            return ctx.integration.connection.status({ integrationID: ids.integrationID, connection, status })
+          }
+          return yield* ctx.integration.connection.resolve(connection).pipe(
+            Effect.flatMap((credential) => {
+              if (!credential || credential.type === "external")
+                return Effect.succeed({ config: undefined, connection, organization: undefined, mcp: undefined })
+              return fetchConfig(http, credential).pipe(
+                Effect.map((config) => ({
+                  config,
+                  connection,
+                  organization: organizationName(credential),
+                  mcp: config?.mcp && { servers: config.mcp.servers, headers: credentialHeaders(credential) },
+                })),
+              )
+            }),
+            Effect.flatMap((next) => {
+              // Policy statements never merge across connections, so an instance whose organization sends any
+              // would run its providers unenforced. Refuse them and say how to connect that organization.
+              if (main || policies(next.config).length === 0) return status(undefined).pipe(Effect.as(next))
+              return status({
+                status: "needs_auth",
+                message: `${next.organization ?? "This organization"} has policies, which only apply to the main OpenCode Console connection: sign it in with \`opencode auth login opencode\``,
+              }).pipe(Effect.as({ ...next, config: undefined, mcp: undefined, refused: true as const }))
+            }),
+            Effect.catch((cause) =>
+              Effect.gen(function* () {
+                // Only well-formed Console errors change the connection status; anything else may be transient.
+                const next = connectionStatus(cause)
+                if (next) yield* status(next)
+                yield* Effect.logWarning("failed to load OpenCode provider config", {
+                  integrationID: ids.integrationID,
+                  cause,
+                })
+                // A load that fails for the connection already in place keeps its last config: dropping it
+                // would lift organization policy while personal credentials keep working. A refusal is
+                // kept for the same reason: dropping it would re-enable the refused instance's catalog copy.
+                return IntegrationConnection.key(connection) === IntegrationConnection.key(snapshot.connection)
+                  ? {
+                      config: snapshot.config,
+                      connection,
+                      organization: snapshot.organization,
+                      mcp: snapshot.mcp,
+                      ...(snapshot.refused ? { refused: snapshot.refused } : {}),
+                    }
+                  : { config: undefined, connection, organization: undefined, mcp: undefined }
               }),
-            )
-            const response = yield* HttpClient.withScope(HttpClient.filterStatusOk(http))
-              .execute(request)
-              .pipe(
-                Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
-                Effect.flatMap(HttpClientResponse.schemaBodyJson(WebSearch.Response)),
-                Effect.scoped,
-                Effect.timeoutOrElse({
-                  duration: Duration.seconds(25),
-                  orElse: () => Effect.fail(new Error("OpenCode web search request timed out")),
-                }),
+            ),
+          )
+        })
+        // Statements ride on the snapshot, so a credential switch, disconnect, or 404 replaces them too.
+        const publish = (next: typeof snapshot) =>
+          main ? managed.set({ statements: policies(next.config), organization: next.organization }) : Effect.void
+
+        yield* ctx.integration.transform((editor) => {
+          editor.update(ids.integrationID, (integration) => {
+            integration.name = main ? "OpenCode Console" : `OpenCode Console (${label})`
+          })
+          editor.method.update(oauth(http, ids.integrationID))
+          editor.method.update({
+            integrationID: ids.integrationID,
+            method: { type: "key", label: "API key (service account)" },
+          })
+        })
+
+        snapshot = yield* load()
+        yield* publish(snapshot)
+        yield* ctx.provider.transform((providers) => {
+          for (const [remoteID, item] of Object.entries(snapshot.config?.providers ?? {})) {
+            const providerID = target(remoteID)
+            const source = providers.get(item.canonical ?? remoteID)
+            providers.update(providerID, (provider) => {
+              if (source && source.provider !== provider)
+                Object.assign(provider, structuredClone(source.provider), { id: provider.id })
+              provider.integrationID = ids.integrationID
+              if (!main) provider.instanceOf = Provider.ID.make(remoteID)
+              if (item.canonical !== undefined) provider.canonical = item.canonical
+              else if (!main) provider.canonical = source?.provider.canonical ?? Provider.ID.make(remoteID)
+              if (item.name !== undefined) provider.name = main ? item.name : `${item.name} (${label})`
+              else if (!main && source) provider.name = `${source.provider.name} (${label})`
+              provider.package = item.package ?? provider.package
+              provider.settings = Provider.mergeOverlay(
+                withoutCredentials(provider.settings),
+                withoutCredentials(item.settings),
               )
-            if (response.providerID !== descriptor.providerID) {
-              return yield* Effect.fail(
-                new Error(
-                  `OpenCode web search returned provider ${response.providerID} instead of ${descriptor.providerID}`,
-                ),
+              provider.headers = Provider.mergeHeaders(provider.headers, item.headers)
+              provider.body = Provider.mergeOverlay(provider.body, item.body)
+            })
+
+            for (const [modelID, config] of Object.entries(item.models ?? {})) {
+              const base = source?.models.get(config.modelID ?? modelID) ?? source?.models.get(modelID)
+              providers.models.update(providerID, modelID, (model) => {
+                Object.assign(model, structuredClone(base ?? model))
+                if (config.family !== undefined) model.family = config.family
+                if (config.name !== undefined) model.name = config.name
+                if (config.modelID !== undefined) model.modelID = config.modelID
+                if (config.releaseDate !== undefined) {
+                  const released = Model.parseReleaseDate(config.releaseDate)
+                  if (released !== undefined) model.time = { released }
+                }
+                if (config.compatibility !== undefined)
+                  model.compatibility = { ...model.compatibility, ...config.compatibility }
+                model.package = config.package ?? (item.package !== undefined ? undefined : model.package)
+                if (item.settings?.baseURL !== undefined && model.settings) delete model.settings.baseURL
+                if (config.capabilities !== undefined)
+                  model.capabilities = Model.mergeCapabilities(config.capabilities, model.capabilities)
+                model.settings = Provider.mergeOverlay(
+                  withoutCredentials(model.settings),
+                  withoutCredentials(config.settings),
+                )
+                model.headers = Provider.mergeHeaders(model.headers, config.headers)
+                model.body = Provider.mergeOverlay(model.body, config.body)
+                if (config.limit !== undefined) model.limit = { ...model.limit, ...config.limit }
+                // The Console's reasoning replaces the base variants; its variants still overlay them below.
+                if (config.capabilities?.reasoning !== undefined)
+                  model.variants = [
+                    ...Variant.resolve(
+                      { ...model, package: model.package ?? providers.get(providerID)?.provider.package },
+                      Variant.supports(config.capabilities.reasoning),
+                    ),
+                  ]
+                for (const variant of config.variants ?? []) {
+                  let existing = model.variants.find((item) => item.id === variant.id)
+                  if (!existing) {
+                    existing = { id: variant.id }
+                    model.variants.push(existing)
+                  }
+                  if (variant.settings !== undefined)
+                    existing.settings = Provider.mergeOverlay(existing.settings, withoutCredentials(variant.settings))
+                  if (variant.headers !== undefined)
+                    existing.headers = Provider.mergeHeaders(existing.headers, variant.headers)
+                  if (variant.body !== undefined) existing.body = Provider.mergeOverlay(existing.body, variant.body)
+                }
+                if (config.cost !== undefined)
+                  model.cost = (Array.isArray(config.cost) ? config.cost : [config.cost]).map((cost) => ({
+                    tier: cost.tier && { ...cost.tier },
+                    input: cost.input,
+                    output: cost.output,
+                    cache: {
+                      read: cost.cache?.read ?? Money.USDPerMillionTokens.zero,
+                      write: cost.cache?.write ?? Money.USDPerMillionTokens.zero,
+                    },
+                  }))
+                model.enabled = !config.disabled
+              })
+            }
+            const configured = providers.get(providerID)
+            if (configured)
+              providers.add({
+                info: configured.provider,
+                models: Array.from(configured.models.values()),
+                sourceConnection: snapshot.connection,
+              })
+          }
+
+          // The instance's own copy of the catalog would otherwise still serve the refused account.
+          if (snapshot.refused && providers.get(ids.providerID))
+            providers.update(ids.providerID, (provider) => {
+              provider.activation = "disabled"
+            })
+          if (!main) return
+          const item = providers.get(Provider.ID.opencode)
+          if (!item) return
+          const hasKey = Boolean(process.env.OPENCODE_API_KEY || snapshot.connection || item.provider.settings?.apiKey)
+          providers.update(item.provider.id, (provider) => {
+            if (!hasKey) {
+              provider.activation = "enabled"
+              provider.settings = { ...provider.settings, apiKey: "public" }
+            }
+          })
+        })
+        if (main)
+          yield* ctx.model.transform((models) => {
+            const item = models.provider.get(Provider.ID.opencode)
+            if (!item) return
+            const hasKey = Boolean(
+              process.env.OPENCODE_API_KEY ||
+                snapshot.connection ||
+                (item.provider.settings?.apiKey && item.provider.settings.apiKey !== "public"),
+            )
+            if (hasKey) return
+            for (const model of models.list(item.provider.id)) {
+              if (!model.cost.some((cost) => cost.input > 0)) continue
+              models.update(item.provider.id, model.id, (draft) => {
+                draft.enabled = false
+              })
+            }
+          })
+
+        if (main)
+          yield* ctx.websearch.transform((editor) => {
+            const descriptor = snapshot.config?.websearch
+            const connection = snapshot.connection
+            if (!descriptor || !connection) return
+            editor.add({
+              id: descriptor.providerID,
+              name: "OpenCode Web Search",
+              execute: (input) =>
+                Effect.gen(function* () {
+                  const active = yield* ctx.integration.connection.active(ids.integrationID)
+                  if (
+                    !active ||
+                    (connection.type === "credential"
+                      ? active.type !== "credential" || active.id !== connection.id
+                      : active.type !== "env" || active.name !== connection.name)
+                  ) {
+                    return yield* Effect.fail(new Error("OpenCode Console connection changed"))
+                  }
+                  const credential = yield* ctx.integration.connection.resolve(active)
+                  if (!credential || credential.type === "external")
+                    return yield* Effect.fail(new Error("OpenCode Console is not connected"))
+                  const metadata = credential.metadata
+                  const orgID = typeof metadata?.orgID === "string" ? metadata.orgID : undefined
+                  const token = credential.type === "oauth" ? credential.access : credential.key
+                  const server = yield* normalizeServer(serverUrl(credential))
+                  const request = yield* HttpClientRequest.post(`${server}/api/websearch`).pipe(
+                    HttpClientRequest.acceptJson,
+                    HttpClientRequest.bearerToken(token),
+                    HttpClientRequest.setHeaders(orgID ? { "x-org-id": orgID } : {}),
+                    HttpClientRequest.schemaBodyJson(WebSearch.Input)({
+                      query: input.query,
+                      providerID: descriptor.providerID,
+                    }),
+                  )
+                  const response = yield* HttpClient.withScope(HttpClient.filterStatusOk(http))
+                    .execute(request)
+                    .pipe(
+                      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+                      Effect.flatMap(HttpClientResponse.schemaBodyJson(WebSearch.Response)),
+                      Effect.scoped,
+                      Effect.timeoutOrElse({
+                        duration: Duration.seconds(25),
+                        orElse: () => Effect.fail(new Error("OpenCode web search request timed out")),
+                      }),
+                    )
+                  if (response.providerID !== descriptor.providerID) {
+                    return yield* Effect.fail(
+                      new Error(
+                        `OpenCode web search returned provider ${response.providerID} instead of ${descriptor.providerID}`,
+                      ),
+                    )
+                  }
+                  return response.results
+                }),
+            })
+            editor.default.set(descriptor.providerID)
+          })
+
+        if (main)
+          yield* ctx.mcp.transform((editor) => {
+            const mcp = snapshot.mcp
+            if (!mcp) return
+            for (const [name, server] of Object.entries(mcp.servers)) {
+              // A server the user configured under the same name wins.
+              if (editor.get(name)) continue
+              const { auth, ...config } = server
+              editor.set(
+                name,
+                auth === "console" ? { ...config, headers: { ...config.headers, ...mcp.headers } } : config,
               )
             }
-            return response.results
-          }),
-      })
-      editor.default.set(descriptor.providerID)
-    })
+          })
 
-    yield* ctx.mcp.transform((editor) => {
-      const mcp = snapshot.mcp
-      if (!mcp) return
-      for (const [name, server] of Object.entries(mcp.servers)) {
-        // A server the user configured under the same name wins.
-        if (editor.get(name)) continue
-        const { auth, ...config } = server
-        editor.set(name, auth === "console" ? { ...config, headers: { ...config.headers, ...mcp.headers } } : config)
-      }
-    })
+        const apply = Effect.fn("OpencodePlugin.apply")(function* (next: typeof snapshot) {
+          snapshot = next
+          yield* publish(next)
+          yield* guard(next)
+          if (!main) return yield* ctx.provider.reload()
+          yield* Effect.all([ctx.provider.reload(), ctx.websearch.reload(), ctx.mcp.reload()], {
+            concurrency: 3,
+            discard: true,
+          })
+        })
+        const refresh = () => loading.withPermit(load().pipe(Effect.andThen(apply)))
+        // Annotated: `apply` re-registers the hooks that call `check`, which would otherwise make inference circular.
+        const check = (): Effect.Effect<void> =>
+          loading.withPermit(
+            load().pipe(Effect.flatMap((next) => (Equal.equals(snapshot, next) ? Effect.void : apply(next)))),
+          )
 
-    const apply = Effect.fn("OpencodePlugin.apply")(function* (next: typeof snapshot) {
-      snapshot = next
-      yield* publish(next)
-      yield* guard(next)
-      yield* Effect.all([ctx.provider.reload(), ctx.websearch.reload(), ctx.mcp.reload()], {
-        concurrency: 3,
-        discard: true,
-      })
-    })
-    const refresh = () => loading.withPermit(load().pipe(Effect.andThen(apply)))
-    // Annotated: `apply` re-registers the hooks that call `check`, which would otherwise make inference circular.
-    const check = (): Effect.Effect<void> =>
-      loading.withPermit(
-        load().pipe(Effect.flatMap((next) => (Equal.equals(snapshot, next) ? Effect.void : apply(next)))),
-      )
-
-    // Console inference rejects a missing SSO sign-in with a generic 401/403. Re-check the Console config, which
-    // reports the reason, and replace the response with instructions when the connection needs the user.
-    const explain = (event: SessionHttpResponse) =>
-      Effect.gen(function* () {
-        if (event.response.status !== 401 && event.response.status !== 403) return
-        yield* check()
-        const status = reported
-        if (!status) return
-        void event.response.body?.cancel()
-        event.response = Response.json(
-          {
-            error: {
-              type: "authentication_error",
-              message: `${status.message}.`,
-            },
-          },
-          { status: event.response.status },
+        // Console inference rejects a missing SSO sign-in with a generic 401/403. Re-check the Console config, which
+        // reports the reason, and replace the response with instructions when the connection needs the user.
+        const explain = (event: SessionHttpResponse) =>
+          Effect.gen(function* () {
+            if (event.response.status !== 401 && event.response.status !== 403) return
+            yield* check()
+            const status = reported
+            if (!status) return
+            void event.response.body?.cancel()
+            event.response = Response.json(
+              {
+                error: {
+                  type: "authentication_error",
+                  message: `${status.message}.`,
+                },
+              },
+              { status: event.response.status },
+            )
+          })
+        // Hooks are scoped per provider so requests to unrelated providers skip the HTTP hook path.
+        const guard = Effect.fn("OpencodePlugin.guard")(function* (next: typeof snapshot) {
+          yield* Effect.forEach(explainers, (registration) => registration.dispose, { discard: true })
+          explainers = yield* Effect.forEach(
+            next.connection ? new Set([ids.providerID, ...Object.keys(next.config?.providers ?? {}).map(target)]) : [],
+            (providerID) => ctx.session.hook("http.response", explain, { providerID }).pipe(Scope.provide(scope)),
+          )
+        })
+        yield* guard(snapshot)
+        yield* bus.subscribe(Credential.Event.Switched).pipe(
+          Stream.filter((event) => event.data.integrationID === ids.integrationID),
+          Stream.runForEach(refresh),
+          Effect.forkScoped({ startImmediately: true }),
         )
-      })
-    // Hooks are scoped per provider so requests to unrelated providers skip the HTTP hook path.
-    const guard = Effect.fn("OpencodePlugin.guard")(function* (next: typeof snapshot) {
-      yield* Effect.forEach(explainers, (registration) => registration.dispose, { discard: true })
-      explainers = yield* Effect.forEach(
-        next.connection ? new Set([Provider.ID.opencode, ...Object.keys(next.config?.providers ?? {})]) : [],
-        (providerID) => ctx.session.hook("http.response", explain, { providerID }).pipe(Scope.provide(scope)),
-      )
-    })
-    yield* guard(snapshot)
-    yield* bus.subscribe(Credential.Event.Switched).pipe(
-      Stream.filter((event) => event.data.integrationID === Integration.ID.make("opencode")),
-      Stream.runForEach(refresh),
-      Effect.forkScoped({ startImmediately: true }),
-    )
 
-    // Console config can change independently of local credential activity, so re-fetch
-    // periodically and only rebuild the catalog and search providers when the snapshot differs.
-    yield* Effect.sleep(Duration.minutes(1)).pipe(Effect.andThen(check()), Effect.forever, Effect.forkScoped)
+        // Console config can change independently of local credential activity, so re-fetch
+        // periodically and only rebuild the catalog and search providers when the snapshot differs.
+        yield* Effect.sleep(Duration.minutes(1)).pipe(Effect.andThen(check()), Effect.forever, Effect.forkScoped)
+      }),
+    )
   }),
 })
+
+function policies(config: typeof RemoteResponse.Type | undefined) {
+  return [...(config?.experimental?.policies ?? []), ...(config?.policies ?? [])]
+}
 
 function fetchConfig(http: HttpClient.HttpClient, value: Credential.Key | Credential.OAuth) {
   // Scoped so responses whose body is never read (404, errors) are released here instead of by a GC-time abort.

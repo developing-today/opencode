@@ -10,6 +10,7 @@ import { Model } from "../../model.js"
 import { ModelRoute } from "../../model-route.js"
 import { Provider } from "../../provider.js"
 import { Variant } from "../../variant.js"
+import { configuredInstances } from "../../plugin/provider/instance.js"
 import { ConfigEntryObserver } from "./entry-observer.js"
 
 export const Plugin = define({
@@ -23,11 +24,15 @@ export const Plugin = define({
       ctx.integration.reload().pipe(Effect.andThen(ctx.provider.reload())),
     )
     yield* ctx.integration.transform((integrations) => {
+      const instances = configuredInstances(loaded.entries)
       for (const [id, provider] of configuredProviders(loaded.entries)) {
         // The route provider is built by the model-routes plugin, not backed by a credential.
         if (id === ModelRoute.PROVIDER_ID) continue
         const integrationID = id
-        if (!integrations.get(integrationID)) {
+        // Provider plugins have registered their sign-in methods by now, so an instance offers all of them.
+        const base = instances.get(Provider.ID.make(id))
+        if (base) integrations.copy(base, integrationID)
+        if (!integrations.get(integrationID) || (base && integrations.method.list(integrationID).length === 0)) {
           integrations.method.update({
             integrationID,
             method: { type: "key", label: "Manually enter API Key" },
@@ -51,13 +56,24 @@ export const Plugin = define({
         ConfigProvider.Info,
         {
           readonly providerID: string
+          readonly baseURL: boolean
           readonly models: ReadonlyMap<string, { readonly inherit: boolean; readonly base?: Model.Info }>
         }
       >(),
     }
     yield* ctx.provider.transform((providers) => {
       const next: typeof sources.models = new Map()
-      for (const [id, item] of configuredProviders(loaded.entries)) {
+      const instances = configuredInstances(loaded.entries)
+      const items = configuredProviders(loaded.entries)
+      // Whether a provider sets a baseURL is a property of its merged config across all
+      // documents, not of the one document that spelled it: an alias defined in an earlier
+      // document binds a clone of the catalog model — pinned baseURL included — before a
+      // later document's baseURL is seen, so a per-document gate lets that clone resurrect
+      // the pin the later document was meant to replace (#501).
+      const baseURLProviders = new Set(
+        items.filter(([, item]) => item.settings?.baseURL !== undefined).map(([id]) => id),
+      )
+      for (const [id, item] of items) {
         const providerID = id
         const current = providers.get(providerID)
         const source = providers.get(item.canonical ?? current?.provider.canonical ?? providerID)
@@ -74,7 +90,9 @@ export const Plugin = define({
                 id: provider.id,
                 integrationID: provider.integrationID,
               })
-            provider.activation = "enabled"
+            // An instance is available once its own account is connected, unless config supplies the key.
+            if (!instances.has(Provider.ID.make(providerID)) || item.settings?.apiKey !== undefined)
+              provider.activation = "enabled"
             if (item.canonical !== undefined) provider.canonical = item.canonical
             if (item.name) provider.name = item.name
             if (item.package !== undefined) provider.package = item.package
@@ -84,6 +102,19 @@ export const Plugin = define({
             if (item.headers !== undefined) provider.headers = Provider.mergeHeaders(provider.headers, item.headers)
             if (item.body !== undefined) provider.body = Provider.mergeOverlay(provider.body, item.body)
           })
+        // A provider-level baseURL replaces the catalog URL of every model of the provider, not only
+        // the models config names (the per-model deletion in the loop below): catalog models such as
+        // opencode-go's pin their own per-model `api`, which becomes a model-level baseURL that wins
+        // over the provider setting in the runtime merge, so a provider-only override never took
+        // effect for them (#434).
+        if (!routeProvider && item.settings?.baseURL !== undefined) {
+          const catalog = providers.get(providerID)
+          if (catalog)
+            for (const modelID of catalog.models.keys())
+              providers.models.update(providerID, modelID, (model) => {
+                if (model.settings) delete model.settings.baseURL
+              })
+        }
         const definitions = new Map<string, { readonly inherit: boolean; readonly base?: Model.Info }>()
         for (const [id, config] of Object.entries(item.models ?? {})) {
           // Route pools are not defined yet at this stage and have no source model to
@@ -101,10 +132,10 @@ export const Plugin = define({
           providers.models.update(providerID, id, (model) => {
             if (base) Object.assign(model, structuredClone(base))
             if (item.package !== undefined) model.package = undefined
-            if (item.settings?.baseURL !== undefined && model.settings) delete model.settings.baseURL
+            if (baseURLProviders.has(providerID) && model.settings) delete model.settings.baseURL
           })
         }
-        next.set(item, { providerID, models: definitions })
+        next.set(item, { providerID, baseURL: baseURLProviders.has(providerID), models: definitions })
       }
       for (const [item, definition] of next) {
         // Route-provider limits are applied by the model transform like its other settings.
@@ -137,12 +168,15 @@ export const Plugin = define({
             if (inherit && source?.base) {
               Object.assign(model, structuredClone(source.base))
               if (item.package !== undefined) model.package = undefined
-              if (item.settings?.baseURL !== undefined && model.settings) delete model.settings.baseURL
+              if (definition.baseURL && model.settings) delete model.settings.baseURL
             }
             if (config.family !== undefined) model.family = config.family
             if (config.name) model.name = config.name
             if (config.modelID !== undefined) model.modelID = config.modelID
-            if (config.releaseDate !== undefined) model.time = { released: Date.parse(config.releaseDate) }
+            if (config.releaseDate !== undefined) {
+              const released = Model.parseReleaseDate(config.releaseDate)
+              if (released !== undefined) model.time = { released }
+            }
             if (config.compatibility !== undefined)
               model.compatibility = { ...model.compatibility, ...config.compatibility }
             if (config.package !== undefined) model.package = config.package

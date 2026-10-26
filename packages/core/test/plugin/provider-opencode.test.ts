@@ -2,8 +2,9 @@ import { describe, expect } from "bun:test"
 import { LLM } from "@opencode/ai"
 import { LLMClient, RequestExecutor } from "@opencode/ai/route"
 import { ConfigPolicy } from "@opencode/schema/config/policy"
+import { Document, Info } from "@opencode/schema/config"
 import { Money } from "@opencode/schema/money"
-import { Effect, Layer, Stream } from "effect"
+import { Effect, Layer, Schema, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { Agent } from "@opencode/core/agent"
@@ -1946,6 +1947,169 @@ describe("OpencodePlugin", () => {
         expect(required(yield* catalog.get(Provider.ID.openai)).settings?.apiKey).toBeUndefined()
         expect(required(yield* models.get(Provider.ID.openai, Model.ID.make("paid"))).enabled).toBe(true)
       }),
+    ),
+  )
+})
+
+describe("OpencodePlugin instances", () => {
+  const work = Integration.ID.make("opencode.work")
+  const instances = Config.testLayer([
+    new Document({
+      type: "document",
+      info: Schema.decodeUnknownSync(Info)({ providers: { "opencode.work": { instanceOf: "opencode" } } }),
+    }),
+  ])
+  const addInstancePlugin = Effect.fn(function* () {
+    const plugin = yield* Plugin.Service
+    const host = yield* PluginHost.make(plugin)
+    yield* OpencodePlugin.effect(host).pipe(Effect.provide(instances))
+  })
+  const goServer = (policies: Record<string, ConfigPolicy.Info[]>) =>
+    Bun.serve({
+      port: 0,
+      fetch: (request) => {
+        const orgID = request.headers.get("x-org-id") ?? ""
+        return Response.json({
+          providers: { "opencode-go": { name: "OpenCode Go", models: { glm: { name: "GLM" } } } },
+          ...(policies[orgID] ? { policies: policies[orgID] } : {}),
+        })
+      },
+    })
+  const account = (integrationID: Integration.ID, server: string, orgID: string, orgName: string) =>
+    Effect.gen(function* () {
+      const credentials = yield* Credential.Service
+      return yield* credentials.create({
+        integrationID,
+        value: Credential.Key.make({ type: "key", key: orgID, metadata: { server, orgID, orgName } }),
+      })
+    })
+
+  it.effect("serves a second Console account's Go providers alongside the first", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => goServer({})),
+      (server) =>
+        Effect.gen(function* () {
+          const providers = yield* Provider.Service
+          const models = yield* Model.Service
+          const integrations = yield* Integration.Service
+          const managed = yield* ManagedPolicy.Service
+          yield* account(Integration.ID.make("opencode"), server.url.origin, "org_alpha", "Alpha")
+          yield* account(work, server.url.origin, "org_go", "Go Team")
+          yield* addInstancePlugin().pipe(inProcess(server))
+          yield* drain
+
+          expect((yield* providers.get(Provider.ID.make("opencode-go")))?.integrationID).toBe(
+            Integration.ID.make("opencode"),
+          )
+          expect(yield* providers.get(Provider.ID.make("opencode-go.work"))).toMatchObject({
+            name: "OpenCode Go (work)",
+            integrationID: work,
+            instanceOf: Provider.ID.make("opencode-go"),
+            canonical: Provider.ID.make("opencode-go"),
+          })
+          expect((yield* providers.available()).map((provider) => provider.id)).toEqual(
+            expect.arrayContaining([Provider.ID.make("opencode-go"), Provider.ID.make("opencode-go.work")]),
+          )
+          expect(yield* models.get(Provider.ID.make("opencode-go.work"), Model.ID.make("glm"))).toMatchObject({
+            name: "GLM",
+          })
+          const integration = required(yield* integrations.get(work))
+          expect(integration.name).toBe("OpenCode Console (work)")
+          expect(integration.methods.map((method) => method.type)).toEqual(["oauth", "key"])
+          // Only the main Console connection publishes organization policy.
+          expect(managed.current().organization).toBe("Alpha")
+        }),
+      (server) => Effect.promise(() => server.stop(true)),
+    ),
+  )
+
+  it.effect("refuses a second Console account whose organization sends policies", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => goServer({ org_strict: [{ action: "tool.use", resource: "shell:sudo *", effect: "deny" }] })),
+      (server) =>
+        Effect.gen(function* () {
+          const providers = yield* Provider.Service
+          const integrations = yield* Integration.Service
+          const managed = yield* ManagedPolicy.Service
+          // The instance's own copy of the Zen catalog, as ProviderInstancePlugin adds it.
+          yield* providers.transform((editor) => {
+            editor.update(Provider.ID.make("opencode.work"), (provider) => {
+              provider.integrationID = work
+              provider.instanceOf = Provider.ID.opencode
+            })
+          })
+          yield* account(work, server.url.origin, "org_strict", "Strict")
+          yield* addInstancePlugin().pipe(inProcess(server))
+          yield* drain
+
+          expect(yield* providers.get(Provider.ID.make("opencode-go.work"))).toBeUndefined()
+          expect((yield* providers.available()).map((provider) => provider.id)).not.toContain(
+            Provider.ID.make("opencode.work"),
+          )
+          expect(required(yield* integrations.get(work)).connections[0]?.status).toMatchObject({
+            status: "needs_auth",
+            message: expect.stringContaining("Strict has policies"),
+          })
+          expect(managed.current().statements).toEqual([])
+        }),
+      (server) => Effect.promise(() => server.stop(true)),
+    ),
+  )
+
+  it.effect("keeps a refused Console account refused when a later load fails", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const state = { failing: false }
+        const server = Bun.serve({
+          port: 0,
+          fetch: (request) => {
+            if (state.failing) return new Response("Unavailable", { status: 502 })
+            const orgID = request.headers.get("x-org-id") ?? ""
+            return Response.json({
+              providers: { "opencode-go": { name: "OpenCode Go", models: { glm: { name: "GLM" } } } },
+              ...(orgID === "org_strict"
+                ? { policies: [{ action: "tool.use", resource: "shell:sudo *", effect: "deny" }] }
+                : {}),
+            })
+          },
+        })
+        return { server, state }
+      }),
+      ({ server, state }) =>
+        Effect.gen(function* () {
+          const providers = yield* Provider.Service
+          const integrations = yield* Integration.Service
+          // The instance's own copy of the Zen catalog, as ProviderInstancePlugin adds it.
+          yield* providers.transform((editor) => {
+            editor.update(Provider.ID.make("opencode.work"), (provider) => {
+              provider.integrationID = work
+              provider.instanceOf = Provider.ID.opencode
+            })
+          })
+          yield* account(work, server.url.origin, "org_strict", "Strict")
+          yield* addInstancePlugin().pipe(inProcess(server))
+          yield* drain
+
+          expect((yield* providers.available()).map((provider) => provider.id)).not.toContain(
+            Provider.ID.make("opencode.work"),
+          )
+
+          state.failing = true
+          yield* TestClock.adjust("1 minute")
+          yield* drain
+
+          // The failed reload keeps the previous snapshot's refusal, so the catalog
+          // copy stays disabled and the connection still reports the refusal.
+          expect(yield* providers.get(Provider.ID.make("opencode-go.work"))).toBeUndefined()
+          expect((yield* providers.available()).map((provider) => provider.id)).not.toContain(
+            Provider.ID.make("opencode.work"),
+          )
+          expect(required(yield* integrations.get(work)).connections[0]?.status).toMatchObject({
+            status: "needs_auth",
+            message: expect.stringContaining("Strict has policies"),
+          })
+        }),
+      ({ server }) => Effect.promise(() => server.stop(true)),
     ),
   )
 })
