@@ -56,6 +56,7 @@ export const Plugin = define({
         ConfigProvider.Info,
         {
           readonly providerID: string
+          readonly baseURL: boolean
           readonly models: ReadonlyMap<string, { readonly inherit: boolean; readonly base?: Model.Info }>
         }
       >(),
@@ -63,7 +64,16 @@ export const Plugin = define({
     yield* ctx.provider.transform((providers) => {
       const next: typeof sources.models = new Map()
       const instances = configuredInstances(loaded.entries)
-      for (const [id, item] of configuredProviders(loaded.entries)) {
+      const items = configuredProviders(loaded.entries)
+      // Whether a provider sets a baseURL is a property of its merged config across all
+      // documents, not of the one document that spelled it: an alias defined in an earlier
+      // document binds a clone of the catalog model — pinned baseURL included — before a
+      // later document's baseURL is seen, so a per-document gate lets that clone resurrect
+      // the pin the later document was meant to replace (#501).
+      const baseURLProviders = new Set(
+        items.filter(([, item]) => item.settings?.baseURL !== undefined).map(([id]) => id),
+      )
+      for (const [id, item] of items) {
         const providerID = id
         const current = providers.get(providerID)
         const source = providers.get(item.canonical ?? current?.provider.canonical ?? providerID)
@@ -122,10 +132,10 @@ export const Plugin = define({
           providers.models.update(providerID, id, (model) => {
             if (base) Object.assign(model, structuredClone(base))
             if (item.package !== undefined) model.package = undefined
-            if (item.settings?.baseURL !== undefined && model.settings) delete model.settings.baseURL
+            if (baseURLProviders.has(providerID) && model.settings) delete model.settings.baseURL
           })
         }
-        next.set(item, { providerID, models: definitions })
+        next.set(item, { providerID, baseURL: baseURLProviders.has(providerID), models: definitions })
       }
       for (const [item, definition] of next) {
         // Route-provider limits are applied by the model transform like its other settings.
@@ -158,7 +168,7 @@ export const Plugin = define({
             if (inherit && source?.base) {
               Object.assign(model, structuredClone(source.base))
               if (item.package !== undefined) model.package = undefined
-              if (item.settings?.baseURL !== undefined && model.settings) delete model.settings.baseURL
+              if (definition.baseURL && model.settings) delete model.settings.baseURL
             }
             if (config.family !== undefined) model.family = config.family
             if (config.name) model.name = config.name

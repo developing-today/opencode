@@ -108,6 +108,43 @@ describe("ConfigProviderPlugin.Plugin", () => {
     }),
   )
 
+  it.effect("applies a provider-level baseURL from a later document to an alias defined in an earlier one", () =>
+    Effect.gen(function* () {
+      const providers = yield* Provider.Service
+      const models = yield* Model.Service
+      const providerID = Provider.ID.make("opencode-go")
+      yield* providers.transform((editor) => {
+        editor.update(providerID, (provider) => {
+          provider.package = "@opencode/ai/providers/openai-compatible"
+        })
+        editor.models.update(providerID, Model.ID.make("catalog"), (model) => {
+          model.settings = { baseURL: "https://catalog.example/v1" }
+        })
+      })
+      yield* addPlugin([
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              "opencode-go": { models: { alias: { modelID: "catalog" } } },
+            },
+          }),
+        }),
+        new Document({
+          type: "document",
+          info: decode({
+            providers: {
+              "opencode-go": { settings: { baseURL: "https://proxy.example/v1" } },
+            },
+          }),
+        }),
+      ])
+
+      const model = required(yield* models.get(providerID, Model.ID.make("alias")))
+      expect(model.settings?.baseURL).toBe("https://proxy.example/v1")
+    }),
+  )
+
   it.effect("keeps provider and model compatibility precedence across config documents", () =>
     Effect.gen(function* () {
       const providers = yield* Provider.Service
