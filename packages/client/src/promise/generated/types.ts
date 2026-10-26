@@ -20,8 +20,6 @@ export type AgentID = string
 
 export type ProviderID = string
 
-export type ModelSelector = string
-
 export type ProviderCompaction = { type: "summary" } | { type: "native" }
 
 export type ProviderTransport = "http" | "websocket"
@@ -1103,10 +1101,10 @@ export type WorktreeList = Array<WorktreeDirectory>
 
 export type SessionAgentOverride = {
   model?: ModelRef
-  models?: Array<ModelSelector>
-  excludedModels?: Array<ModelSelector>
-  subagentModels?: Array<ModelSelector>
-  subagentExcludedModels?: Array<ModelSelector>
+  models?: Array<string>
+  excludedModels?: Array<string>
+  subagentModels?: Array<string>
+  subagentExcludedModels?: Array<string>
   force?: boolean
 }
 
@@ -2318,8 +2316,8 @@ export type ReferenceInfo = {
 }
 
 export type SessionSubagentPolicy = {
-  models?: Array<ModelSelector>
-  excludedModels?: Array<ModelSelector>
+  models?: Array<string>
+  excludedModels?: Array<string>
   agentOverrides?: { [x: string]: SessionAgentOverride }
 }
 
@@ -2399,10 +2397,10 @@ export type AgentInfo = {
   id: AgentID
   name: string
   model?: ModelRef
-  models?: Array<ModelSelector>
-  excludedModels?: Array<ModelSelector>
-  subagentModels?: Array<ModelSelector>
-  subagentExcludedModels?: Array<ModelSelector>
+  models?: Array<string>
+  excludedModels?: Array<string>
+  subagentModels?: Array<string>
+  subagentExcludedModels?: Array<string>
   maxDepth?: number
   request: ProviderRequest
   system?: string
@@ -2446,10 +2444,10 @@ export type ConfigEntry =
         agents?: {
           [x: string]: {
             model?: string | { providerID: string; model: string; variant?: string }
-            models?: Array<ModelSelector>
-            excluded_models?: Array<ModelSelector>
-            subagent_models?: Array<ModelSelector>
-            subagent_excluded_models?: Array<ModelSelector>
+            models?: Array<string>
+            excluded_models?: Array<string>
+            subagent_models?: Array<string>
+            subagent_excluded_models?: Array<string>
             max_depth?: number
             request?: { headers?: { [x: string]: string }; body?: { [x: string]: JsonValue } }
             system?: string
