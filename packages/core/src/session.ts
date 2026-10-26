@@ -182,7 +182,11 @@ export interface Interface {
     after?: number
     follow?: boolean
   }) => Stream.Stream<SessionEvent.DurableEvent | EventLog.Synced, NotFoundError>
-  readonly switchAgent: (input: { sessionID: SessionSchema.ID; agent: Agent.ID }) => Effect.Effect<void, NotFoundError>
+  readonly switchAgent: (input: {
+    sessionID: SessionSchema.ID
+    agent: Agent.ID
+    model?: Model.Ref
+  }) => Effect.Effect<void, NotFoundError | ModelGovernance.DeniedError>
   readonly switchModel: (input: {
     sessionID: SessionSchema.ID
     model: Model.Ref

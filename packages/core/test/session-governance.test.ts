@@ -129,6 +129,41 @@ describe("Session model governance", () => {
     }),
   )
 
+  it.effect("a tightened policy binds a child's switchAgent, but not a top-level session's", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Service
+      const parent = yield* session.create({
+        location,
+        model: model("a"),
+        subagentPolicy: { models: ["test/a", "test/b"] },
+      })
+      const child = yield* session.create({
+        parentID: parent.id,
+        agent: Agent.ID.make("worker"),
+        model: model("b"),
+      })
+
+      // Permitted while the child's model is inside the policy.
+      yield* session.switchAgent({ sessionID: child.id, agent: Agent.ID.make("reviewer") })
+      expect((yield* session.get(child.id)).agent).toBe(Agent.ID.make("reviewer"))
+
+      yield* session.setSubagentPolicy({ sessionID: parent.id, subagentPolicy: { models: ["test/a"] } })
+      const error = yield* session
+        .switchAgent({ sessionID: child.id, agent: Agent.ID.make("specialist") })
+        .pipe(Effect.flip)
+      expect(error).toBeInstanceOf(ModelGovernance.DeniedError)
+      expect((error as ModelGovernance.DeniedError).message).toContain("test/a")
+      // A denied switch publishes nothing: the child keeps its agent and model.
+      const after = yield* session.get(child.id)
+      expect(after.agent).toBe(Agent.ID.make("reviewer"))
+      expect(after.model?.id).toBe(Model.ID.make("b"))
+
+      // Top-level sessions are unchecked.
+      yield* session.switchAgent({ sessionID: parent.id, agent: Agent.ID.make("specialist") })
+      expect((yield* session.get(parent.id)).agent).toBe(Agent.ID.make("specialist"))
+    }),
+  )
+
   it.effect("forking a session whose model is outside its own subsession policy fails", () =>
     Effect.gen(function* () {
       const session = yield* Session.Service
