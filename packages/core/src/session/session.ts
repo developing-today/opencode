@@ -106,7 +106,7 @@ export const make = Effect.fn("Session.make")(function* () {
     Effect.gen(function* () {
       const config = yield* Effect.serviceOption(Config.Service)
       return config._tag === "Some" ? yield* config.value.entries() : []
-    }).pipe(instances.provide(session), Effect.catch(() => Effect.succeed([])))
+    }).pipe(instances.provide(session), Effect.orElseSucceed(() => []))
   const switchAgent = Effect.fn("Session.switchAgent")(function* (
     sessionID: SessionSchema.ID,
     input: { agent: Agent.ID },

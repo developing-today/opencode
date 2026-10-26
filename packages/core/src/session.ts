@@ -282,7 +282,7 @@ const layer = Layer.effect(
       Effect.gen(function* () {
         const config = yield* Effect.serviceOption(Config.Service)
         return config._tag === "Some" ? yield* config.value.entries() : ([] as Entry[])
-      }).pipe(Effect.provide(locations.get(location)), Effect.catch(() => Effect.succeed([] as Entry[])))
+      }).pipe(Effect.provide(locations.get(location)), Effect.orElseSucceed(() => [] as Entry[]))
     const assertModelAllowed = (input: {
       location: Location.Ref
       parent: SessionSchema.Info
