@@ -234,6 +234,29 @@ describe("ModelsDev Service", () => {
     }),
   )
 
+  it.live("get() maps calendar-invalid release dates to 0 instead of rolling them over (#502)", () =>
+    Effect.gen(function* () {
+      const cache = makeCache()
+      writeCache(cache, {
+        acme: {
+          ...fixture.acme,
+          models: {
+            "acme-1": { ...fixture.acme.models["acme-1"], release_date: "2026-02-30" },
+            "acme-2": { ...fixture.acme.models["acme-1"], id: "acme-2", release_date: "2026-02" },
+            "acme-3": { ...fixture.acme.models["acme-1"], id: "acme-3", release_date: "2024-02-29" },
+          },
+        },
+      })
+      const state = yield* Ref.make(initialState)
+      const result = yield* provided(
+        state,
+        cache,
+        ModelsDev.Service.use((s) => s.get()),
+      )
+      expect(result[0]?.models.map((model) => model.time.released)).toEqual([0, Date.UTC(2026, 1, 1), Date.UTC(2024, 1, 29)])
+    }),
+  )
+
   it.live("maps models.dev npm packages onto native packages", () =>
     Effect.gen(function* () {
       const cache = makeCache()

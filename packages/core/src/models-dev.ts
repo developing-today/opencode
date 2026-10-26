@@ -132,8 +132,7 @@ function normalize(input: Record<string, SourceProvider>): readonly Snapshot[] {
 }
 
 function released(date: string) {
-  const time = Date.parse(date)
-  return Number.isFinite(time) ? time : 0
+  return Model.parseReleaseDate(date) ?? 0
 }
 
 function cost(input: SourceModel["cost"]): Model.Info["cost"] {
