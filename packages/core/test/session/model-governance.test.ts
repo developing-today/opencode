@@ -182,6 +182,80 @@ describe("ModelGovernance.assertAllowed", () => {
     })
   })
 
+  test("a policy override with models and force leaves the launching agent's subagent lists in force", async () => {
+    const parent = info("ses_parent", {
+      agent: "reasoner",
+      subagentPolicy: { agentOverrides: { worker: { models: ["test/a", "test/c"], force: true } } },
+    })
+    const configInput = {
+      agents: {
+        reasoner: { subagent_models: ["test/a", "test/b"] },
+        worker: { models: ["test/a"] },
+      },
+    }
+    const all = [parent]
+    // The forced list replaces the worker's own lists, and test/a is in both layers.
+    await run({ all, parent, configInput, agent: Agent.ID.make("worker"), model: ref("test/a") })
+    // test/c is in the forced own list but outside the launcher's subagent lists,
+    // which the override never mentions and so must not clear.
+    const message = await runDenied({
+      all,
+      parent,
+      configInput,
+      agent: Agent.ID.make("worker"),
+      model: ref("test/c"),
+    })
+    expect(message).toContain("subagent models of agent reasoner")
+  })
+
+  test("a per-call force override with no subagent lists keeps the launching agent's subagent exclusions", async () => {
+    const parent = info("ses_parent", { agent: "reasoner" })
+    const configInput = {
+      agents: {
+        reasoner: { subagent_excluded_models: ["test/b"] },
+        worker: { models: ["test/c"] },
+      },
+    }
+    const all = [parent]
+    // The Task tool's { model, force } shape: force clears the worker's own lists,
+    // so a model outside them passes...
+    await run({ all, parent, configInput, agent: Agent.ID.make("worker"), model: ref("test/a"), override: { force: true } })
+    // ...but the launcher's subagent exclusions, which the override never mentions, still bind.
+    const message = await runDenied({
+      all,
+      parent,
+      configInput,
+      agent: Agent.ID.make("worker"),
+      model: ref("test/b"),
+      override: { force: true },
+    })
+    expect(message).toContain("excluded")
+    expect(message).toContain("subagent models of agent reasoner")
+  })
+
+  test("an override with only subagent lists and force leaves the child agent's own lists in force", async () => {
+    const parent = info("ses_parent")
+    const configInput = { agents: { worker: { models: ["test/a"] } } }
+    const all = [parent]
+    await run({
+      all,
+      parent,
+      configInput,
+      agent: Agent.ID.make("worker"),
+      model: ref("test/a"),
+      override: { subagentModels: ["test/c"], force: true },
+    })
+    const message = await runDenied({
+      all,
+      parent,
+      configInput,
+      agent: Agent.ID.make("worker"),
+      model: ref("test/c"),
+      override: { subagentModels: ["test/c"], force: true },
+    })
+    expect(message).toContain("models of agent worker")
+  })
+
   test("an override without force can narrow but not widen a definition", async () => {
     const parent = info("ses_parent", {
       subagentPolicy: { agentOverrides: { worker: { models: ["test/a", "test/b"] } } },

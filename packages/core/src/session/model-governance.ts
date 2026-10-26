@@ -105,6 +105,16 @@ function applyOverride(
   override: SessionSchema.AgentOverride | undefined,
 ) {
   if (override === undefined) return definition
+  // An override that addresses only the subagent lists leaves the agent's own lists
+  // alone: its force must not clear a list group it never mentions (#508). An override
+  // carrying no list fields at all (e.g. the Task tool's `{ model, force }`) still
+  // forces the agent's own lists, as its documentation promises.
+  if (
+    override.models === undefined &&
+    override.excludedModels === undefined &&
+    (override.subagentModels !== undefined || override.subagentExcludedModels !== undefined)
+  )
+    return definition
   if (override.force === true) return { allowed: override.models, excluded: override.excludedModels }
   return {
     allowed:
@@ -128,6 +138,10 @@ function applySubagentOverride(
   override: SessionSchema.AgentOverride | undefined,
 ) {
   if (override === undefined) return definition
+  // Symmetrically, an override carrying no subagent lists at all leaves the launching
+  // agent's subagent lists in force — its force is aimed at the child agent's own
+  // lists and must not clear a group it never mentions (#508).
+  if (override.subagentModels === undefined && override.subagentExcludedModels === undefined) return definition
   return applyOverride(definition, {
     models: override.subagentModels,
     excludedModels: override.subagentExcludedModels,
