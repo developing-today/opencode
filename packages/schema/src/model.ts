@@ -63,7 +63,9 @@ function hasWhitespaceSegment(target: string): boolean {
  * matches exactly that variant, and `provider/*` matches every model of the provider.
  */
 export const Selector = Schema.String.annotate({ identifier: "Model.Selector" })
-  .check(Schema.isPattern(/^[^/#]+\/(?:\*|[^#]+)(?:#[^#]+)?$/u))
+  .check(
+    Schema.isPattern(/^[^\s/#]+\/(?:\*|[^\s#/*]+(?:\/[^\s#/*]+)*)(?:#[^\s#/]+(?:\/[^\s#/]+)*)?$/u),
+  )
   .pipe(
     statics((schema) => ({
       matches: (selector: string, ref: Ref): boolean => {
@@ -97,12 +99,13 @@ export const Selector = Schema.String.annotate({ identifier: "Model.Selector" })
 export type Selector = typeof Selector.Type
 
 function parseSelector(input: string) {
+  if (input.split(/[/#]/).some((segment) => !segment || /\s/.test(segment))) return undefined
   const providerEnd = input.indexOf("/")
   if (providerEnd <= 0) return undefined
   const variantStart = input.indexOf("#", providerEnd + 1)
   const id = input.slice(providerEnd + 1, variantStart === -1 ? undefined : variantStart)
   const variant = variantStart === -1 ? undefined : input.slice(variantStart + 1)
-  if (!id || (variant !== undefined && !variant)) return undefined
+  if (!id || (id.includes("*") && id !== "*") || (variant !== undefined && !variant)) return undefined
   return { providerID: input.slice(0, providerEnd), id, variant }
 }
 
