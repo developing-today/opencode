@@ -75,6 +75,8 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| Session.AgentOverride subagent lists are enforced                | 2026-10-25 | #487     |
+| switchAgent runs the governance check for child sessions         | 2026-10-25 | #486     |
 | ROADMAP Done records the #481 completion                         | 2026-10-25 | #485     |
 | Generated client regenerated for subsession governance schemas   | 2026-10-25 | #484     |
 | Calendar-invalid release dates are ignored                       | 2026-10-25 | #482     |
