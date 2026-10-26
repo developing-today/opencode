@@ -167,9 +167,12 @@ export const parseQuotaReset = (message: string | undefined, now: number): numbe
     const date = Date.parse(absolute)
     if (!Number.isNaN(date)) return date
   }
-  const relative = /in\s+(\d+)\s*(second|minute|hour|day)s?/.exec(text)
+  const relative = /in\s+(\d+)\s*(second|minute|hour|day|sec|s)s?(?![a-z])/.exec(text)
   if (relative) {
-    const unit = { second: 1_000, minute: 60_000, hour: 3_600_000, day: 86_400_000 } as Record<string, number>
+    const unit = { second: 1_000, sec: 1_000, s: 1_000, minute: 60_000, hour: 3_600_000, day: 86_400_000 } as Record<
+      string,
+      number
+    >
     return now + Number(relative[1]) * (unit[relative[2]] ?? 1_000)
   }
   return undefined
