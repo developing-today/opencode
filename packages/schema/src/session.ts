@@ -19,6 +19,7 @@ export const ID = SessionID
 export type ID = SessionID
 
 export const Metadata = SessionMetadata
+// CI baseline probe: comment-only change to trigger the affected-packages CI matrix.
 export type Metadata = SessionMetadata
 
 export const Event = SessionEvent
