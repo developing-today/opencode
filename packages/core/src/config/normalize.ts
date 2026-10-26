@@ -611,37 +611,37 @@ function resolveModelString(model: unknown, aliases?: ModelAlias.Aliases): unkno
 
 function resolveEntryModels(map: unknown, aliases?: ModelAlias.Aliases): unknown {
   if (!isRecord(map) || !aliases) return map
-  const res: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(map)) {
-    if (isRecord(v) && typeof v.model === "string") {
-      res[k] = { ...v, model: resolveModelString(v.model, aliases) }
-    } else {
-      res[k] = v
-    }
-  }
-  return res
+  // Object.fromEntries defines keys as data properties, so an entry named
+  // "__proto__" is preserved instead of mutating the result's prototype.
+  return Object.fromEntries(
+    Object.entries(map).map(([k, v]) => [
+      k,
+      isRecord(v) && typeof v.model === "string" ? { ...v, model: resolveModelString(v.model, aliases) } : v,
+    ]),
+  )
 }
 
 function resolveRouteTargets(routes: unknown, aliases?: ModelAlias.Aliases): unknown {
   if (!isRecord(routes) || !aliases) return routes
-  const res: Record<string, unknown> = {}
-  for (const [k, route] of Object.entries(routes)) {
-    if (isRecord(route) && Array.isArray(route.targets)) {
-      const targets = route.targets.map((target) => {
-        if (typeof target === "string") {
-          return resolveModelString(target, aliases)
-        }
-        if (isRecord(target) && typeof target.model === "string") {
-          return { ...target, model: resolveModelString(target.model, aliases) }
-        }
-        return target
-      })
-      res[k] = { ...route, targets }
-    } else {
-      res[k] = route
-    }
-  }
-  return res
+  // Object.fromEntries, as in resolveEntryModels: a route named "__proto__"
+  // must stay an entry, not become the result's prototype.
+  return Object.fromEntries(
+    Object.entries(routes).map(([k, route]) => {
+      if (isRecord(route) && Array.isArray(route.targets)) {
+        const targets = route.targets.map((target) => {
+          if (typeof target === "string") {
+            return resolveModelString(target, aliases)
+          }
+          if (isRecord(target) && typeof target.model === "string") {
+            return { ...target, model: resolveModelString(target.model, aliases) }
+          }
+          return target
+        })
+        return [k, { ...route, targets }]
+      }
+      return [k, route]
+    }),
+  )
 }
 
 function normalizeWatcher(input: Record<string, unknown>, encoded: Record<string, unknown>, diagnostics: Diagnostic[]) {
