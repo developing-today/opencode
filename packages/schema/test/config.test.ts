@@ -7,6 +7,7 @@ import { ConfigModel } from "../src/config/model.js"
 import { ConfigModelRoutes } from "../src/config/model-routes.js"
 import { ConfigProvider } from "../src/config/provider.js"
 import { Mcp } from "../src/mcp.js"
+import { Model } from "../src/model.js"
 import { Provider } from "../src/provider.js"
 import { AbsolutePath } from "../src/schema.js"
 import { WebSearch } from "../src/websearch.js"
@@ -222,8 +223,23 @@ describe("ConfigModel.Selection segment spelling (#456)", () => {
       "openai/gpt-4 ",
       "openai/gpt-4# hi",
       "openai//gpt-4",
+      "openai/gpt-4#a//b",
+      "openai/gpt-4#a/",
+      "openai/gpt-4#/b",
+      "openai/gpt-4#/",
     ])
       expect(() => decode(input)).toThrow()
+  })
+
+  test("rejects empty-sub-segment variant spellings as a SchemaError, not a raw Error, in string form (#467)", () => {
+    for (const input of ["openai/gpt-4#a//b", "openai/gpt-4#a/", "openai/gpt-4#/b", "openai/gpt-4#/"])
+      expect(() => decode(input)).toThrow(Schema.SchemaError)
+  })
+
+  test("rejects variant slash spellings with empty sub-segments like Model.Ref.parse (#467)", () => {
+    for (const variant of ["a//b", "a/", "/b", "/"])
+      expect(() => Model.Ref.parse(`openai/gpt-4#${variant}`)).toThrow()
+    expect(String(Model.Ref.parse("openai/gpt-4#a/b").variant)).toBe("a/b")
   })
 
   test("rejects padded, empty and internal-whitespace segments in explicit form", () => {
@@ -235,6 +251,10 @@ describe("ConfigModel.Selection segment spelling (#456)", () => {
       { providerID: "openai", model: "anthropic//claude-sonnet-4" },
       { providerID: "openai", model: "gpt-4", variant: "hi there" },
       { providerID: "openai", model: "gpt-4", variant: " high" },
+      { providerID: "openai", model: "gpt-4", variant: "a//b" },
+      { providerID: "openai", model: "gpt-4", variant: "a/" },
+      { providerID: "openai", model: "gpt-4", variant: "/b" },
+      { providerID: "openai", model: "gpt-4", variant: "/" },
     ])
       expect(() => decode(input)).toThrow()
   })
