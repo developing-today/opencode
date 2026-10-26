@@ -195,18 +195,20 @@ export const parse = (value: unknown): Window | undefined => {
   const rawDaysOfWeek = field(value, "daysOfWeek")
   if (rawDaysOfWeek !== undefined) {
     if (!Array.isArray(rawDaysOfWeek)) return undefined
-    const days = [...new Set(rawDaysOfWeek.map(dayOfWeek).filter((day): day is number => day !== undefined))].sort(
-      (left, right) => left - right,
-    )
-    if (days.length === 0) return undefined
+    const parsed = rawDaysOfWeek.map(dayOfWeek)
+    // Any unreadable entry rejects the window: dropping it would silently narrow the days
+    // the rule applies on, instead of making a typo'd rule disappear as the header promises.
+    if (parsed.length === 0 || parsed.some((day) => day === undefined)) return undefined
+    const days = [...new Set(parsed as number[])].sort((left, right) => left - right)
     result.daysOfWeek = days
   }
 
   const rawDaysOfMonth = field(value, "daysOfMonth")
   if (rawDaysOfMonth !== undefined) {
     if (!Array.isArray(rawDaysOfMonth)) return undefined
-    const days = [...new Set(rawDaysOfMonth.map(dayOfMonth).filter((day): day is number => day !== undefined))]
-    if (days.length === 0) return undefined
+    const parsed = rawDaysOfMonth.map(dayOfMonth)
+    if (parsed.length === 0 || parsed.some((day) => day === undefined)) return undefined
+    const days = [...new Set(parsed as number[])]
     result.daysOfMonth = days
   }
 
