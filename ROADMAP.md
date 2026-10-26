@@ -75,7 +75,8 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
-| ConfigModel.Selection accepts slash variants, rejects empty sub-segments | 2026-10-25 | #466     |
+| ROADMAP Done records the #465/#467 completion                    | 2026-10-25 | #473     |
+| ConfigModel.Selection: slash variants in, empty segments out | 2026-10-25 | #466     |
 | ROADMAP Done records the #434 completion                         | 2026-10-25 | #464     |
 | Provider baseURL applies to all catalog models                   | 2026-10-25 | #462     |
 | ROADMAP Done records the #456 completion                         | 2026-10-25 | #461     |
