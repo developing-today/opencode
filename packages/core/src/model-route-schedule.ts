@@ -78,11 +78,12 @@ export const isDayOfMonth = (value: unknown): value is number | string => dayOfM
 
 /** "9:30", "09:30", "23:59", "9:5" or "9:30:15" as minutes since local midnight. Seconds round down. */
 export const minutesOf = (value: string): number | undefined => {
-  const match = /^(\d{1,2}):(\d{1,2})(?::\d{2})?$/.exec(value.trim())
+  const match = /^(\d{1,2}):(\d{1,2})(?::(\d{2}))?$/.exec(value.trim())
   if (!match) return undefined
   const hours = Number(match[1])
   const minutes = Number(match[2])
-  if (hours > 23 || minutes > 59) return undefined
+  const seconds = match[3] === undefined ? 0 : Number(match[3])
+  if (hours > 23 || minutes > 59 || seconds > 59) return undefined
   return hours * 60 + minutes
 }
 
