@@ -85,6 +85,95 @@ describe("advertised variants", () => {
   })
 })
 
+describe("pinned variants", () => {
+  const withVariants = (providerID: Provider.ID, id: string, variants: string[]) =>
+    [
+      id,
+      {
+        ...Model.Info.default(providerID, Model.ID.make(id)),
+        variants: variants.map((variant) => ({ id: Model.VariantID.make(variant) })),
+      },
+    ] as const
+
+  // Neither leaf offers "medium" natively; both remap it to "high" in their target specs.
+  const definitionsWithVariants = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>([
+    [anthropic, new Map([withVariants(anthropic, "claude-opus-4-1", ["none", "low", "high", "max"])])],
+    [openai, new Map([withVariants(openai, "gpt-6-luna", ["low", "high"])])],
+  ])
+  const routes = new Map<string, ConfigModelRoutes.Route>([
+    [
+      "pool",
+      {
+        targets: [
+          { model: { providerID: "anthropic", model: "claude-opus-4-1" }, variants: { medium: "high" } },
+          { model: { providerID: "openai", model: "gpt-6-luna" }, variants: { medium: "high" } },
+        ],
+      } as unknown as ConfigModelRoutes.Route,
+    ],
+    [
+      "scout",
+      {
+        targets: [{ model: { providerID: "opencode-route", model: "pool", variant: "medium" } }],
+      } as unknown as ConfigModelRoutes.Route,
+    ],
+  ])
+
+  test("a config-pinned variant reachable only through a target's remap does not prune the leaf", () => {
+    const { leaves } = expand("scout", routes, definitionsWithVariants)
+    expect(leaves.map((leaf) => `${leaf.ref.providerID}/${leaf.ref.id}#${leaf.ref.variant}`)).toEqual([
+      "anthropic/claude-opus-4-1#high",
+      "openai/gpt-6-luna#high",
+    ])
+  })
+
+  test("a pinned variant no target can produce natively or through a remap still prunes the leaf", () => {
+    const { leaves } = expand(
+      "scout",
+      new Map([
+        [
+          "pool",
+          {
+            targets: [
+              { model: { providerID: "anthropic", model: "claude-opus-4-1" }, variants: { medium: "ultra" } },
+              { model: { providerID: "openai", model: "gpt-6-luna" }, variants: { medium: "ultra" } },
+            ],
+          } as unknown as ConfigModelRoutes.Route,
+        ],
+        [
+          "scout",
+          {
+            targets: [{ model: { providerID: "opencode-route", model: "pool", variant: "medium" } }],
+          } as unknown as ConfigModelRoutes.Route,
+        ],
+      ]),
+      definitionsWithVariants,
+    )
+    expect(leaves).toEqual([])
+  })
+
+  test("a pinned variant the model offers natively still resolves to that variant", () => {
+    const { leaves } = expand(
+      "scout",
+      new Map([
+        [
+          "pool",
+          {
+            targets: [{ model: { providerID: "anthropic", model: "claude-opus-4-1" }, variants: { medium: "high" } }],
+          } as unknown as ConfigModelRoutes.Route,
+        ],
+        [
+          "scout",
+          {
+            targets: [{ model: { providerID: "opencode-route", model: "pool", variant: "max" } }],
+          } as unknown as ConfigModelRoutes.Route,
+        ],
+      ]),
+      definitionsWithVariants,
+    )
+    expect(leaves.map((leaf) => `${leaf.ref.id}#${leaf.ref.variant}`)).toEqual(["claude-opus-4-1#max"])
+  })
+})
+
 describe("pool weight schedules", () => {
   test("a route's schedule is normalized and carried on its node", () => {
     const routes = route(["openai/gpt-6-luna", "anthropic/claude-opus-4-1"], {

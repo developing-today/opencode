@@ -261,8 +261,20 @@ export function expand(
       if (spec.until !== undefined && Date.now() >= spec.until) continue
       for (const [id, model] of matchingModels(ref.id, definitions.get(ref.providerID))) {
         if (!model.enabled) continue
-        const variant = ref.variant ?? inheritedVariant
-        if (variant && !model.variants.some((item) => item.id === variant)) continue
+        const requested = ref.variant ?? inheritedVariant
+        // A pinned variant is producible natively or through the target's remap table, matching
+        // routeVariants and the resolver: a remap the model can produce wins, else the native
+        // variant, else the leaf is pruned.
+        const remapped = requested ? spec.variants?.[requested] : undefined
+        const variant =
+          requested === undefined
+            ? undefined
+            : remapped !== undefined && model.variants.some((item) => item.id === remapped)
+              ? Model.VariantID.make(remapped)
+              : model.variants.some((item) => item.id === requested)
+                ? requested
+                : undefined
+        if (requested && !variant) continue
         const resolved = Model.Ref.make({
           providerID: ref.providerID,
           id,
