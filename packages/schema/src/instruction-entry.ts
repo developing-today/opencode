@@ -7,9 +7,9 @@ import { Schema } from "effect"
  * derives the namespaced Instructions key as `api/<key>`, keeping the
  * `api/*` namespace enforced by construction.
  */
-export const Key = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9._-]*$/u)).annotate({
+export const Key = Schema.String.check(Schema.isPattern(/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?$/u)).annotate({
   identifier: "InstructionEntry.Key",
-  description: "Instruction entry key (lowercase alphanumerics plus . _ -)",
+  description: "Instruction entry key (lowercase alphanumerics plus . _ -, never ending with a dot)",
 })
 export type Key = typeof Key.Type
 
