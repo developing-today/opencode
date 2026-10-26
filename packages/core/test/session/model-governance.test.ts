@@ -129,6 +129,59 @@ describe("ModelGovernance.assertAllowed", () => {
     await run({ all, parent: child, configInput, model: ref("anthropic/claude-opus-5-5") })
   })
 
+  test("a policy override's subagent lists narrow the launching agent's subagent lists", async () => {
+    const parent = info("ses_parent", {
+      agent: "reasoner",
+      subagentPolicy: { agentOverrides: { worker: { subagentModels: ["test/a"] } } },
+    })
+    const configInput = { agents: { reasoner: { subagent_models: ["test/a", "test/b"] } } }
+    const all = [parent]
+    await run({ all, parent, configInput, agent: Agent.ID.make("worker"), model: ref("test/a") })
+    const message = await runDenied({
+      all,
+      parent,
+      configInput,
+      agent: Agent.ID.make("worker"),
+      model: ref("test/b"),
+    })
+    expect(message).toContain("subagent models of agent reasoner")
+    expect(message).toContain("test/a")
+  })
+
+  test("a per-call override's subagent lists bind even without a launching definition", async () => {
+    const parent = info("ses_parent", { agent: "plugin-agent" })
+    const all = [parent]
+    await run({ all, parent, override: { subagentModels: ["test/a"] }, model: ref("test/a") })
+    await runDenied({ all, parent, override: { subagentModels: ["test/a"] }, model: ref("test/b") })
+    await runDenied({
+      all,
+      parent,
+      override: { subagentExcludedModels: ["test/b"] },
+      model: ref("test/b"),
+    })
+    await run({ all, parent, override: { subagentExcludedModels: ["test/b"] }, model: ref("test/a") })
+  })
+
+  test("a forced override's subagent lists replace the launching agent's subagent lists", async () => {
+    const parent = info("ses_parent", { agent: "reasoner" })
+    const configInput = { agents: { reasoner: { subagent_models: ["test/a", "test/b"] } } }
+    const all = [parent]
+    await run({
+      all,
+      parent,
+      configInput,
+      override: { force: true, subagentModels: ["test/c"] },
+      model: ref("test/c"),
+    })
+    await runDenied({
+      all,
+      parent,
+      configInput,
+      override: { force: true, subagentModels: ["test/c"] },
+      model: ref("test/a"),
+    })
+  })
+
   test("an override without force can narrow but not widen a definition", async () => {
     const parent = info("ses_parent", {
       subagentPolicy: { agentOverrides: { worker: { models: ["test/a", "test/b"] } } },
