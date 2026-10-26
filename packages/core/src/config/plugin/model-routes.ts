@@ -237,7 +237,10 @@ function builtWithModels(routes: ReadonlyMap<string, ConfigModelRoutes.Route>) {
     const next = new Set(trail).add(id)
     return (route.targets ?? []).some((target) => {
       const ref = targetRef(targetSpec(target).model)
-      return ref.providerID === ModelRoute.PROVIDER_ID && uses(ref.id, next)
+      return (
+        ref.providerID === ModelRoute.PROVIDER_ID &&
+        uses(ModelRouteMatch.poolsNamed(routes.keys(), ref.id)[0] ?? ref.id, next)
+      )
     })
   }
   return new Set([...routes.keys()].filter((id) => uses(id, new Set())))
@@ -423,19 +426,32 @@ function collect(
   // Set when a pool already on the way in is reached again, here or in a pool named below.
   let cut = false
 
-  // A term that names a pool, as `<id>` or `opencode-route/<id>`, stands for that pool's models. A pool
-  // already on the way in adds nothing for that name, so a pool naming itself, directly or through
+  // A pool named in any case: the one spelled exactly so, else the first that matches ignoring case, with a
+  // warning when several do.
+  const poolNamed = (routeID: string, name: string) => {
+    const named = ModelRouteMatch.poolsNamed(routes.keys(), name)
+    if (named.length > 1)
+      diagnostics.push(
+        `pool ${routeID} names ${name}, which matches ${named.join(", ")} ignoring case; it uses ${named[0]}`,
+      )
+    return named[0]
+  }
+
+  // A term that names a pool, as `<id>` or `opencode-route/<id>` in any case, stands for that pool's models. A
+  // pool already on the way in adds nothing for that name, so a pool naming itself, directly or through
   // others, is not an error.
   const reference =
     (routeID: string, within: ReadonlySet<string>) =>
     (text: string): ModelRouteMatch.Predicate | undefined => {
-      const poolID = routes.has(text)
-        ? text
-        : text.startsWith(POOL_PREFIX) && routes.has(text.slice(POOL_PREFIX.length))
-          ? text.slice(POOL_PREFIX.length)
-          : undefined
+      const prefixed = text.toLowerCase().startsWith(POOL_PREFIX)
+      const poolID =
+        ModelRouteMatch.poolsNamed(routes.keys(), text).length > 0
+          ? poolNamed(routeID, text)
+          : prefixed
+            ? poolNamed(routeID, text.slice(POOL_PREFIX.length))
+            : undefined
       if (poolID === undefined) {
-        if (text.startsWith(POOL_PREFIX)) diagnostics.push(`pool ${routeID} names ${text}, which is not a pool`)
+        if (prefixed) diagnostics.push(`pool ${routeID} names ${text}, which is not a pool`)
         return undefined
       }
       if (within.has(poolID)) {
@@ -504,7 +520,13 @@ function collect(
     nodes.push(node)
     const attach = (child: ModelRoute.Node["children"][number], key: string) => {
       node.children.push(child)
-      node.weights.push(ModelRouteAutonomy.usesRules(current.autonomy) ? (current.weights?.[key] ?? 1) : 1)
+      // A nested pool's weight key names a pool, so it matches in any case.
+      const weight =
+        current.weights?.[key] ??
+        (child.node === undefined
+          ? undefined
+          : Object.entries(current.weights ?? {}).find(([name]) => name.toLowerCase() === key.toLowerCase())?.[1])
+      node.weights.push(ModelRouteAutonomy.usesRules(current.autonomy) ? (weight ?? 1) : 1)
     }
     const applying = (list: readonly ModelRouteMatch.Rule[], candidate: ModelRouteMatch.Candidate) =>
       list.filter((rule) => rule.applies(candidate)).map((rule) => rule.map)
@@ -575,13 +597,14 @@ function collect(
       const spec = targetSpec(target)
       const ref = targetRef(spec.model)
       if (ref.providerID === ModelRoute.PROVIDER_ID) {
+        const poolID = poolNamed(routeID, ref.id) ?? ref.id
         // The levels this target object's remap sets to false. The config loader reports any other key it has.
         const off = Object.entries(spec.variants ?? {}).flatMap(([level, to]) => (to === false ? [level] : []))
-        // At a pin, a nested pool that sits the pin out does so as a whole: it is left out, with each member it
-        // would bring here, named as a later target would repeat it, its own pin kept.
-        if (pin !== undefined && off.includes(pin.level)) {
+        // Records each member the nested pool would bring at this pin as left out, named as a later target would
+        // repeat it, with its own pin and the pin on the reference, if any.
+        const leaveOut = (at: Pin) => {
           const brought = collect(
-            ref.id,
+            poolID,
             routes,
             definitions,
             nextTrail,
@@ -592,15 +615,20 @@ function collect(
           )
           if (brought.cut) cut = true
           brought.leaves.forEach((leaf) => {
-            pin.leftOut.targets.add(
+            at.leftOut.targets.add(
               `${leaf.ref.providerID}/${leaf.ref.id}${leaf.ref.variant ? `#${leaf.ref.variant}` : ""}`,
             )
-            pin.leftOut.models.add(`${leaf.ref.providerID}/${leaf.ref.id}`)
+            at.leftOut.models.add(`${leaf.ref.providerID}/${leaf.ref.id}`)
           })
+        }
+        // At a pin, a nested pool that sits the pin out does so as a whole: it is left out, with each member it
+        // would bring here.
+        if (pin !== undefined && off.includes(pin.level)) {
+          leaveOut(pin)
           continue
         }
         const start = result.length
-        const child = visit(ref.id, nextTrail, {
+        const child = visit(poolID, nextTrail, {
           excludes,
           rules,
           pins:
@@ -608,13 +636,24 @@ function collect(
               ? pins
               : [...pins, { level: ref.variant, rules: [], leftOut: { targets: new Set(), models: new Set() } }],
         })
+        // A nested pool reached at a pin it inherits and does not declare adds nothing there (visit says so).
+        // Selected at that level without the pin, the pool above would still place its members, each sitting
+        // the level out, so they are left out here. A pin written on the reference is a separate member.
+        const nested = routes.get(poolID)
+        if (
+          pin !== undefined &&
+          ref.variant === undefined &&
+          nested?.levels !== undefined &&
+          !nested.levels.includes(pin.level)
+        )
+          leaveOut(pin)
         // Above any pin, a nested pool written as a target object sits out, as a whole, each level its remap sets
         // to false. At a pin no other level is asked for.
         if (pin === undefined && off.length > 0)
           result.slice(start).forEach((leaf, offset) => {
             result[start + offset] = sitOut(leaf, off)
           })
-        if (child !== undefined) attach({ node: child }, `${ModelRoute.PROVIDER_ID}/${ref.id}`)
+        if (child !== undefined) attach({ node: child }, `${ModelRoute.PROVIDER_ID}/${poolID}`)
         continue
       }
       if (spec.until !== undefined && Date.now() >= spec.until) continue

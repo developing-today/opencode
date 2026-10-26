@@ -746,7 +746,8 @@ const ruleMatches = (rule: WeightRule, target: Model.Ref, scope: WeightScope) =>
     return false
   if (match.routes?.length) {
     const path = scope.routes ?? (scope.routeID === undefined ? [] : [scope.routeID])
-    if (!match.routes.some((id) => path.includes(id))) return false
+    // A route id names a pool, so it matches in any case.
+    if (!match.routes.some((id) => path.some((entry) => entry.toLowerCase() === id.toLowerCase()))) return false
   }
   return true
 }

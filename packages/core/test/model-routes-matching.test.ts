@@ -112,6 +112,18 @@ describe("pool matching keys", () => {
     ])
   })
 
+  test("contains and notContains search the whole provider/model text, so a provider id matches too", () => {
+    const routes = pools({
+      copilot: { contains: ["copilot"] },
+      "luna-elsewhere": { contains: ["luna"], notContains: ["OpenAI"] },
+      // A pattern keeps its own rule: without a /, it is tested against the model id alone.
+      "copilot-pattern": { include: ["*copilot*"] },
+    })
+    expect(refs("copilot", routes)).toEqual(["github-copilot/LUNA-6.1", "github-copilot/claude-opus-6.1"])
+    expect(refs("luna-elsewhere", routes)).toEqual(["github-copilot/LUNA-6.1"])
+    expect(refs("copilot-pattern", routes)).toEqual([])
+  })
+
   test("match joins the models one expression selects", () => {
     const routes = pools({ small: { match: "(*luna* or *haiku*) and not 're:-(5|6)$' and not *mini*" } })
     expect(refs("small", routes)).toEqual([
@@ -172,6 +184,46 @@ describe("pool matching keys", () => {
     ]
     expect(refs("claude-agg", routes)).toEqual(expected)
     expect(refs("claude-expr", routes)).toEqual(expected)
+  })
+
+  test("a pool name matches in any case wherever a pool names another pool", () => {
+    const routes = pools({
+      Lunas: { targets: ["openai/luna-6", "openai/luna-6.1"] },
+      claude: { contains: ["opus"] },
+      // A nested pool reference, and its weight key.
+      "by-target": {
+        targets: ["opencode-route/lunas", "anthropic/claude-mythos-1"],
+        selection: "weighted",
+        weights: { "OPENCODE-ROUTE/LUNAS": 3 },
+      },
+      // Matching keys and an expression.
+      "by-name": { include: ["CLAUDE", "openai/luna-6*"], exclude: ["opencode-route/LUNAS"] },
+      "by-expression": { match: "OPENCODE-ROUTE/Claude and not github-copilot/*" },
+      // A variant rule's match.
+      "by-rule": { targets: ["openai/luna-6"], variantRules: [{ match: "LUNAS", map: { max: false } }] },
+    })
+    expect(refs("by-target", routes)).toEqual(["openai/luna-6", "openai/luna-6.1", "anthropic/claude-mythos-1"])
+    expect(expand("by-target", routes, catalog).nodes[0].weights).toEqual([3, 1])
+    expect(refs("by-name", routes)).toEqual(["anthropic/claude-opus-6.1", "github-copilot/claude-opus-6.1"])
+    expect(refs("by-expression", routes)).toEqual(["anthropic/claude-opus-6.1"])
+    expect(remaps("by-rule", routes)["openai/luna-6"]).toEqual({ max: false })
+    for (const id of ["by-target", "by-name", "by-expression", "by-rule"])
+      expect(expand(id, routes, catalog).diagnostics).toEqual([])
+  })
+
+  test("a pool name that matches several pools only ignoring case uses the first, and says so", () => {
+    const routes = pools({
+      Small: { targets: ["anthropic/claude-haiku-5"] },
+      small: { targets: ["anthropic/claude-haiku-5.5"] },
+      exact: { include: ["small"] },
+      loose: { include: ["SMALL"] },
+    })
+    expect(refs("exact", routes)).toEqual(["anthropic/claude-haiku-5.5"])
+    expect(expand("exact", routes, catalog).diagnostics).toEqual([])
+    expect(refs("loose", routes)).toEqual(["anthropic/claude-haiku-5"])
+    expect(expand("loose", routes, catalog).diagnostics).toEqual([
+      "pool loose names SMALL, which matches Small, small ignoring case; it uses Small",
+    ])
   })
 
   test("a pool that names itself, directly or through others, adds nothing for that name and reports nothing", () => {
@@ -713,6 +765,33 @@ describe("pool effort levels", () => {
     expect(result.diagnostics).toEqual([
       "pool low-only is pinned at level max, which it does not declare, so it adds nothing",
     ])
+  })
+
+  test("a nested pool that does not declare the pin it inherits still keeps its members from being added again", () => {
+    const routes = pools({
+      "low-only": { targets: ["openai/luna-6"], levels: ["low"] },
+      // Selected at max without a pin, low-only's luna-6 comes first and sits max out, so the later luna-6, by
+      // target or by include, repeats it.
+      middle: { targets: ["opencode-route/low-only", "openai/luna-6", "anthropic/claude-opus-6.1"], levels: ["max"] },
+      matched: {
+        targets: ["opencode-route/low-only", "anthropic/claude-opus-6.1"],
+        include: ["openai/luna-6"],
+        levels: ["max"],
+      },
+      // A pin written on the reference makes low-only a separate member, which adds nothing at max.
+      repinned: { targets: ["opencode-route/low-only#max", "openai/luna-6"], levels: ["max"] },
+      outer: { targets: ["opencode-route/middle#max"] },
+      "outer-matched": { targets: ["opencode-route/matched#max"] },
+      "outer-repinned": { targets: ["opencode-route/repinned#max"] },
+    })
+    expect(refs("outer", routes)).toEqual(["anthropic/claude-opus-6.1#max"])
+    expect(expand("outer", routes, catalog).diagnostics).toEqual([
+      "pool low-only is pinned at level max, which it does not declare, so it adds nothing",
+    ])
+    expect(refs("outer-matched", routes)).toEqual(["anthropic/claude-opus-6.1#max"])
+    expect(refs("outer-repinned", routes)).toEqual(["openai/luna-6#max"])
+    expect(refs("middle", routes)).toEqual(["openai/luna-6", "anthropic/claude-opus-6.1"])
+    expect(remaps("middle", routes)["openai/luna-6"].max).toBe(false)
   })
 
   test("a target uses the model as it can be used now, so a configured variant counts", () => {

@@ -6,6 +6,7 @@ import { Model } from "@opencode/schema/model"
 import { Provider } from "@opencode/schema/provider"
 import type { Agent } from "@opencode/schema/agent"
 import { Config } from "../config.js"
+import { ModelRouteMatch } from "../model-route-match.js"
 import type { Session } from "../session.js"
 import { SessionSchema } from "./schema.js"
 
@@ -173,13 +174,15 @@ function routeTargets(
   requestedVariant?: Model.VariantID,
   unjudged: string[] = [],
 ): Model.Ref[] {
-  if (seen.has(routeID)) return []
-  seen.add(routeID)
   const routes = Config.latest(entries, "experimental")?.model_routes
-  const route = routes?.[routeID]
+  // A route id names a pool, so it matches in any case.
+  const id = ModelRouteMatch.poolsNamed(Object.keys(routes ?? {}), routeID)[0] ?? routeID
+  if (seen.has(id)) return []
+  seen.add(id)
+  const route = routes?.[id]
   if (route === undefined) return []
   if ([route.include, route.contains, route.match, route.variantRules].some((value) => value !== undefined))
-    unjudged.push(routeID)
+    unjudged.push(id)
   const requested = requestedVariant === "default" ? undefined : requestedVariant
   return (route.targets ?? []).flatMap((target) => {
     const selection = "providerID" in target ? target : target.model

@@ -46,7 +46,7 @@ export type Target = typeof Target.Type
 export class VariantRule extends Schema.Class<VariantRule>("Config.ModelRoute.VariantRule")({
   match: Schema.String.annotate({
     description:
-      'Which models the rule covers: a pattern, a route name, or an expression of them with and, or, not and parentheses, as in the route\'s match, e.g. "*argon*" or "claude and not *haiku*".',
+      'Which models the rule covers: a pattern, a route name in any case, or an expression of them with and, or, not and parentheses, as in the route\'s match, e.g. "*argon*" or "claude and not *haiku*".',
   }),
   map: Schema.Record(Schema.String, VariantChoice).annotate({
     description:
@@ -202,7 +202,8 @@ export class GlobalSchedule extends Schema.Class<GlobalSchedule>("Config.ModelRo
     .pipe(optional),
   routes: Schema.Array(Schema.String)
     .annotate({
-      description: "Route IDs the change is limited to, including nested ones. Empty or unset means every route.",
+      description:
+        "Route IDs the change is limited to, including nested ones, matched in any case. Empty or unset means every route.",
     })
     .pipe(optional),
   when: Window,
@@ -228,7 +229,7 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
   include: Schema.Array(Schema.String)
     .annotate({
       description:
-        'Patterns whose models join the route after its targets, in provider order. Only models of connected providers are matched, so connecting a provider adds its matching models. * matches any run of characters, re: starts a regular expression, and case never matters. A pattern with / is tested against provider/model, one without against the model id in every provider. A route name, or opencode-route/<name>, stands for that route\'s models. E.g. ["*luna*", "anthropic/*haiku*", "small"].',
+        'Patterns whose models join the route after its targets, in provider order. Only models of connected providers are matched, so connecting a provider adds its matching models. * matches any run of characters, re: starts a regular expression, and case never matters. A pattern with / is tested against provider/model, one without against the model id in every provider. A route name, or opencode-route/<name>, in any case, stands for that route\'s models. E.g. ["*luna*", "anthropic/*haiku*", "small"].',
     })
     .pipe(optional),
   exclude: Schema.Array(Schema.String)
@@ -240,7 +241,7 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
   contains: Schema.Array(Schema.String)
     .annotate({
       description:
-        'Text whose models join the route: found anywhere in the model id, or in provider/model when the text has a /. Case never matters, and only models of connected providers are matched. E.g. ["haiku", "sonnet", "opus"].',
+        'Text whose models join the route: found anywhere in provider/model, so a provider id matches too. Case never matters, and only models of connected providers are matched. E.g. ["haiku", "sonnet", "opus"].',
     })
     .pipe(optional),
   notContains: Schema.Array(Schema.String)
@@ -292,7 +293,7 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
   weights: Schema.Record(Schema.String, Schema.Finite.check(Schema.isGreaterThan(0)))
     .annotate({
       description:
-        'Relative weights keyed by target model reference. They rank targets in every selection mode, failover included: ordered tries the heaviest first, round-robin rotates in proportion, and weighted draws in proportion, so { "openai/gpt-6-luna": 3, "github-copilot/gpt-6-luna": 1 } sends about 3/4 of new weighted sessions to the first target. Targets without a weight count as 1, and a fixed route ignores weights. A nested route is keyed as "opencode-route/<id>" and is chosen as one unit by this route; it then picks among its own members using its own selection and weights.',
+        'Relative weights keyed by target model reference. They rank targets in every selection mode, failover included: ordered tries the heaviest first, round-robin rotates in proportion, and weighted draws in proportion, so { "openai/gpt-6-luna": 3, "github-copilot/gpt-6-luna": 1 } sends about 3/4 of new weighted sessions to the first target. Targets without a weight count as 1, and a fixed route ignores weights. A nested route is keyed as "opencode-route/<id>", in any case, and is chosen as one unit by this route; it then picks among its own members using its own selection and weights.',
     })
     .pipe(optional),
   schedules: Schema.Array(Schedule).pipe(optional).annotate({

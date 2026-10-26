@@ -121,13 +121,21 @@ export function pattern(text: string): Result.Result<Predicate, string> {
   )
 }
 
-/** A `contains` or `notContains` entry: text found anywhere in the model id, or in `provider/model` when
- * it has a `/`. Case never matters. */
+/** A `contains` or `notContains` entry: text found anywhere in `provider/model`, so a provider id matches too.
+ * Case never matters. */
 export function substring(text: string): Result.Result<Predicate, string> {
   if (text === "") return Result.fail("empty text, which would match every model")
-  const subject = subjectOf(text)
   const needle = text.toLowerCase()
-  return Result.succeed((candidate) => subject(candidate).toLowerCase().includes(needle))
+  return Result.succeed((candidate) => `${candidate.providerID}/${candidate.id}`.toLowerCase().includes(needle))
+}
+
+/** The pools a name may refer to, in configuration order: the one spelled exactly so, else each one whose id
+ * matches ignoring case. A pool name matches in any case wherever a pool is named. */
+export function poolsNamed(ids: Iterable<string>, name: string): readonly string[] {
+  const all = [...ids]
+  if (all.includes(name)) return [name]
+  const lower = name.toLowerCase()
+  return all.filter((id) => id.toLowerCase() === lower)
 }
 
 const TOKEN = /\s+|[()]|'[^']*'|"[^"]*"|[^\s()]+/g

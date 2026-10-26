@@ -72,18 +72,32 @@ describe("ModelRouteMatch substrings", () => {
     expect(matching(haiku, ["anthropic/claude-haiku-4-5", "openai/gpt-6-luna"])).toEqual(["anthropic/claude-haiku-4-5"])
   })
 
-  test("text with a slash is found in provider/model; without one the provider is not searched", () => {
+  test("text is found anywhere in provider/model, so a provider id matches too; patterns keep their own rule", () => {
     const ids = ["anthropic/claude-opus-4-1", "openrouter/anthropic/claude-sonnet-4-5", "github-copilot/gpt-6-luna"]
     expect(matching(success(ModelRouteMatch.substring("anthropic/")), ids)).toEqual([
       "anthropic/claude-opus-4-1",
       "openrouter/anthropic/claude-sonnet-4-5",
     ])
-    expect(matching(success(ModelRouteMatch.substring("copilot")), ids)).toEqual([])
-    expect(matching(success(ModelRouteMatch.substring("copilot/")), ids)).toEqual(["github-copilot/gpt-6-luna"])
+    expect(matching(success(ModelRouteMatch.substring("Copilot")), ids)).toEqual(["github-copilot/gpt-6-luna"])
+    expect(matching(success(ModelRouteMatch.substring("router")), ids)).toEqual([
+      "openrouter/anthropic/claude-sonnet-4-5",
+    ])
+    // A pattern without a / is still tested against the model id alone.
+    expect(matching(pattern("*copilot*"), ids)).toEqual([])
+    expect(matching(pattern("*copilot*/*"), ids)).toEqual(["github-copilot/gpt-6-luna"])
   })
 
   test("empty text is refused, since it would match every model", () => {
     expect(failure(ModelRouteMatch.substring(""))).toBe("empty text, which would match every model")
+  })
+})
+
+describe("ModelRouteMatch pool names", () => {
+  test("a name matches a pool in any case, and an exact spelling wins", () => {
+    expect(ModelRouteMatch.poolsNamed(["claude", "small-old"], "CLAUDE")).toEqual(["claude"])
+    expect(ModelRouteMatch.poolsNamed(["Small", "small"], "small")).toEqual(["small"])
+    expect(ModelRouteMatch.poolsNamed(["Small", "small"], "SMALL")).toEqual(["Small", "small"])
+    expect(ModelRouteMatch.poolsNamed(["claude"], "claud")).toEqual([])
   })
 })
 

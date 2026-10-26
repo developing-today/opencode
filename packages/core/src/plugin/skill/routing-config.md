@@ -96,14 +96,14 @@ model `opencode-route/<id>`.
     expression, unanchored unless it uses `^` or `$`.
   - `exclude`: patterns that remove models, including targets and the members of
     nested pools. `["*-5"]` drops `luna-5` and keeps `luna-5.5`.
-  - `contains`, `notContains`: plain text found in the model id, or in
-    `provider/model` when it has a `/`. `["haiku", "sonnet"]`.
+  - `contains`, `notContains`: plain text found anywhere in `provider/model`, so a
+    provider id matches too. `["haiku", "copilot"]`.
   - `match`: one expression with `and`, `or`, `not` and parentheses, e.g.
     `"(*luna* or *haiku*) and not *mini*"`. Quote a term with spaces or parentheses:
     `"'re:gpt-(5|6)$' or *luna*"`. There is no `xor`.
-  - An entry or term that is exactly another pool's id, or `opencode-route/<id>`,
-    stands for that pool's models, without its weights or effort settings. A pool
-    naming itself gets nothing from that name.
+  - An entry or term that is another pool's id, or `opencode-route/<id>`, stands
+    for that pool's models, without its weights or effort settings. A pool naming
+    itself gets nothing from that name.
   - Order: targets first, then matched models in provider order, each model once;
     then the removals.
 - Effort levels (variants):
@@ -128,7 +128,16 @@ model `opencode-route/<id>`.
     nothing; a target with its own `#variant` is a separate member, as it is when the
     pool is selected at that level. The others run at the pin at every level of the
     pools above, unless one of those sits them out of a level. A pool pinned at a
-    level it does not declare adds nothing.
+    level it does not declare adds nothing; reached inside a pinned pool without a
+    pin of its own, its members still count as left out.
+- A pool's name matches in any case wherever a pool is named: targets, matching
+  keys, `variantRules`, `weights` keys, schedule `routes`, route overrides and the
+  `route` input of `route_stats` and `route_usage`. An exact spelling wins; when
+  several pools match only ignoring case, the first in the config is used, with a
+  warning.
+- A subagent with allowed or excluded models runs a pool only when every target is
+  allowed. A pool that uses `include`, `contains`, `match` or `variantRules`, or
+  nests one, is refused there, since its models cannot be listed from config.
 - `selection`: `ordered` (the default), `round-robin`, or `weighted`.
 - `weights`: relative ratios keyed by target. A target not listed weighs 1. Models
   from matching keys are keyed by `provider/model` too.

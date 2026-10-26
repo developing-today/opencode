@@ -15955,7 +15955,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Route IDs the change is limited to, including nested ones. Empty or unset means every route."
+            "description": "Route IDs the change is limited to, including nested ones, matched in any case. Empty or unset means every route."
           },
           "when": {
             "$ref": "#/components/schemas/Config.ModelRoute.WindowEncoded"
@@ -15995,7 +15995,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Patterns whose models join the route after its targets, in provider order. Only models of connected providers are matched, so connecting a provider adds its matching models. * matches any run of characters, re: starts a regular expression, and case never matters. A pattern with / is tested against provider/model, one without against the model id in every provider. A route name, or opencode-route/<name>, stands for that route's models. E.g. [\"*luna*\", \"anthropic/*haiku*\", \"small\"]."
+            "description": "Patterns whose models join the route after its targets, in provider order. Only models of connected providers are matched, so connecting a provider adds its matching models. * matches any run of characters, re: starts a regular expression, and case never matters. A pattern with / is tested against provider/model, one without against the model id in every provider. A route name, or opencode-route/<name>, in any case, stands for that route's models. E.g. [\"*luna*\", \"anthropic/*haiku*\", \"small\"]."
           },
           "exclude": {
             "type": "array",
@@ -16009,7 +16009,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Text whose models join the route: found anywhere in the model id, or in provider/model when the text has a /. Case never matters, and only models of connected providers are matched. E.g. [\"haiku\", \"sonnet\", \"opus\"]."
+            "description": "Text whose models join the route: found anywhere in provider/model, so a provider id matches too. Case never matters, and only models of connected providers are matched. E.g. [\"haiku\", \"sonnet\", \"opus\"]."
           },
           "notContains": {
             "type": "array",
@@ -16126,7 +16126,7 @@
               "type": "number",
               "exclusiveMinimum": 0
             },
-            "description": "Relative weights keyed by target model reference. They rank targets in every selection mode, failover included: ordered tries the heaviest first, round-robin rotates in proportion, and weighted draws in proportion, so { \"openai/gpt-6-luna\": 3, \"github-copilot/gpt-6-luna\": 1 } sends about 3/4 of new weighted sessions to the first target. Targets without a weight count as 1, and a fixed route ignores weights. A nested route is keyed as \"opencode-route/<id>\" and is chosen as one unit by this route; it then picks among its own members using its own selection and weights."
+            "description": "Relative weights keyed by target model reference. They rank targets in every selection mode, failover included: ordered tries the heaviest first, round-robin rotates in proportion, and weighted draws in proportion, so { \"openai/gpt-6-luna\": 3, \"github-copilot/gpt-6-luna\": 1 } sends about 3/4 of new weighted sessions to the first target. Targets without a weight count as 1, and a fixed route ignores weights. A nested route is keyed as \"opencode-route/<id>\", in any case, and is chosen as one unit by this route; it then picks among its own members using its own selection and weights."
           },
           "schedules": {
             "type": "array",
@@ -16216,7 +16216,7 @@
         "properties": {
           "match": {
             "type": "string",
-            "description": "Which models the rule covers: a pattern, a route name, or an expression of them with and, or, not and parentheses, as in the route's match, e.g. \"*argon*\" or \"claude and not *haiku*\"."
+            "description": "Which models the rule covers: a pattern, a route name in any case, or an expression of them with and, or, not and parentheses, as in the route's match, e.g. \"*argon*\" or \"claude and not *haiku*\"."
           },
           "map": {
             "type": "object",
