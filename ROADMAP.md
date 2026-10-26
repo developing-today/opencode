@@ -75,7 +75,12 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| happy-dom bumped to 21.0.4 in app, lockfile rescued              | 2026-10-26 | #493     |
+| Electron bumped to 44.9.1 in desktop (security fix)              | 2026-10-26 | #494     |
+| Astro bumped to 7.3.3 in www, lockfile rescued                   | 2026-10-26 | #476     |
 | ROADMAP Done records the #495 completion                       | 2026-10-26 | #496     |
+| Electron bumped to 44.9.1 in gui-extensions (security fix)       | 2026-10-26 | #477     |
+| DOMPurify bumped to 3.4.17 in session-ui                         | 2026-10-26 | #475     |
 | Model.Selector rejects unmatchable selector segments           | 2026-10-26 | #490     |
 | ROADMAP Done records the #491 completion                         | 2026-10-26 | #492     |
 | Session.AgentOverride subagent lists are enforced                | 2026-10-25 | #487     |
