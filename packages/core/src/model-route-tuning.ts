@@ -22,7 +22,9 @@ export interface Input {
 
 const median = (values: readonly number[]) => {
   const sorted = values.toSorted((left, right) => left - right)
-  return sorted.length === 0 ? undefined : sorted[Math.floor(sorted.length / 2)]
+  if (sorted.length === 0) return undefined
+  const middle = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
 }
 
 const targetKey = (providerID: string, modelID: string) => `${providerID}/${modelID}`
