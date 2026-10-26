@@ -24,6 +24,11 @@ describe("ModelRouteSchedule.parse", () => {
     expect(ModelRouteSchedule.parse({ end: "noon" })).toBeUndefined()
     expect(ModelRouteSchedule.parse({ daysOfWeek: [] })).toBeUndefined()
     expect(ModelRouteSchedule.parse({ daysOfMonth: [0, 42] })).toBeUndefined()
+    // A mixed list is rejected too: dropping the unreadable entry would narrow the window.
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["mon", "frieday"] })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["mon", 7] })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ daysOfMonth: [1, 32] })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ daysOfMonth: [15, 0] })).toBeUndefined()
     expect(ModelRouteSchedule.parse({ from: 100, until: 100 })).toBeUndefined()
   })
 
