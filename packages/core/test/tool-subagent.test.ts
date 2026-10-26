@@ -575,6 +575,117 @@ describe("SubagentTool", () => {
     ),
   )
 
+  it.live("returns the governance error with the allowed set for a denied model", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const parent = yield* sessions.create({
+            location,
+            model: parentModel,
+            subagentPolicy: { models: ["test/plain"] },
+          })
+          yield* withSubagent(parent.location)
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(parent.location)))
+
+          expect(
+            yield* executeTool(registry, {
+              sessionID: parent.id,
+              ...toolIdentity,
+              call: {
+                type: "tool-call",
+                id: "call-governance-denied",
+                name: SubagentTool.name,
+                input: { agent: "reviewer", description: "denied", prompt: "should fail", model: "test/override" },
+              },
+            }),
+          ).toEqual({
+            status: "error",
+            error: {
+              type: "tool.execution",
+              message: expect.stringContaining("Allowed models: test/plain"),
+            },
+          })
+          expect((yield* sessions.list({ parentID: parent.id })).data).toHaveLength(0)
+        }),
+      ),
+    ),
+  )
+
+  productionIt.live("force overrides the agent definition's model lists for one call", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(dir.path, "opencode.json"),
+              JSON.stringify({
+                agents: { locked: { mode: "subagent", model: "test/plain", models: ["test/plain"] } },
+              }),
+            ),
+          )
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const parent = yield* sessions.create({ location, model: parentModel })
+          yield* withSubagent(parent.location)
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(parent.location)))
+
+          expect(
+            yield* executeTool(registry, {
+              sessionID: parent.id,
+              ...toolIdentity,
+              call: {
+                type: "tool-call",
+                id: "call-force-denied",
+                name: SubagentTool.name,
+                input: { agent: "locked", description: "locked", prompt: "should fail", model: "test/override" },
+              },
+            }),
+          ).toEqual({
+            status: "error",
+            error: {
+              type: "tool.execution",
+              message: expect.stringContaining("Allowed models: test/plain"),
+            },
+          })
+
+          const forced = yield* executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call",
+              id: "call-force-allowed",
+              name: SubagentTool.name,
+              input: {
+                agent: "locked",
+                description: "forced",
+                prompt: "run",
+                model: "test/override",
+                force: true,
+              },
+            },
+          })
+          expect(forced).toMatchObject({ status: "completed" })
+          const child = yield* sessions.get(outputSessionID(forced.metadata))
+          expect(child).toMatchObject({
+            parentID: parent.id,
+            agent: "locked",
+            model: { id: "override", providerID: "test" },
+          })
+        }),
+      ),
+    ),
+  )
+
   it.live("runs a foreground child session and returns the final assistant text", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),

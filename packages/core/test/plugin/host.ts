@@ -517,6 +517,10 @@ function agentInfo(value: Agent.Info) {
       body: { ...value.request.body },
     },
     permissions: value.permissions.map((permission) => ({ ...permission })),
+    models: value.models && [...value.models],
+    excludedModels: value.excludedModels && [...value.excludedModels],
+    subagentModels: value.subagentModels && [...value.subagentModels],
+    subagentExcludedModels: value.subagentExcludedModels && [...value.subagentExcludedModels],
   }
 }
 

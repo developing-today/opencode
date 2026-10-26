@@ -1099,6 +1099,15 @@ export type ReferenceSource = ReferenceLocalSource | ReferenceGitSource
 
 export type WorktreeList = Array<WorktreeDirectory>
 
+export type SessionAgentOverride = {
+  model?: ModelRef
+  models?: Array<string>
+  excludedModels?: Array<string>
+  subagentModels?: Array<string>
+  subagentExcludedModels?: Array<string>
+  force?: boolean
+}
+
 export type SessionStatsModelUsage = { model: ModelRef; steps: number; tokens: TokenUsageInfo; cost: MoneyUSD }
 
 export type SessionMessageModelSelected = {
@@ -2306,6 +2315,12 @@ export type ReferenceInfo = {
   source: ReferenceSource
 }
 
+export type SessionSubagentPolicy = {
+  models?: Array<string>
+  excludedModels?: Array<string>
+  agentOverrides?: { [x: string]: SessionAgentOverride }
+}
+
 export type SessionStatsInfo = {
   range: { from: number; to: number }
   sessions: number
@@ -2382,6 +2397,11 @@ export type AgentInfo = {
   id: AgentID
   name: string
   model?: ModelRef
+  models?: Array<string>
+  excludedModels?: Array<string>
+  subagentModels?: Array<string>
+  subagentExcludedModels?: Array<string>
+  maxDepth?: number
   request: ProviderRequest
   system?: string
   description?: string
@@ -2390,48 +2410,6 @@ export type AgentInfo = {
   color?: AgentColor
   steps?: number
   permissions: PermissionRuleset
-}
-
-export type SessionInfo = {
-  id: SessionID
-  parentID?: SessionID
-  fork?: { sessionID: SessionID; boundary: SessionForkBoundary }
-  projectID: ProjectID
-  agent?: AgentID
-  model?: ModelRef
-  cost: MoneyUSD
-  tokens: TokenUsageInfo
-  outcome?: "succeeded" | "failed" | "interrupted"
-  time: { created: number; updated: number; idle?: number; viewed?: number; archived?: number }
-  title?: string
-  subpath?: RelativePath
-  metadata?: SessionMetadata
-  permissions?: PermissionRuleset
-  revert?: SessionRevert
-  location: LocationPublicRef
-}
-
-export type SessionCreated = {
-  id: EventID
-  created: number
-  metadata?: { [x: string]: any }
-  type: "session.created"
-  durable: { aggregateID: string; seq: EventSeq; version: 1 }
-  location?: LocationRef
-  data: {
-    sessionID: SessionID
-    projectID: ProjectID
-    location: LocationRef
-    subpath?: RelativePath
-    parentID?: SessionID
-    slug: string
-    title?: string
-    agent?: AgentID
-    model?: ModelRef
-    metadata?: SessionMetadata
-    permissions?: PermissionRuleset
-    version: string
-  }
 }
 
 export type SessionPermissions = {
@@ -2466,6 +2444,11 @@ export type ConfigEntry =
         agents?: {
           [x: string]: {
             model?: string | { providerID: string; model: string; variant?: string }
+            models?: Array<string>
+            excluded_models?: Array<string>
+            subagent_models?: Array<string>
+            subagent_excluded_models?: Array<string>
+            max_depth?: number
             request?: { headers?: { [x: string]: string }; body?: { [x: string]: JsonValue } }
             system?: string
             description?: string
@@ -2764,15 +2747,64 @@ export type MessagingChain = { chain: Array<MessagingSessionNode>; root: string;
 
 export type MessagingSessionList = { sessions: Array<MessagingSessionNode>; total: number }
 
+export type SessionInfo = {
+  id: SessionID
+  parentID?: SessionID
+  fork?: { sessionID: SessionID; boundary: SessionForkBoundary }
+  projectID: ProjectID
+  agent?: AgentID
+  model?: ModelRef
+  cost: MoneyUSD
+  tokens: TokenUsageInfo
+  outcome?: "succeeded" | "failed" | "interrupted"
+  time: { created: number; updated: number; idle?: number; viewed?: number; archived?: number }
+  title?: string
+  subpath?: RelativePath
+  metadata?: SessionMetadata
+  subagentPolicy?: SessionSubagentPolicy
+  permissions?: PermissionRuleset
+  revert?: SessionRevert
+  location: LocationPublicRef
+}
+
+export type SessionCreated = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "session.created"
+  durable: { aggregateID: string; seq: EventSeq; version: 1 }
+  location?: LocationRef
+  data: {
+    sessionID: SessionID
+    projectID: ProjectID
+    location: LocationRef
+    subpath?: RelativePath
+    parentID?: SessionID
+    slug: string
+    title?: string
+    agent?: AgentID
+    model?: ModelRef
+    metadata?: SessionMetadata
+    subagentPolicy?: SessionSubagentPolicy
+    permissions?: PermissionRuleset
+    version: string
+  }
+}
+
+export type SessionSubagentPolicyUpdated = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "session.subagent-policy.updated"
+  durable: { aggregateID: string; seq: EventSeq; version: 1 }
+  location?: LocationRef
+  data: { sessionID: SessionID; subagentPolicy: SessionSubagentPolicy }
+}
+
 export type SessionMessageCompaction =
   | SessionMessageCompactionRunning
   | SessionMessageCompactionCompleted
   | SessionMessageCompactionFailed
-
-export type SessionsResponse = {
-  data: Array<SessionInfo>
-  cursor: { previous?: SessionsCursor | null; next?: SessionsCursor | null }
-}
 
 export type SessionInboxInfo = SessionInboxUser | SessionInboxSynthetic | SessionInboxCompaction | SessionInboxMove
 
@@ -2836,6 +2868,11 @@ export type CredentialEntry = {
 
 export type FormInfo1 = { id: FormID; sessionID: string; title: string; metadata?: FormMetadata1; fields: FormFields2 }
 
+export type SessionsResponse = {
+  data: Array<SessionInfo>
+  cursor: { previous?: SessionsCursor | null; next?: SessionsCursor | null }
+}
+
 export type SessionMessageInfo =
   | SessionMessageAgentSelected
   | SessionMessageModelSelected
@@ -2890,6 +2927,7 @@ export type SessionEventDurable =
   | SessionRenamed
   | SessionMetadataUpdated
   | SessionPermissions
+  | SessionSubagentPolicyUpdated
   | SessionViewed
   | SessionDeleted
   | SessionForked
@@ -2953,6 +2991,7 @@ export type V2Event =
   | SessionRenamed
   | SessionMetadataUpdated
   | SessionPermissions
+  | SessionSubagentPolicyUpdated
   | SessionViewed
   | SessionUsageUpdated
   | SessionDeleted
@@ -3475,6 +3514,20 @@ export type SessionCreateInput = {
       readonly resource: string
       readonly effect: "allow" | "deny" | "ask"
     }> | null
+    readonly subagentPolicy?: {
+      readonly models?: ReadonlyArray<string>
+      readonly excludedModels?: ReadonlyArray<string>
+      readonly agentOverrides?: {
+        readonly [x: string]: {
+          readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+          readonly models?: ReadonlyArray<string>
+          readonly excludedModels?: ReadonlyArray<string>
+          readonly subagentModels?: ReadonlyArray<string>
+          readonly subagentExcludedModels?: ReadonlyArray<string>
+          readonly force?: boolean
+        }
+      }
+    } | null
   }["id"]
   readonly parentID?: {
     readonly id?: string | null
@@ -3489,6 +3542,20 @@ export type SessionCreateInput = {
       readonly resource: string
       readonly effect: "allow" | "deny" | "ask"
     }> | null
+    readonly subagentPolicy?: {
+      readonly models?: ReadonlyArray<string>
+      readonly excludedModels?: ReadonlyArray<string>
+      readonly agentOverrides?: {
+        readonly [x: string]: {
+          readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+          readonly models?: ReadonlyArray<string>
+          readonly excludedModels?: ReadonlyArray<string>
+          readonly subagentModels?: ReadonlyArray<string>
+          readonly subagentExcludedModels?: ReadonlyArray<string>
+          readonly force?: boolean
+        }
+      }
+    } | null
   }["parentID"]
   readonly title?: {
     readonly id?: string | null
@@ -3503,6 +3570,20 @@ export type SessionCreateInput = {
       readonly resource: string
       readonly effect: "allow" | "deny" | "ask"
     }> | null
+    readonly subagentPolicy?: {
+      readonly models?: ReadonlyArray<string>
+      readonly excludedModels?: ReadonlyArray<string>
+      readonly agentOverrides?: {
+        readonly [x: string]: {
+          readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+          readonly models?: ReadonlyArray<string>
+          readonly excludedModels?: ReadonlyArray<string>
+          readonly subagentModels?: ReadonlyArray<string>
+          readonly subagentExcludedModels?: ReadonlyArray<string>
+          readonly force?: boolean
+        }
+      }
+    } | null
   }["title"]
   readonly agent?: {
     readonly id?: string | null
@@ -3517,6 +3598,20 @@ export type SessionCreateInput = {
       readonly resource: string
       readonly effect: "allow" | "deny" | "ask"
     }> | null
+    readonly subagentPolicy?: {
+      readonly models?: ReadonlyArray<string>
+      readonly excludedModels?: ReadonlyArray<string>
+      readonly agentOverrides?: {
+        readonly [x: string]: {
+          readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+          readonly models?: ReadonlyArray<string>
+          readonly excludedModels?: ReadonlyArray<string>
+          readonly subagentModels?: ReadonlyArray<string>
+          readonly subagentExcludedModels?: ReadonlyArray<string>
+          readonly force?: boolean
+        }
+      }
+    } | null
   }["agent"]
   readonly model?: {
     readonly id?: string | null
@@ -3531,6 +3626,20 @@ export type SessionCreateInput = {
       readonly resource: string
       readonly effect: "allow" | "deny" | "ask"
     }> | null
+    readonly subagentPolicy?: {
+      readonly models?: ReadonlyArray<string>
+      readonly excludedModels?: ReadonlyArray<string>
+      readonly agentOverrides?: {
+        readonly [x: string]: {
+          readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+          readonly models?: ReadonlyArray<string>
+          readonly excludedModels?: ReadonlyArray<string>
+          readonly subagentModels?: ReadonlyArray<string>
+          readonly subagentExcludedModels?: ReadonlyArray<string>
+          readonly force?: boolean
+        }
+      }
+    } | null
   }["model"]
   readonly location?: {
     readonly id?: string | null
@@ -3545,6 +3654,20 @@ export type SessionCreateInput = {
       readonly resource: string
       readonly effect: "allow" | "deny" | "ask"
     }> | null
+    readonly subagentPolicy?: {
+      readonly models?: ReadonlyArray<string>
+      readonly excludedModels?: ReadonlyArray<string>
+      readonly agentOverrides?: {
+        readonly [x: string]: {
+          readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+          readonly models?: ReadonlyArray<string>
+          readonly excludedModels?: ReadonlyArray<string>
+          readonly subagentModels?: ReadonlyArray<string>
+          readonly subagentExcludedModels?: ReadonlyArray<string>
+          readonly force?: boolean
+        }
+      }
+    } | null
   }["location"]
   readonly metadata?: {
     readonly id?: string | null
@@ -3559,6 +3682,20 @@ export type SessionCreateInput = {
       readonly resource: string
       readonly effect: "allow" | "deny" | "ask"
     }> | null
+    readonly subagentPolicy?: {
+      readonly models?: ReadonlyArray<string>
+      readonly excludedModels?: ReadonlyArray<string>
+      readonly agentOverrides?: {
+        readonly [x: string]: {
+          readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+          readonly models?: ReadonlyArray<string>
+          readonly excludedModels?: ReadonlyArray<string>
+          readonly subagentModels?: ReadonlyArray<string>
+          readonly subagentExcludedModels?: ReadonlyArray<string>
+          readonly force?: boolean
+        }
+      }
+    } | null
   }["metadata"]
   readonly permissions?: {
     readonly id?: string | null
@@ -3573,7 +3710,49 @@ export type SessionCreateInput = {
       readonly resource: string
       readonly effect: "allow" | "deny" | "ask"
     }> | null
+    readonly subagentPolicy?: {
+      readonly models?: ReadonlyArray<string>
+      readonly excludedModels?: ReadonlyArray<string>
+      readonly agentOverrides?: {
+        readonly [x: string]: {
+          readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+          readonly models?: ReadonlyArray<string>
+          readonly excludedModels?: ReadonlyArray<string>
+          readonly subagentModels?: ReadonlyArray<string>
+          readonly subagentExcludedModels?: ReadonlyArray<string>
+          readonly force?: boolean
+        }
+      }
+    } | null
   }["permissions"]
+  readonly subagentPolicy?: {
+    readonly id?: string | null
+    readonly parentID?: string | null
+    readonly title?: string | null
+    readonly agent?: string | null
+    readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string } | null
+    readonly location?: { readonly directory: string } | null
+    readonly metadata?: { readonly [x: string]: JsonValue } | null
+    readonly permissions?: ReadonlyArray<{
+      readonly action: string
+      readonly resource: string
+      readonly effect: "allow" | "deny" | "ask"
+    }> | null
+    readonly subagentPolicy?: {
+      readonly models?: ReadonlyArray<string>
+      readonly excludedModels?: ReadonlyArray<string>
+      readonly agentOverrides?: {
+        readonly [x: string]: {
+          readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+          readonly models?: ReadonlyArray<string>
+          readonly excludedModels?: ReadonlyArray<string>
+          readonly subagentModels?: ReadonlyArray<string>
+          readonly subagentExcludedModels?: ReadonlyArray<string>
+          readonly force?: boolean
+        }
+      }
+    } | null
+  }["subagentPolicy"]
 }
 
 export type SessionCreateOutput = { data: SessionInfo }["data"]
@@ -3610,6 +3789,20 @@ export type SessionImportInput = {
       readonly title?: string
       readonly subpath?: string
       readonly metadata?: { readonly [x: string]: JsonValue }
+      readonly subagentPolicy?: {
+        readonly models?: ReadonlyArray<string>
+        readonly excludedModels?: ReadonlyArray<string>
+        readonly agentOverrides?: {
+          readonly [x: string]: {
+            readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+            readonly models?: ReadonlyArray<string>
+            readonly excludedModels?: ReadonlyArray<string>
+            readonly subagentModels?: ReadonlyArray<string>
+            readonly subagentExcludedModels?: ReadonlyArray<string>
+            readonly force?: boolean
+          }
+        }
+      }
       readonly permissions?: ReadonlyArray<{
         readonly action: string
         readonly resource: string
@@ -3953,6 +4146,20 @@ export type SessionImportInput = {
       readonly title?: string
       readonly subpath?: string
       readonly metadata?: { readonly [x: string]: JsonValue }
+      readonly subagentPolicy?: {
+        readonly models?: ReadonlyArray<string>
+        readonly excludedModels?: ReadonlyArray<string>
+        readonly agentOverrides?: {
+          readonly [x: string]: {
+            readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+            readonly models?: ReadonlyArray<string>
+            readonly excludedModels?: ReadonlyArray<string>
+            readonly subagentModels?: ReadonlyArray<string>
+            readonly subagentExcludedModels?: ReadonlyArray<string>
+            readonly force?: boolean
+          }
+        }
+      }
       readonly permissions?: ReadonlyArray<{
         readonly action: string
         readonly resource: string
@@ -4296,6 +4503,20 @@ export type SessionImportInput = {
       readonly title?: string
       readonly subpath?: string
       readonly metadata?: { readonly [x: string]: JsonValue }
+      readonly subagentPolicy?: {
+        readonly models?: ReadonlyArray<string>
+        readonly excludedModels?: ReadonlyArray<string>
+        readonly agentOverrides?: {
+          readonly [x: string]: {
+            readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+            readonly models?: ReadonlyArray<string>
+            readonly excludedModels?: ReadonlyArray<string>
+            readonly subagentModels?: ReadonlyArray<string>
+            readonly subagentExcludedModels?: ReadonlyArray<string>
+            readonly force?: boolean
+          }
+        }
+      }
       readonly permissions?: ReadonlyArray<{
         readonly action: string
         readonly resource: string
@@ -4655,26 +4876,97 @@ export type SessionSwitchModelOutput = void
 export type SessionUpdateInput = {
   readonly sessionID: { readonly sessionID: string }["sessionID"]
   readonly title?: {
-    readonly title?: string | undefined
-    readonly metadata?: { readonly [x: string]: JsonValue } | undefined
-    readonly permissions?:
-      | ReadonlyArray<{ readonly action: string; readonly resource: string; readonly effect: "allow" | "deny" | "ask" }>
-      | undefined
+    readonly title?: string | null
+    readonly metadata?: { readonly [x: string]: JsonValue } | null
+    readonly permissions?: ReadonlyArray<{
+      readonly action: string
+      readonly resource: string
+      readonly effect: "allow" | "deny" | "ask"
+    }> | null
+    readonly subagentPolicy?: {
+      readonly models?: ReadonlyArray<string>
+      readonly excludedModels?: ReadonlyArray<string>
+      readonly agentOverrides?: {
+        readonly [x: string]: {
+          readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+          readonly models?: ReadonlyArray<string>
+          readonly excludedModels?: ReadonlyArray<string>
+          readonly subagentModels?: ReadonlyArray<string>
+          readonly subagentExcludedModels?: ReadonlyArray<string>
+          readonly force?: boolean
+        }
+      }
+    } | null
   }["title"]
   readonly metadata?: {
-    readonly title?: string | undefined
-    readonly metadata?: { readonly [x: string]: JsonValue } | undefined
-    readonly permissions?:
-      | ReadonlyArray<{ readonly action: string; readonly resource: string; readonly effect: "allow" | "deny" | "ask" }>
-      | undefined
+    readonly title?: string | null
+    readonly metadata?: { readonly [x: string]: JsonValue } | null
+    readonly permissions?: ReadonlyArray<{
+      readonly action: string
+      readonly resource: string
+      readonly effect: "allow" | "deny" | "ask"
+    }> | null
+    readonly subagentPolicy?: {
+      readonly models?: ReadonlyArray<string>
+      readonly excludedModels?: ReadonlyArray<string>
+      readonly agentOverrides?: {
+        readonly [x: string]: {
+          readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+          readonly models?: ReadonlyArray<string>
+          readonly excludedModels?: ReadonlyArray<string>
+          readonly subagentModels?: ReadonlyArray<string>
+          readonly subagentExcludedModels?: ReadonlyArray<string>
+          readonly force?: boolean
+        }
+      }
+    } | null
   }["metadata"]
   readonly permissions?: {
-    readonly title?: string | undefined
-    readonly metadata?: { readonly [x: string]: JsonValue } | undefined
-    readonly permissions?:
-      | ReadonlyArray<{ readonly action: string; readonly resource: string; readonly effect: "allow" | "deny" | "ask" }>
-      | undefined
+    readonly title?: string | null
+    readonly metadata?: { readonly [x: string]: JsonValue } | null
+    readonly permissions?: ReadonlyArray<{
+      readonly action: string
+      readonly resource: string
+      readonly effect: "allow" | "deny" | "ask"
+    }> | null
+    readonly subagentPolicy?: {
+      readonly models?: ReadonlyArray<string>
+      readonly excludedModels?: ReadonlyArray<string>
+      readonly agentOverrides?: {
+        readonly [x: string]: {
+          readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+          readonly models?: ReadonlyArray<string>
+          readonly excludedModels?: ReadonlyArray<string>
+          readonly subagentModels?: ReadonlyArray<string>
+          readonly subagentExcludedModels?: ReadonlyArray<string>
+          readonly force?: boolean
+        }
+      }
+    } | null
   }["permissions"]
+  readonly subagentPolicy?: {
+    readonly title?: string | null
+    readonly metadata?: { readonly [x: string]: JsonValue } | null
+    readonly permissions?: ReadonlyArray<{
+      readonly action: string
+      readonly resource: string
+      readonly effect: "allow" | "deny" | "ask"
+    }> | null
+    readonly subagentPolicy?: {
+      readonly models?: ReadonlyArray<string>
+      readonly excludedModels?: ReadonlyArray<string>
+      readonly agentOverrides?: {
+        readonly [x: string]: {
+          readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string }
+          readonly models?: ReadonlyArray<string>
+          readonly excludedModels?: ReadonlyArray<string>
+          readonly subagentModels?: ReadonlyArray<string>
+          readonly subagentExcludedModels?: ReadonlyArray<string>
+          readonly force?: boolean
+        }
+      }
+    } | null
+  }["subagentPolicy"]
 }
 
 export type SessionUpdateOutput = void

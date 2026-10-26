@@ -447,6 +447,7 @@ const EndpointSessionCreate = (raw: RawClient["server.session"]) => (input?: Ses
         location: input?.["location"],
         metadata: input?.["metadata"],
         permissions: input?.["permissions"],
+        subagentPolicy: input?.["subagentPolicy"],
       },
     }).pipe(
       Effect.mapError(mapClientError),
@@ -519,7 +520,12 @@ const EndpointSessionUpdate = (raw: RawClient["server.session"]) => (input: Sess
   preserveEffect<SessionUpdateOutput>()(
     raw["session.update"]({
       params: { sessionID: input["sessionID"] },
-      payload: { title: input["title"], metadata: input["metadata"], permissions: input["permissions"] },
+      payload: {
+        title: input["title"],
+        metadata: input["metadata"],
+        permissions: input["permissions"],
+        subagentPolicy: input["subagentPolicy"],
+      },
     }).pipe(Effect.mapError(mapClientError)),
   )
 

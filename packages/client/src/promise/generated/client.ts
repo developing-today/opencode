@@ -630,6 +630,7 @@ export function make(options: ClientOptions) {
               location: input?.["location"],
               metadata: input?.["metadata"],
               permissions: input?.["permissions"],
+              subagentPolicy: input?.["subagentPolicy"],
             },
             successStatus: 200,
             declaredStatuses: [400, 401, 404],
@@ -735,7 +736,12 @@ export function make(options: ClientOptions) {
           {
             method: "PATCH",
             path: `/api/session/${encodeURIComponent(input.sessionID)}`,
-            body: { title: input["title"], metadata: input["metadata"], permissions: input["permissions"] },
+            body: {
+              title: input["title"],
+              metadata: input["metadata"],
+              permissions: input["permissions"],
+              subagentPolicy: input["subagentPolicy"],
+            },
             successStatus: 204,
             declaredStatuses: [400, 401, 404],
             empty: true,

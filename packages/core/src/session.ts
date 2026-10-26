@@ -1,7 +1,7 @@
 export * as Session from "./session.js"
 export * from "./session/schema.js"
 
-import { Effect, Layer, Schema, Context, Stream } from "effect"
+import { Effect, Layer, Schema, Context, Option, Stream } from "effect"
 import { LLMClient } from "@opencode/ai"
 import { ListAnchor } from "@opencode/schema/session"
 import { and, desc, eq } from "drizzle-orm"
@@ -56,6 +56,9 @@ import { SessionModelTransport } from "./session/model-transport.js"
 import { llmClient } from "./effect/app-node-platform.js"
 import { Snapshot } from "./snapshot.js"
 import { Session } from "./session/session.js"
+import { ModelGovernance } from "./session/model-governance.js"
+import { Config } from "./config.js"
+import type { Entry } from "@opencode/schema/config"
 import { SessionDiff, TurnRangeError } from "./session/diff.js"
 import { LocationServiceMap } from "./location-service-map.js"
 import { FSUtil } from "@opencode/util/fs-util"
@@ -89,6 +92,9 @@ type CreateBaseInput = {
   model?: Model.Ref
   metadata?: SessionSchema.Metadata
   permissions?: Permission.Ruleset
+  subagentPolicy?: SessionSchema.SubagentPolicy
+  /** Per-call governance override from the launching tool; see ModelGovernance. */
+  subagentOverride?: SessionSchema.AgentOverride
 }
 type CreateInput = CreateBaseInput &
   ({ location: Location.Ref; parentID?: never } | { parentID: SessionSchema.ID; location?: never })
@@ -121,10 +127,13 @@ export interface Interface {
   readonly list: (input?: ListInput) => Effect.Effect<{
     readonly data: SessionSchema.Info[]
   }>
-  readonly create: (input: CreateInput) => Effect.Effect<SessionSchema.Info, NotFoundError>
+  readonly create: (input: CreateInput) => Effect.Effect<SessionSchema.Info, NotFoundError | ModelGovernance.DeniedError>
   readonly fork: (
     input: ForkInput,
-  ) => Effect.Effect<SessionSchema.Info, NotFoundError | MessageNotFoundError | ForkEmptyError>
+  ) => Effect.Effect<
+    SessionSchema.Info,
+    NotFoundError | MessageNotFoundError | ForkEmptyError | ModelGovernance.DeniedError
+  >
   readonly get: (sessionID: SessionSchema.ID) => Effect.Effect<SessionSchema.Info, NotFoundError>
   readonly environment: (input: {
     readonly sessionID: SessionSchema.ID
@@ -173,8 +182,15 @@ export interface Interface {
     after?: number
     follow?: boolean
   }) => Stream.Stream<SessionEvent.DurableEvent | EventLog.Synced, NotFoundError>
-  readonly switchAgent: (input: { sessionID: SessionSchema.ID; agent: Agent.ID }) => Effect.Effect<void, NotFoundError>
-  readonly switchModel: (input: { sessionID: SessionSchema.ID; model: Model.Ref }) => Effect.Effect<void, NotFoundError>
+  readonly switchAgent: (input: {
+    sessionID: SessionSchema.ID
+    agent: Agent.ID
+    model?: Model.Ref
+  }) => Effect.Effect<void, NotFoundError | ModelGovernance.DeniedError>
+  readonly switchModel: (input: {
+    sessionID: SessionSchema.ID
+    model: Model.Ref
+  }) => Effect.Effect<void, NotFoundError | ModelGovernance.DeniedError>
   readonly rename: (input: { sessionID: SessionSchema.ID; title: string }) => Effect.Effect<void, NotFoundError>
   readonly setMetadata: (input: {
     sessionID: SessionSchema.ID
@@ -183,6 +199,10 @@ export interface Interface {
   readonly setPermissions: (input: {
     sessionID: SessionSchema.ID
     permissions: Permission.Ruleset
+  }) => Effect.Effect<void, NotFoundError>
+  readonly setSubagentPolicy: (input: {
+    sessionID: SessionSchema.ID
+    subagentPolicy: SessionSchema.SubagentPolicy
   }) => Effect.Effect<void, NotFoundError>
   readonly move: SessionMove.Interface["move"]
   readonly prompt: (
@@ -259,6 +279,36 @@ const layer = Layer.effect(
     const locations = yield* LocationServiceMap.Service
     const sessions = yield* Session.make()
     const isDurableSessionEvent = Schema.is(SessionEvent.Durable)
+    // Governance reads agent definitions from the location's config entries,
+    // but only when the location's services are already initialized: session
+    // operations never initialize a location just to read them. An
+    // uninitialized location has no definition layer; session policies,
+    // which are read from the session store, still apply.
+    const governanceEntries = (location: Location.Ref) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const context = yield* locations.contextEffectOption(location)
+          if (Option.isNone(context)) return [] as Entry[]
+          const config = Context.getOption(context.value, Config.Service)
+          return config._tag === "Some" ? yield* config.value.entries() : ([] as Entry[])
+        }),
+      ).pipe(Effect.orElseSucceed(() => [] as Entry[]))
+    const assertModelAllowed = (input: {
+      location: Location.Ref
+      parent: SessionSchema.Info
+      agent?: Agent.ID
+      model?: Model.Ref
+      override?: SessionSchema.AgentOverride
+    }) =>
+      governanceEntries(input.location).pipe(
+        Effect.flatMap((entries) =>
+          ModelGovernance.assertAllowed(
+            { get: (sessionID) => result.get(sessionID) },
+            { entries: () => Effect.succeed(entries) },
+            { parent: input.parent, agent: input.agent, model: input.model, override: input.override },
+          ),
+        ),
+      )
 
     const result = Service.of({
       create: Effect.fn("Session.create")(function* (input) {
@@ -271,6 +321,16 @@ const layer = Layer.effect(
         if (location === undefined)
           return yield* Effect.die(new Error("Session.create requires either location or an existing parentID"))
         const project = yield* projects.resolve(location.directory)
+        // Governance is enforced before anything is created: a denied child
+        // fails here and no `session.created` is ever published for it.
+        if (parent !== undefined)
+          yield* assertModelAllowed({
+            location,
+            parent,
+            agent: input.agent,
+            model: input.model,
+            override: input.subagentOverride,
+          })
         const projected = yield* bus
           .publish(
             SessionEvent.Created,
@@ -287,6 +347,7 @@ const layer = Layer.effect(
               // Children inherit metadata and permissions the way they inherit
               // location, so host policies that read them treat the family uniformly.
               metadata: input.metadata ?? parent?.metadata,
+              subagentPolicy: input.subagentPolicy,
               permissions: input.permissions ?? parent?.permissions,
               model: input.model
                 ? {
@@ -327,6 +388,9 @@ const layer = Layer.effect(
       }),
       fork: Effect.fn("Session.fork")(function* (input) {
         const parent = yield* result.get(input.sessionID)
+        // A fork is a child of its source: the copied model must pass the
+        // source's subtree governance before anything is published.
+        yield* assertModelAllowed({ location: parent.location, parent, agent: parent.agent, model: parent.model })
         const boundary = yield* db
           .select({ id: SessionMessageTable.id })
           .from(SessionMessageTable)
@@ -445,6 +509,7 @@ const layer = Layer.effect(
       rename: (input) => sessions.forSession(input.sessionID).rename(input),
       setMetadata: (input) => sessions.forSession(input.sessionID).setMetadata(input),
       setPermissions: (input) => sessions.forSession(input.sessionID).setPermissions(input),
+      setSubagentPolicy: (input) => sessions.forSession(input.sessionID).setSubagentPolicy(input),
       move: moves.move,
       compact: (input) => sessions.forSession(input.sessionID).compact(input),
       wait: (sessionID) => sessions.forSession(sessionID).wait(),

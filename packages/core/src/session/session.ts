@@ -1,14 +1,17 @@
 export * as Session from "./session.js"
 
-import { DateTime, Effect, Fiber, Option, Scope } from "effect"
+import { Context, DateTime, Effect, Fiber, Option, Scope } from "effect"
+import type { Entry } from "@opencode/schema/config"
 import type { Agent } from "@opencode/schema/agent"
 import type { Model } from "@opencode/schema/model"
 import type { Permission } from "@opencode/schema/permission"
 import { Event } from "@opencode/schema/event"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Bus } from "../bus.js"
+import { Config } from "../config.js"
 import { Database } from "../database/database.js"
 import { Instance } from "../instance/service.js"
+import { LocationServiceMap } from "../location-service-map.js"
 import { MessagingVars } from "../messaging/vars.js"
 import { ShellResult } from "../shell/result.js"
 import type { Skill } from "../skill.js"
@@ -28,6 +31,7 @@ import { SessionPrompt } from "./prompt.js"
 import { SessionRevert } from "./revert.js"
 import { SessionShell } from "./shell.js"
 import { SessionSkill } from "./skill.js"
+import { ModelGovernance } from "./model-governance.js"
 import { SessionSchema } from "./schema.js"
 import { SessionStore } from "./store.js"
 
@@ -45,6 +49,9 @@ export const make = Effect.fn("Session.make")(function* () {
   const database = yield* Database.Service
   const store = yield* SessionStore.Service
   const instances = yield* Instance.Service
+  // Optional: hosts that carry the location service map let governance peek
+  // at already-initialized location services for agent definitions.
+  const locations = Option.getOrUndefined(yield* Effect.serviceOption(LocationServiceMap.Service))
   const execution = yield* SessionExecution.Service
   const admission = yield* SessionInbox.Service
   const fs = yield* FSUtil.Service
@@ -90,11 +97,48 @@ export const make = Effect.fn("Session.make")(function* () {
     yield* get(sessionID)
     yield* bus.publish(SessionEvent.Permissions, { sessionID, permissions: input.permissions })
   })
+  const setSubagentPolicy = Effect.fn("Session.setSubagentPolicy")(function* (
+    sessionID: SessionSchema.ID,
+    input: { subagentPolicy: SessionSchema.SubagentPolicy },
+  ) {
+    yield* get(sessionID)
+    yield* bus.publish(SessionEvent.SubagentPolicyUpdated, { sessionID, subagentPolicy: input.subagentPolicy })
+  })
+  // Governance reads agent definitions from the session location's config
+  // entries, but only when the location's services are already initialized:
+  // session operations never initialize a location just to read them. An
+  // uninitialized location has no definition layer; session policies still
+  // apply.
+  const governanceEntries = (session: SessionSchema.Info) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if (locations === undefined) return [] as Entry[]
+        const context = yield* locations.contextEffectOption(session.location)
+        if (Option.isNone(context)) return [] as Entry[]
+        const config = Context.getOption(context.value, Config.Service)
+        return config._tag === "Some" ? yield* config.value.entries() : ([] as Entry[])
+      }),
+    ).pipe(Effect.orElseSucceed(() => [] as Entry[]))
   const switchAgent = Effect.fn("Session.switchAgent")(function* (
     sessionID: SessionSchema.ID,
-    input: { agent: Agent.ID },
+    input: { agent: Agent.ID; model?: Model.Ref },
   ) {
     const session = yield* get(sessionID)
+    // A child session may only switch to an agent under which the model it
+    // will run is allowed; top-level sessions are unchecked. The model it
+    // will run is the caller-supplied upcoming model when one accompanies
+    // the switch, else its current model — assertAllowed falls back to the
+    // incoming agent's configured default, then the parent's model, when
+    // neither exists.
+    if (session.parentID) {
+      const parent = yield* get(session.parentID)
+      const entries = yield* governanceEntries(session)
+      yield* ModelGovernance.assertAllowed({ get }, { entries: () => Effect.succeed(entries) }, {
+        parent,
+        agent: input.agent,
+        model: input.model ?? session.model,
+      })
+    }
     yield* bus.publish(SessionEvent.AgentSelected, { sessionID, agent: input.agent, previous: session.agent })
   })
   const switchModel = Effect.fn("Session.switchModel")(function* (
@@ -108,6 +152,17 @@ export const make = Effect.fn("Session.make")(function* () {
       (session.model.variant ?? "default") === (input.model.variant ?? "default")
     )
       return
+    // A child session may only switch to a model its subtree's governance
+    // allows; top-level sessions are unchecked.
+    if (session.parentID) {
+      const parent = yield* get(session.parentID)
+      const entries = yield* governanceEntries(session)
+      yield* ModelGovernance.assertAllowed({ get }, { entries: () => Effect.succeed(entries) }, {
+        parent,
+        agent: session.agent,
+        model: input.model,
+      })
+    }
     yield* bus.publish(SessionEvent.ModelSelected, { sessionID, model: input.model, previous: session.model })
   })
   const mutatePending = (
@@ -356,6 +411,7 @@ export const make = Effect.fn("Session.make")(function* () {
     rename,
     setMetadata,
     setPermissions,
+    setSubagentPolicy,
     switchAgent,
     switchModel,
     inbox,
@@ -380,6 +436,7 @@ export const make = Effect.fn("Session.make")(function* () {
     const rename = operations.rename.bind(undefined, sessionID)
     const setMetadata = operations.setMetadata.bind(undefined, sessionID)
     const setPermissions = operations.setPermissions.bind(undefined, sessionID)
+    const setSubagentPolicy = operations.setSubagentPolicy.bind(undefined, sessionID)
     const switchAgent = operations.switchAgent.bind(undefined, sessionID)
     const switchModel = operations.switchModel.bind(undefined, sessionID)
     const inbox = operations.inbox.bind(undefined, sessionID)
@@ -407,6 +464,7 @@ export const make = Effect.fn("Session.make")(function* () {
       rename,
       setMetadata,
       setPermissions,
+      setSubagentPolicy,
       switchAgent,
       switchModel,
       inbox,

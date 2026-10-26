@@ -1,8 +1,8 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "c9735d25-ef18-4dc1-ae6d-00504c68d035",
-  "prevIds": ["101fea98-ccfb-45ab-9741-da703119fce2"],
+  "id": "3b8437ee-1a59-400d-9a69-ad74f9d1e8f5",
+  "prevIds": ["c9735d25-ef18-4dc1-ae6d-00504c68d035"],
   "ddl": [
     {
       "name": "account_state",
@@ -2381,6 +2381,16 @@
       "default": null,
       "generated": null,
       "name": "metadata",
+      "entityType": "columns",
+      "table": "session_v2"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "subagent_policy",
       "entityType": "columns",
       "table": "session_v2"
     },

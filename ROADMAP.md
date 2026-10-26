@@ -75,6 +75,16 @@ No open items. The daily Jules sync issue (#41) closed as transient on 2026-10-2
 
 | Title                                                            | Date       | Result   |
 | ---------------------------------------------------------------- | ---------- | -------- |
+| ROADMAP Done records the #495 completion                       | 2026-10-26 | #496     |
+| Model.Selector rejects unmatchable selector segments           | 2026-10-26 | #490     |
+| ROADMAP Done records the #491 completion                         | 2026-10-26 | #492     |
+| Session.AgentOverride subagent lists are enforced                | 2026-10-25 | #487     |
+| switchAgent runs the governance check for child sessions         | 2026-10-25 | #486     |
+| ROADMAP Done records the #481 completion                         | 2026-10-25 | #485     |
+| Generated client regenerated for subsession governance schemas   | 2026-10-25 | #484     |
+| Calendar-invalid release dates are ignored                       | 2026-10-25 | #482     |
+| Instruction.Key requires segment form                            | 2026-10-25 | #474     |
+| Subsession model governance                                      | 2026-10-25 | #468     |
 | ROADMAP Done records the #465/#467 completion                    | 2026-10-25 | #473     |
 | ConfigModel.Selection: slash variants in, empty segments out | 2026-10-25 | #466     |
 | ROADMAP Done records the #434 completion                         | 2026-10-25 | #464     |
