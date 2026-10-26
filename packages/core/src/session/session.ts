@@ -1,6 +1,7 @@
 export * as Session from "./session.js"
 
-import { DateTime, Effect, Fiber, Option, Scope } from "effect"
+import { Context, DateTime, Effect, Fiber, Option, Scope } from "effect"
+import type { Entry } from "@opencode/schema/config"
 import type { Agent } from "@opencode/schema/agent"
 import type { Model } from "@opencode/schema/model"
 import type { Permission } from "@opencode/schema/permission"
@@ -10,6 +11,7 @@ import { Bus } from "../bus.js"
 import { Config } from "../config.js"
 import { Database } from "../database/database.js"
 import { Instance } from "../instance/service.js"
+import { LocationServiceMap } from "../location-service-map.js"
 import { MessagingVars } from "../messaging/vars.js"
 import { ShellResult } from "../shell/result.js"
 import type { Skill } from "../skill.js"
@@ -47,6 +49,9 @@ export const make = Effect.fn("Session.make")(function* () {
   const database = yield* Database.Service
   const store = yield* SessionStore.Service
   const instances = yield* Instance.Service
+  // Optional: hosts that carry the location service map let governance peek
+  // at already-initialized location services for agent definitions.
+  const locations = Option.getOrUndefined(yield* Effect.serviceOption(LocationServiceMap.Service))
   const execution = yield* SessionExecution.Service
   const admission = yield* SessionInbox.Service
   const fs = yield* FSUtil.Service
@@ -100,13 +105,20 @@ export const make = Effect.fn("Session.make")(function* () {
     yield* bus.publish(SessionEvent.SubagentPolicyUpdated, { sessionID, subagentPolicy: input.subagentPolicy })
   })
   // Governance reads agent definitions from the session location's config
-  // entries. Locations whose services carry no Config (minimal test fixtures)
-  // simply have no definition layer; session policies still apply.
+  // entries, but only when the location's services are already initialized:
+  // session operations never initialize a location just to read them. An
+  // uninitialized location has no definition layer; session policies still
+  // apply.
   const governanceEntries = (session: SessionSchema.Info) =>
-    Effect.gen(function* () {
-      const config = yield* Effect.serviceOption(Config.Service)
-      return config._tag === "Some" ? yield* config.value.entries() : []
-    }).pipe(instances.provide(session), Effect.orElseSucceed(() => []))
+    Effect.scoped(
+      Effect.gen(function* () {
+        if (locations === undefined) return [] as Entry[]
+        const context = yield* locations.contextEffectOption(session.location)
+        if (Option.isNone(context)) return [] as Entry[]
+        const config = Context.getOption(context.value, Config.Service)
+        return config._tag === "Some" ? yield* config.value.entries() : ([] as Entry[])
+      }),
+    ).pipe(Effect.orElseSucceed(() => [] as Entry[]))
   const switchAgent = Effect.fn("Session.switchAgent")(function* (
     sessionID: SessionSchema.ID,
     input: { agent: Agent.ID },

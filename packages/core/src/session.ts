@@ -1,7 +1,7 @@
 export * as Session from "./session.js"
 export * from "./session/schema.js"
 
-import { Effect, Layer, Schema, Context, Stream } from "effect"
+import { Effect, Layer, Schema, Context, Option, Stream } from "effect"
 import { LLMClient } from "@opencode/ai"
 import { ListAnchor } from "@opencode/schema/session"
 import { and, desc, eq } from "drizzle-orm"
@@ -275,14 +275,20 @@ const layer = Layer.effect(
     const locations = yield* LocationServiceMap.Service
     const sessions = yield* Session.make()
     const isDurableSessionEvent = Schema.is(SessionEvent.Durable)
-    // Governance reads agent definitions from the location's config entries.
-    // Locations whose services carry no Config (minimal test fixtures) simply
-    // have no definition layer; session policies still apply.
+    // Governance reads agent definitions from the location's config entries,
+    // but only when the location's services are already initialized: session
+    // operations never initialize a location just to read them. An
+    // uninitialized location has no definition layer; session policies,
+    // which are read from the session store, still apply.
     const governanceEntries = (location: Location.Ref) =>
-      Effect.gen(function* () {
-        const config = yield* Effect.serviceOption(Config.Service)
-        return config._tag === "Some" ? yield* config.value.entries() : ([] as Entry[])
-      }).pipe(Effect.provide(locations.get(location)), Effect.orElseSucceed(() => [] as Entry[]))
+      Effect.scoped(
+        Effect.gen(function* () {
+          const context = yield* locations.contextEffectOption(location)
+          if (Option.isNone(context)) return [] as Entry[]
+          const config = Context.getOption(context.value, Config.Service)
+          return config._tag === "Some" ? yield* config.value.entries() : ([] as Entry[])
+        }),
+      ).pipe(Effect.orElseSucceed(() => [] as Entry[]))
     const assertModelAllowed = (input: {
       location: Location.Ref
       parent: SessionSchema.Info

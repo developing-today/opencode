@@ -251,6 +251,17 @@ the facade obtains them from the created session's Location services, the way
 other Location-scoped lookups are reached from the facade. The module itself
 stays pure over an injected getter and entries, so tests drive it directly.
 
+One refinement, settled during implementation review: the facade reads those
+entries only when the location's services are already initialized
+(`contextEffectOption` on the location service map). Session operations never
+initialize a location just to enforce governance — booting a location graph has
+its own side effects (plugin activation, catalog refresh), and the codebase
+already treats "operations on unloaded sessions do not initialize an instance"
+as an invariant. An uninitialized location therefore contributes no definition
+layer; the session-policy layer, which is read from the session store, is
+unaffected, and in practice a launching session's location is already live
+because the launcher is running there.
+
 ### 6.2 Fork
 
 `Session.fork` creates a child whose parent is the source session and whose model
