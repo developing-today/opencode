@@ -41,6 +41,19 @@ describe("route_usage without a history database", () => {
     ])
   })
 
+  test("narrows to a pool named in any case", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "route-usage-"))
+    const routes = new Map([["cheap-fast", pool]])
+    const named = await Effect.runPromise(
+      RouteUsageTool.collect({ route: "CHEAP-FAST" }, { routes }, { dataDir, now: () => NOW }),
+    )
+    expect(named.targets.map((target) => target.target)).toEqual(["openai/gpt-6-luna", "github-copilot/gpt-6-luna"])
+    const other = await Effect.runPromise(
+      RouteUsageTool.collect({ route: "other" }, { routes }, { dataDir, now: () => NOW }),
+    )
+    expect(other.targets).toEqual([])
+  })
+
   test("a damaged plan file is reported, and usage still comes back", async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "route-usage-"))
     fs.writeFileSync(path.join(dataDir, "plans.json"), "{")

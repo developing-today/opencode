@@ -376,7 +376,7 @@ export type ConfigModelRouteTarget =
   | {
       model: string | { providerID: string; model: string; variant?: string }
       defaultVariant?: string
-      variants?: { [x: string]: string }
+      variants?: { [x: string]: string | false }
       until?: number
     }
 
@@ -995,7 +995,14 @@ export type ConfigModelCapabilities = {
 export type ConfigModelRoutes = {
   [x: string]: {
     name?: string
-    targets: Array<ConfigModelRouteTarget>
+    targets?: Array<ConfigModelRouteTarget>
+    include?: Array<string>
+    exclude?: Array<string>
+    contains?: Array<string>
+    notContains?: Array<string>
+    match?: string
+    levels?: Array<string>
+    variantRules?: Array<{ match: string; map: { [x: string]: string | false } }>
     health?: {
       firstTokenTimeoutMs?: number | false
       maxResponseTimeMs?: number

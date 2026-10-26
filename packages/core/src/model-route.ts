@@ -26,7 +26,9 @@ const Policy = Schema.Struct({
 
 const TargetVariant = Schema.Struct({
   default: Model.VariantID.pipe(optional),
-  map: Schema.Record(Schema.String, Model.VariantID).pipe(optional),
+  /** Route-level variant → the variant this target runs it at, or `false` when the target sits that level
+   * out and is never used at it. */
+  map: Schema.Record(Schema.String, Schema.Union([Model.VariantID, Schema.Literal(false)])).pipe(optional),
 })
 
 const Mode = Schema.Literals(["ordered", "round-robin", "weighted"])
@@ -744,7 +746,8 @@ const ruleMatches = (rule: WeightRule, target: Model.Ref, scope: WeightScope) =>
     return false
   if (match.routes?.length) {
     const path = scope.routes ?? (scope.routeID === undefined ? [] : [scope.routeID])
-    if (!match.routes.some((id) => path.includes(id))) return false
+    // A route id names a pool, so it matches in any case.
+    if (!match.routes.some((id) => path.some((entry) => entry.toLowerCase() === id.toLowerCase()))) return false
   }
   return true
 }

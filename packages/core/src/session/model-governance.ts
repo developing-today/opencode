@@ -6,6 +6,7 @@ import { Model } from "@opencode/schema/model"
 import { Provider } from "@opencode/schema/provider"
 import type { Agent } from "@opencode/schema/agent"
 import { Config } from "../config.js"
+import { ModelRouteMatch } from "../model-route-match.js"
 import type { Session } from "../session.js"
 import { SessionSchema } from "./schema.js"
 
@@ -154,38 +155,53 @@ function applySubagentOverride(
  * runtime resolution in model-resolver.ts: the target selection's own variant
  * wins, else the route-requested variant remapped through the target's
  * `variants` (an unremapped requested variant runs as-is), else the target's
- * `defaultVariant`. A nested route inherits its referencing selection's
+ * `defaultVariant`. A target whose remap sits the requested variant out never
+ * runs at it and is not judged; on a nested route's target object that holds for
+ * the whole nested route. A nested route inherits its referencing selection's
  * variant, else the outer requested variant — the intermediate target object's
  * own `defaultVariant`/`variants` never reach the inner route's leaves, exactly
- * as in the model-routes plugin's expansion. */
+ * as in the model-routes plugin's expansion.
+ *
+ * A route that adds models by `include`, `contains` or `match`, or remaps levels
+ * by `variantRules`, can run models its configuration does not list, so its id is
+ * added to `unjudged` for the caller to refuse under any restriction. Removals
+ * (`exclude`, `notContains`) and `levels` only take members away, so judging the
+ * listed targets can deny more, never less. */
 function routeTargets(
   entries: readonly Entry[],
   routeID: string,
   seen: Set<string>,
   requestedVariant?: Model.VariantID,
+  unjudged: string[] = [],
 ): Model.Ref[] {
-  if (seen.has(routeID)) return []
-  seen.add(routeID)
   const routes = Config.latest(entries, "experimental")?.model_routes
-  const route = routes?.[routeID]
+  // A route id names a pool, so it matches in any case.
+  const id = ModelRouteMatch.poolsNamed(Object.keys(routes ?? {}), routeID)[0] ?? routeID
+  if (seen.has(id)) return []
+  seen.add(id)
+  const route = routes?.[id]
   if (route === undefined) return []
+  if ([route.include, route.contains, route.match, route.variantRules].some((value) => value !== undefined))
+    unjudged.push(id)
   const requested = requestedVariant === "default" ? undefined : requestedVariant
-  return route.targets.flatMap((target) => {
+  return (route.targets ?? []).flatMap((target) => {
     const selection = "providerID" in target ? target : target.model
     const object = "providerID" in target ? undefined : target
+    const remap = requested === undefined ? undefined : object?.variants?.[requested]
+    if (remap === false) return []
     const selectionVariant =
       selection.variant === undefined || selection.variant === "default"
         ? undefined
         : Model.VariantID.make(selection.variant)
     if (selection.providerID === "opencode-route")
-      return routeTargets(entries, selection.model, seen, selectionVariant ?? requested)
+      return routeTargets(entries, selection.model, seen, selectionVariant ?? requested, unjudged)
     const variant =
       selectionVariant ??
       (requested === undefined
         ? object?.defaultVariant === undefined
           ? undefined
           : Model.VariantID.make(object.defaultVariant)
-        : Model.VariantID.make(object?.variants?.[requested] ?? requested))
+        : Model.VariantID.make(remap ?? requested))
     return [
       {
         id: Model.ID.make(selection.model),
@@ -217,7 +233,9 @@ export type Input = {
  * An override's subagent lists compose into the launching agent's layer with
  * the same force semantics as its own lists compose into the child's layer.
  * A route-named model passes only when every target of the route passes, each
- * judged at its effective variant (see `routeTargets`).
+ * judged at its effective variant (see `routeTargets`). Under any restriction a
+ * route that picks models by pattern or remaps levels by rule is refused, since
+ * its models cannot be listed from configuration.
  */
 export const assertAllowed = Effect.fn("ModelGovernance.assertAllowed")(function* (
   sessions: Pick<Session.Interface, "get">,
@@ -300,8 +318,15 @@ export const assertAllowed = Effect.fn("ModelGovernance.assertAllowed")(function
     input.parent.model
   if (model === undefined) return
 
+  const unjudged: string[] = []
   const targets =
-    model.providerID === "opencode-route" ? routeTargets(entries, model.id, new Set(), model.variant) : undefined
+    model.providerID === "opencode-route"
+      ? routeTargets(entries, model.id, new Set(), model.variant, unjudged)
+      : undefined
+  if (unjudged.length > 0 && (allowed !== undefined || excluded.length > 0))
+    return yield* new DeniedError({
+      message: `Route ${refString(model)} is not allowed for this subagent: ${unjudged.map((id) => `opencode-route/${id}`).join(", ")} picks models by include, contains or match, or remaps levels by variantRules, so the models it may run cannot be checked against this subagent's model restrictions. Name its models as targets to use it here.`,
+    })
   const checked = targets !== undefined && targets.length > 0 ? targets : [model]
   for (const target of checked) {
     const deniedBy = excluded.find((item) => Model.Selector.matches(item.selector, target))

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Arbitrary, Duration, Effect, Schema } from "effect"
 import { ConfigNormalize } from "@opencode/core/config/normalize"
+import { routeWeightRules, weightRulesAcross } from "@opencode/core/config/plugin/model-routes"
+import { ModelRouteMatch } from "@opencode/core/model-route-match"
 import { ModelRouteTuning } from "@opencode/core/model-route-tuning"
 import { Info } from "@opencode/schema/config"
 import { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
@@ -81,6 +83,23 @@ function withoutMalformedNotes(input: Record<string, unknown>) {
   return result
 }
 
+/** Normalization skips a pool that nothing could join or that has a malformed matching key, and then an
+ * emptied block, so the expected config does too. */
+function withoutSkippedPools(input: Record<string, unknown>) {
+  const result = structuredClone(input)
+  const experimental = result.experimental as { model_routes?: Record<string, unknown> } | undefined
+  const routes = experimental?.model_routes
+  if (!experimental || !routes) return result
+  const kept = Object.entries(routes).filter(
+    ([, route]) => ModelRouteMatch.problems(Schema.decodeUnknownSync(ConfigModelRoutes.Route)(route)).length === 0,
+  )
+  if (kept.length === Object.keys(routes).length) return result
+  if (kept.length > 0) experimental.model_routes = Object.fromEntries(kept)
+  else delete experimental.model_routes
+  if (!Object.keys(experimental).length) delete result.experimental
+  return result
+}
+
 describe("ConfigNormalize", () => {
   test("accepts tool.use without losing statement order", () => {
     const policies = [
@@ -149,7 +168,9 @@ describe("ConfigNormalize", () => {
           const source = JSON.parse(JSON.stringify(Schema.encodeSync(Info)(info)))
           const result = normalized(source)
           expect(Schema.decodeUnknownSync(Info)(result.encoded)).toEqual(
-            Schema.decodeUnknownSync(Info)(withoutMalformedNotes(withoutEmptyCompatibilityContainers(source))),
+            Schema.decodeUnknownSync(Info)(
+              withoutSkippedPools(withoutMalformedNotes(withoutEmptyCompatibilityContainers(source))),
+            ),
           )
           return true
         },
@@ -908,5 +929,218 @@ describe("model route tuning and log settings", () => {
       path: ["experimental", "model_route_log", "captureErrorBody"],
       message: "omitted unknown setting",
     })
+  })
+})
+
+describe("model route pools", () => {
+  const routesOf = (encoded: Readonly<Record<string, unknown>>) =>
+    Schema.decodeUnknownSync(Info, options)(encoded).experimental?.model_routes
+
+  test("matching keys, declared levels, variant rules and false remaps survive normalization", () => {
+    const small = {
+      include: ["*luna*", "*haiku*"],
+      exclude: ["*-5", "frontier-direct"],
+      contains: ["mini"],
+      notContains: ["old"],
+      match: "(*luna* or 're:haiku-(5|6)') and not *preview*",
+      levels: ["low", "medium", "high"],
+      variantRules: [{ match: "*argon*", map: { xhigh: "high", max: false } }],
+    }
+    const result = normalized({
+      experimental: {
+        model_routes: {
+          small,
+          big: { targets: [{ model: "openai/argon", variants: { xhigh: "high", max: false } }] },
+        },
+      },
+    })
+    expect(result.diagnostics).toEqual([])
+    const routes = routesOf(result.encoded)
+    expect(routes?.small).toMatchObject(small)
+    expect(routes?.small.targets).toBeUndefined()
+    expect(routes?.big).toMatchObject({
+      targets: [{ model: { providerID: "openai", model: "argon" }, variants: { xhigh: "high", max: false } }],
+    })
+  })
+
+  test("a pool with a malformed matching key, or that nothing could join, is skipped whole with a diagnostic at the key", () => {
+    const result = normalized({
+      experimental: {
+        model_routes: {
+          ok: { include: ["*luna*"] },
+          regex: { include: ["*luna*"], exclude: ["re:luna-(5"] },
+          expression: { match: "*luna* xor *haiku*" },
+          rule: { targets: ["openai/argon"], variantRules: [{ match: "(*argon*", map: { max: false } }] },
+          empty: { include: ["*luna*"], contains: [""] },
+          nothing: { exclude: ["*-mini"] },
+          explicit: { targets: [] },
+        },
+      },
+    })
+    const path = (...rest: string[]) => ["experimental", "model_routes", ...rest]
+    expect(result.diagnostics).toEqual([
+      {
+        kind: "invalid",
+        path: path("regex", "exclude", "0"),
+        message: expect.stringContaining("skipped pool: Invalid regular expression"),
+      },
+      {
+        kind: "invalid",
+        path: path("expression", "match"),
+        message: "skipped pool: xor is not supported: write (a or b) and not (a and b)",
+      },
+      {
+        kind: "invalid",
+        path: path("rule", "variantRules", "0", "match"),
+        message: 'skipped pool: missing ")" before the end',
+      },
+      {
+        kind: "invalid",
+        path: path("empty", "contains", "0"),
+        message: "skipped pool: empty text, which would match every model",
+      },
+      {
+        kind: "invalid",
+        path: path("nothing"),
+        message: "skipped pool: it has no targets, include, contains or match",
+      },
+    ])
+    expect(Object.keys(routesOf(result.encoded) ?? {})).toEqual(["ok", "explicit"])
+  })
+
+  // These schedules load and the router then drops them in routeWeightRules and weightRulesAcross, which
+  // log nothing; this is the only place the reason reaches the user.
+  test("a schedule the router would skip is reported at load, naming the pool, the schedule and the field", () => {
+    const result = normalized({
+      experimental: {
+        model_routes: {
+          coding: {
+            targets: ["deepseek/deepseek-chat"],
+            schedules: [
+              { id: "peak", when: { start: "9am", end: "17:00", timezone: "America/Chicgo" }, factor: 0.5 },
+              { when: { from: 2_000, until: 1_000 }, weight: 2 },
+              { id: "noop", when: { daysOfWeek: ["mon"] } },
+              { id: "daily", when: { daysOfWeek: [], start: "09:00" }, factor: 2 },
+            ],
+          },
+        },
+        model_route_schedules: [{ id: "late", when: { end: "24:00" }, factor: 2 }],
+      },
+    })
+    const path = (...rest: string[]) => ["experimental", ...rest]
+    const schedule = (index: number, ...rest: string[]) =>
+      path("model_routes", "coding", "schedules", String(index), ...rest)
+    expect(result.diagnostics).toEqual([
+      {
+        kind: "invalid",
+        path: schedule(0, "when", "start"),
+        message: 'skipped schedule peak: start "9am" is not HH:mm',
+      },
+      {
+        kind: "invalid",
+        path: schedule(0, "when", "timezone"),
+        message: 'skipped schedule peak: timezone "America/Chicgo" is not a known IANA timezone',
+      },
+      {
+        kind: "invalid",
+        path: schedule(1, "when", "until"),
+        message: "skipped schedule: until is not after from, so the window never opens",
+      },
+      { kind: "invalid", path: schedule(2), message: "skipped schedule noop: it has neither factor nor weight" },
+      {
+        kind: "invalid",
+        path: path("model_route_schedules", "0", "when", "end"),
+        message: 'skipped schedule late: end "24:00" is not HH:mm',
+      },
+    ])
+    // The schedules still load, and the ones reported are exactly the ones the router drops.
+    const coding = routesOf(result.encoded)?.coding
+    expect(coding?.schedules).toHaveLength(4)
+    expect(routeWeightRules(coding!).map((rule) => rule.id)).toEqual(["daily"])
+    const experimental = Schema.decodeUnknownSync(Info, options)(result.encoded).experimental
+    expect(weightRulesAcross(experimental?.model_route_schedules ?? [])).toEqual([])
+  })
+
+  test("an unknown key anywhere in a pool or a schedule is reported where it was written, and the pool still loads", () => {
+    const result = normalized({
+      experimental: {
+        model_routes: {
+          coding: {
+            targets: [
+              "deepseek/deepseek-chat",
+              { model: "anthropic/claude-opus-5", untill: 1 },
+              // An object with providerID is the explicit model form, which has no until.
+              { providerID: "openai", model: "gpt-6-luna", until: 1 },
+            ],
+            selction: "weighted",
+            health: { cooldownMS: 5_000 },
+            budgets: { "deepseek/deepseek-chat": { requestPerDay: 10 } },
+            variantRules: [{ match: "*", map: { max: "high" }, maps: {} }],
+            schedules: [
+              { id: "monday", targets: ["deepseek/*"], when: { dayOfWeek: ["mon"] }, factor: 0.5, wieght: 2 },
+            ],
+          },
+        },
+        model_route_schedules: [{ when: { dayOfMonth: [1] }, factor: 2, route: ["coding"] }],
+      },
+    })
+    const unknown = (...path: string[]) => ({
+      kind: "invalid" as const,
+      path: ["experimental", ...path],
+      message: "omitted unknown setting",
+    })
+    const coding = (...path: string[]) => unknown("model_routes", "coding", ...path)
+    expect(result.diagnostics).toEqual([
+      coding("targets", "1", "untill"),
+      coding("targets", "2", "until"),
+      coding("selction"),
+      coding("health", "cooldownMS"),
+      coding("budgets", "deepseek/deepseek-chat", "requestPerDay"),
+      coding("variantRules", "0", "maps"),
+      coding("schedules", "0", "when", "dayOfWeek"),
+      coding("schedules", "0", "wieght"),
+      unknown("model_route_schedules", "0", "when", "dayOfMonth"),
+      unknown("model_route_schedules", "0", "route"),
+    ])
+    // The keys are still ignored: the misspelled day list leaves an every-day window, as before.
+    const routes = routesOf(result.encoded)
+    expect(Object.keys(routes ?? {})).toEqual(["coding"])
+    expect(Object.keys(routes?.coding.schedules?.[0].when ?? { missing: true })).toEqual([])
+    expect(routes?.coding.targets).toHaveLength(3)
+  })
+
+  // expand() reads only false from a nested pool's target object; this is the only place the rest is reported.
+  test("a nested pool's target object reports each key it ignores, a string remap, defaultVariant or until", () => {
+    const result = normalized({
+      experimental: {
+        model_routes: {
+          outer: {
+            targets: [
+              {
+                model: "opencode-route/lunas",
+                defaultVariant: "high",
+                variants: { max: false, low: "high" },
+                until: 1_900_000_000_000,
+              },
+              { model: "opencode-route/claude#high", variants: { xhigh: false } },
+              // A model target takes all of them.
+              { model: "openai/argon", defaultVariant: "high", variants: { max: "high" }, until: 1_900_000_000_000 },
+            ],
+          },
+        },
+      },
+    })
+    const target = (...path: string[]) => ({
+      kind: "unsupported" as const,
+      path: ["experimental", "model_routes", "outer", "targets", ...path],
+      message: "ignored on a nested pool, which takes only false in variants",
+    })
+    expect(result.diagnostics).toEqual([
+      target("0", "defaultVariant"),
+      target("0", "variants", "low"),
+      target("0", "until"),
+    ])
+    // The pool loads as written.
+    expect(routesOf(result.encoded)?.outer.targets).toHaveLength(3)
   })
 })
