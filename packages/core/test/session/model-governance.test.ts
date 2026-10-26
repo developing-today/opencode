@@ -285,6 +285,66 @@ describe("ModelGovernance.assertAllowed", () => {
     expect(narrowed).toContain("test/c")
   })
 
+  test("a route target is judged at its defaultVariant when the route is selected bare", async () => {
+    const configInput = {
+      experimental: { model_routes: { main: { targets: [{ model: "test/a", defaultVariant: "high" }] } } },
+    }
+    const route = ref("opencode-route/main")
+    // The target runs at #high, so excluding #high denies the bare route.
+    const excluding = info("ses_excluding", { subagentPolicy: { excludedModels: ["test/a#high"] } })
+    const message = await runDenied({ all: [excluding], parent: excluding, configInput, model: route })
+    expect(message).toContain("test/a#high")
+    expect(message).toContain("route")
+    // Excluding some other variant does not deny it.
+    const other = info("ses_other", { subagentPolicy: { excludedModels: ["test/a#low"] } })
+    await run({ all: [other], parent: other, configInput, model: route })
+    // An allowed list naming only the effective variant passes the bare target.
+    const allowing = info("ses_allowing", { subagentPolicy: { models: ["test/a#high"] } })
+    await run({ all: [allowing], parent: allowing, configInput, model: route })
+  })
+
+  test("a route target is judged at the variant its variants remap makes of the requested variant", async () => {
+    const configInput = {
+      experimental: { model_routes: { main: { targets: [{ model: "test/a", variants: { low: "high" } }] } } },
+    }
+    // Requesting the route at #low runs the target at #high.
+    const excluding = info("ses_excluding", { subagentPolicy: { excludedModels: ["test/a#high"] } })
+    const message = await runDenied({
+      all: [excluding],
+      parent: excluding,
+      configInput,
+      model: ref("opencode-route/main#low"),
+    })
+    expect(message).toContain("test/a#high")
+    // The same remap satisfies an allowed list naming only #high.
+    const allowing = info("ses_allowing", { subagentPolicy: { models: ["test/a#high"] } })
+    await run({ all: [allowing], parent: allowing, configInput, model: ref("opencode-route/main#low") })
+    // An unremapped requested variant runs as-is and is judged as itself.
+    const passthrough = info("ses_passthrough", { subagentPolicy: { excludedModels: ["test/a#max"] } })
+    const passed = await runDenied({
+      all: [passthrough],
+      parent: passthrough,
+      configInput,
+      model: ref("opencode-route/main#max"),
+    })
+    expect(passed).toContain("test/a#max")
+  })
+
+  test("a plain route target is judged at the requested variant", async () => {
+    const configInput = {
+      experimental: { model_routes: { main: { targets: ["test/a"] } } },
+    }
+    const excluding = info("ses_excluding", { subagentPolicy: { excludedModels: ["test/a#low"] } })
+    const message = await runDenied({
+      all: [excluding],
+      parent: excluding,
+      configInput,
+      model: ref("opencode-route/main#low"),
+    })
+    expect(message).toContain("test/a#low")
+    await run({ all: [excluding], parent: excluding, configInput, model: ref("opencode-route/main#high") })
+  })
+
   test("with no explicit choice the inherited parent model is what gets checked", async () => {
     const parent = info("ses_parent", { model: "test/parent", subagentPolicy: { models: ["test/parent"] } })
     await run({ all: [parent], parent })
