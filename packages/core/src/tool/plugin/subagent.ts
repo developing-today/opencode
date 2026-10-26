@@ -178,10 +178,19 @@ export const Plugin = {
               if (existing !== undefined) {
                 const switched = existing.agent !== agent.id
                 const model = override ?? (switched ? agent.model : undefined)
-                yield* Effect.all([
-                  switched ? sessions.switchAgent({ sessionID: existing.id, agent: agent.id }) : Effect.void,
-                  model === undefined ? Effect.void : sessions.switchModel({ sessionID: existing.id, model }),
-                ]).pipe(
+                // Sequential, agent first: the agent switch judges the model
+                // the child will run against the incoming agent, and the
+                // model switch that follows is then judged against that
+                // incoming agent too, not the outgoing one.
+                yield* Effect.gen(function* () {
+                  if (switched)
+                    yield* sessions.switchAgent({
+                      sessionID: existing.id,
+                      agent: agent.id,
+                      ...(model === undefined ? {} : { model }),
+                    })
+                  if (model !== undefined) yield* sessions.switchModel({ sessionID: existing.id, model })
+                }).pipe(
                   Effect.mapError((error) =>
                     error._tag === "ModelGovernance.DeniedError"
                       ? new ToolFailure({ message: error.message })

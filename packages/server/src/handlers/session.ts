@@ -253,7 +253,13 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
         Effect.fn(function* (ctx) {
           yield* session
             .switchAgent({ sessionID: ctx.params.sessionID, agent: ctx.payload.agent })
-            .pipe(Effect.catchTag("Session.NotFoundError", missingSession))
+            .pipe(
+              Effect.catchTag("Session.NotFoundError", missingSession),
+              Effect.catchTag(
+                "ModelGovernance.DeniedError",
+                (error) => new InvalidRequestError({ message: error.message }),
+              ),
+            )
           return HttpApiSchema.NoContent.make()
         }),
       )

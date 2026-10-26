@@ -121,9 +121,24 @@ export const make = Effect.fn("Session.make")(function* () {
     ).pipe(Effect.orElseSucceed(() => [] as Entry[]))
   const switchAgent = Effect.fn("Session.switchAgent")(function* (
     sessionID: SessionSchema.ID,
-    input: { agent: Agent.ID },
+    input: { agent: Agent.ID; model?: Model.Ref },
   ) {
     const session = yield* get(sessionID)
+    // A child session may only switch to an agent under which the model it
+    // will run is allowed; top-level sessions are unchecked. The model it
+    // will run is the caller-supplied upcoming model when one accompanies
+    // the switch, else its current model — assertAllowed falls back to the
+    // incoming agent's configured default, then the parent's model, when
+    // neither exists.
+    if (session.parentID) {
+      const parent = yield* get(session.parentID)
+      const entries = yield* governanceEntries(session)
+      yield* ModelGovernance.assertAllowed({ get }, { entries: () => Effect.succeed(entries) }, {
+        parent,
+        agent: input.agent,
+        model: input.model ?? session.model,
+      })
+    }
     yield* bus.publish(SessionEvent.AgentSelected, { sessionID, agent: input.agent, previous: session.agent })
   })
   const switchModel = Effect.fn("Session.switchModel")(function* (

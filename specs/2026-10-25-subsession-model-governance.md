@@ -278,6 +278,17 @@ new model against the effective set computed from its ancestors and its agent
 definition before delegating. Top-level sessions are unchecked: governance
 constrains subsessions, not a user's own session.
 
+`switchAgent` on a child session runs the same check before publishing the
+switch, judged against the *incoming* agent: the model checked is the one the
+child will run — a caller-supplied upcoming model when the switch accompanies
+a model change, else the child's current model, falling back to the incoming
+agent's configured default and then the parent's model. A denied switch fails
+with `DeniedError` naming the binding layer and publishes nothing. Top-level
+sessions are unchecked, as with `switchModel`. The Task tool's continuation
+path runs the two switches sequentially, agent first, so an accompanying
+model switch is also judged against the incoming agent rather than the
+outgoing one.
+
 ### 6.4 Exempt paths, stated openly
 
 - Session *import* (`/api/experimental/session/import`) restores externally
@@ -285,7 +296,7 @@ constrains subsessions, not a user's own session.
   recorded model is now restricted would strand backups. Imported sessions are
   still governed from their next child creation or model switch onward.
 - Continuing an existing child through the Task tool with a new agent or model
-  goes through `switchAgent` / `switchModel`, so §6.3 covers it.
+  goes through `switchAgent` / `switchModel`, both checked per §6.3.
 
 ## 7. Routes and `auto` (spec point 5)
 
