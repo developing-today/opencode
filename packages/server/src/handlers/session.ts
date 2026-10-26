@@ -134,11 +134,18 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                 model: ctx.payload.model,
                 metadata: ctx.payload.metadata,
                 permissions: ctx.payload.permissions,
+                subagentPolicy: ctx.payload.subagentPolicy,
                 ...(ctx.payload.parentID === undefined
                   ? { location: ctx.payload.location ?? { directory: AbsolutePath.make(process.cwd()) } }
                   : { parentID: ctx.payload.parentID }),
               })
-              .pipe(Effect.catchTag("Session.NotFoundError", missingSession)),
+              .pipe(
+                Effect.catchTag("Session.NotFoundError", missingSession),
+                Effect.catchTag(
+                  "ModelGovernance.DeniedError",
+                  (error) => new InvalidRequestError({ message: error.message }),
+                ),
+              ),
           }
         }),
       )
@@ -230,6 +237,10 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
               Effect.catchTag("Session.NotFoundError", missingSession),
               Effect.catchTag("Session.MessageNotFoundError", missingMessage),
               Effect.catchTag(
+                "ModelGovernance.DeniedError",
+                (error) => new InvalidRequestError({ message: error.message }),
+              ),
+              Effect.catchTag(
                 "Session.ForkEmptyError",
                 (error) => new InvalidRequestError({ message: error.message, kind: "empty_session" }),
               ),
@@ -251,7 +262,13 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
         Effect.fn(function* (ctx) {
           yield* session
             .switchModel({ sessionID: ctx.params.sessionID, model: ctx.payload.model })
-            .pipe(Effect.catchTag("Session.NotFoundError", missingSession))
+            .pipe(
+              Effect.catchTag("Session.NotFoundError", missingSession),
+              Effect.catchTag(
+                "ModelGovernance.DeniedError",
+                (error) => new InvalidRequestError({ message: error.message }),
+              ),
+            )
           return HttpApiSchema.NoContent.make()
         }),
       )
@@ -276,6 +293,10 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
           if (ctx.payload.permissions !== undefined)
             yield* session
               .setPermissions({ sessionID: ctx.params.sessionID, permissions: ctx.payload.permissions })
+              .pipe(Effect.catchTag("Session.NotFoundError", missingSession))
+          if (ctx.payload.subagentPolicy !== undefined)
+            yield* session
+              .setSubagentPolicy({ sessionID: ctx.params.sessionID, subagentPolicy: ctx.payload.subagentPolicy })
               .pipe(Effect.catchTag("Session.NotFoundError", missingSession))
           return HttpApiSchema.NoContent.make()
         }),

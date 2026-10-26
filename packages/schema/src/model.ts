@@ -57,6 +57,55 @@ function hasWhitespaceSegment(target: string): boolean {
   return target.split(/[/#]/).some((segment) => /\s/.test(segment))
 }
 
+/**
+ * A model selector: a `Model.Ref` string whose model segment may be `*`.
+ * `provider/model` matches that model with any variant, `provider/model#variant`
+ * matches exactly that variant, and `provider/*` matches every model of the provider.
+ */
+export const Selector = Schema.String.annotate({ identifier: "Model.Selector" })
+  .check(Schema.isPattern(/^[^/#]+\/(?:\*|[^#]+)(?:#[^#]+)?$/u))
+  .pipe(
+    statics((schema) => ({
+      matches: (selector: string, ref: Ref): boolean => {
+        const parsed = parseSelector(selector)
+        if (!parsed) return false
+        if (parsed.providerID !== ref.providerID) return false
+        if (parsed.id !== "*" && parsed.id !== ref.id) return false
+        if (parsed.variant !== undefined && parsed.variant !== (ref.variant ?? "default")) return false
+        return true
+      },
+      intersect: (a: string, b: string): string | undefined => {
+        const left = parseSelector(a)
+        const right = parseSelector(b)
+        if (!left || !right) return undefined
+        if (left.providerID !== right.providerID) return undefined
+        const id = left.id === "*" ? right.id : right.id === "*" ? left.id : left.id === right.id ? left.id : undefined
+        if (id === undefined) return undefined
+        const variant =
+          left.variant === undefined
+            ? right.variant
+            : right.variant === undefined
+              ? left.variant
+              : left.variant === right.variant
+                ? left.variant
+                : undefined
+        if (left.variant !== undefined && right.variant !== undefined && variant === undefined) return undefined
+        return schema.make(variant === undefined ? `${left.providerID}/${id}` : `${left.providerID}/${id}#${variant}`)
+      },
+    })),
+  )
+export type Selector = typeof Selector.Type
+
+function parseSelector(input: string) {
+  const providerEnd = input.indexOf("/")
+  if (providerEnd <= 0) return undefined
+  const variantStart = input.indexOf("#", providerEnd + 1)
+  const id = input.slice(providerEnd + 1, variantStart === -1 ? undefined : variantStart)
+  const variant = variantStart === -1 ? undefined : input.slice(variantStart + 1)
+  if (!id || (variant !== undefined && !variant)) return undefined
+  return { providerID: input.slice(0, providerEnd), id, variant }
+}
+
 export { Compatibility, MaxTokensField, ReasoningField }
 
 export const Family = Schema.String.pipe(Schema.brand("Model.Family"))
