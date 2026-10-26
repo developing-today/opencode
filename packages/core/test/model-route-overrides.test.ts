@@ -57,6 +57,24 @@ describe("ModelRouteOverrides matching", () => {
       ModelRouteOverrides.parse({ overrides: [{ id: "x", action: "nuke", providers: ["a"], until: now }] }),
     ).toEqual([])
   })
+
+  test("an entry with a non-string in a scope list is dropped, never widened (#536)", () => {
+    const base = { id: "x", action: "avoid", until: now + DAY }
+    expect(
+      ModelRouteOverrides.parse({ overrides: [{ ...base, providers: ["openai", 42], models: ["gpt-*"] }] }),
+    ).toEqual([])
+    expect(
+      ModelRouteOverrides.parse({ overrides: [{ ...base, providers: ["openai"], models: ["gpt-*", null] }] }),
+    ).toEqual([])
+    expect(
+      ModelRouteOverrides.parse({ overrides: [{ ...base, providers: ["openai"], routes: ["route-1", null] }] }),
+    ).toEqual([])
+    expect(
+      ModelRouteOverrides.parse({ overrides: [{ ...base, providers: ["openai"], models: ["gpt-*"] }] }).map(
+        (item) => item.id,
+      ),
+    ).toEqual(["x"])
+  })
 })
 
 describe("ModelRouteOverrides storage", () => {
@@ -180,6 +198,18 @@ describe("scheduled and absolute priorities", () => {
     expect(stored.map((item) => item.id)).toEqual(["recurring"])
     expect(stored[0].schedule).toEqual(today)
     expect(stored[0].until).toBeUndefined()
+  })
+
+  test("an expired override is dropped on save even when it has a schedule (#535)", () => {
+    ModelRouteOverrides.save(
+      [
+        draft({ id: "exp-sched", providers: ["openai"], schedule: today, until: now - 1 }),
+        draft({ id: "live-sched", providers: ["openai"], schedule: today, until: now + DAY }),
+        draft({ id: "recurring", providers: ["openai"], schedule: today, until: undefined }),
+      ],
+      now,
+    )
+    expect(ModelRouteOverrides.current().map((item) => item.id)).toEqual(["live-sched", "recurring"])
   })
 
   test("a recurring override applies only inside its window", () => {

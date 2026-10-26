@@ -40,6 +40,11 @@ const field = (value: unknown, name: string) =>
 const strings = (value: unknown) =>
   Array.isArray(value) && value.every((item) => typeof item === "string") ? (value as string[]) : []
 
+/** A scope list that is present but not all strings is malformed: emptying it would widen the
+ * entry to everything in that dimension, so the entry is dropped instead (#536). */
+const malformedList = (value: unknown) =>
+  value !== undefined && (!Array.isArray(value) || value.some((item) => typeof item !== "string"))
+
 /** Keeps only well-formed entries. An entry must name at least one provider or model pattern, so a
  * malformed file can never silently apply to everything. */
 export const parse = (value: unknown): Override[] => {
@@ -53,6 +58,12 @@ export const parse = (value: unknown): Override[] => {
     const schedule = ModelRouteSchedule.parse(field(item, "schedule"))
     const hasUntil = typeof until === "number" && Number.isFinite(until)
     if (!hasUntil && schedule === undefined) return []
+    if (
+      malformedList(field(item, "providers")) ||
+      malformedList(field(item, "models")) ||
+      malformedList(field(item, "routes"))
+    )
+      return []
     const providers = strings(field(item, "providers"))
     const models = strings(field(item, "models"))
     if (providers.length === 0 && models.length === 0) return []
@@ -155,7 +166,7 @@ export const current = (): readonly Override[] => {
 export const save = (overrides: readonly Override[], now = Date.now()) => {
   const file = filePath()
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  const live = overrides.filter((item) => item.schedule !== undefined || item.until === undefined || item.until > now)
+  const live = overrides.filter((item) => item.until === undefined || item.until > now)
   fs.writeFileSync(file, JSON.stringify({ version: 1, overrides: live }, null, 2))
   cache = undefined
   return live
