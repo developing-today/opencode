@@ -11,6 +11,7 @@ describe("ModelRouteSchedule.parse", () => {
       ModelRouteSchedule.parse({ daysOfWeek: ["Mon", 5, "saturday"], start: "9:5", end: "17:00" }),
     ).toEqual({ daysOfWeek: [1, 5, 6], start: "09:05", end: "17:00" })
     expect(ModelRouteSchedule.parse({ daysOfMonth: ["1", 15, -1] })).toEqual({ daysOfMonth: [1, 15, -1] })
+    expect(ModelRouteSchedule.parse({ start: "9:30:59" })).toEqual({ start: "09:30" })
     expect(ModelRouteSchedule.parse({})).toEqual({})
   })
 
@@ -18,6 +19,8 @@ describe("ModelRouteSchedule.parse", () => {
     expect(ModelRouteSchedule.parse("weekdays")).toBeUndefined()
     expect(ModelRouteSchedule.parse({ timezone: "Mars/Olympus" })).toBeUndefined()
     expect(ModelRouteSchedule.parse({ start: "25:00" })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ start: "9:30:60" })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ end: "17:00:99" })).toBeUndefined()
     expect(ModelRouteSchedule.parse({ end: "noon" })).toBeUndefined()
     expect(ModelRouteSchedule.parse({ daysOfWeek: [] })).toBeUndefined()
     expect(ModelRouteSchedule.parse({ daysOfMonth: [0, 42] })).toBeUndefined()
