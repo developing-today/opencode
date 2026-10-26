@@ -69,6 +69,20 @@ describe("ModelRouteTuning.suggest", () => {
     })
     expect(result.map((item) => item.match)).toEqual(["p/slow"])
   })
+
+  test("averages the two middle first-token times for an even peer count (#534)", () => {
+    const result = ModelRouteTuning.suggest({
+      stats: [
+        stats("a", { avgFirstTokenMs: 100 }),
+        stats("b", { avgFirstTokenMs: 100 }),
+        stats("c", { avgFirstTokenMs: 400 }),
+        stats("slow", { avgFirstTokenMs: 1_000 }),
+      ],
+      errors: [],
+      now,
+    })
+    expect(result.map((item) => [item.match, item.action, item.factor])).toEqual([["p/slow", "weight", 0.5]])
+  })
 })
 
 describe("ModelRouteTuning predictions", () => {
