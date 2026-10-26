@@ -117,6 +117,24 @@ function applyOverride(
   }
 }
 
+/**
+ * The same override composition for an agent's subagent lists: an override's
+ * `subagentModels` / `subagentExcludedModels` narrow (or, with `force`,
+ * replace) the lists it overrides, exactly as its `models` / `excludedModels`
+ * do for the agent's own lists in `applyOverride`.
+ */
+function applySubagentOverride(
+  definition: { allowed: readonly Model.Selector[] | undefined; excluded: readonly Model.Selector[] | undefined },
+  override: SessionSchema.AgentOverride | undefined,
+) {
+  if (override === undefined) return definition
+  return applyOverride(definition, {
+    models: override.subagentModels,
+    excludedModels: override.subagentExcludedModels,
+    force: override.force,
+  })
+}
+
 /** Route targets from config entries, following nested route references. */
 function routeTargets(entries: readonly Entry[], routeID: string, seen: Set<string>): Model.Ref[] {
   if (seen.has(routeID)) return []
@@ -153,6 +171,8 @@ export type Input = {
  * the tree — ancestor session policies are hard, the launching agent's subagent
  * lists bind its direct children, and the child agent's own lists apply with
  * explicit overrides (policy `agentOverrides`, then the per-call override).
+ * An override's subagent lists compose into the launching agent's layer with
+ * the same force semantics as its own lists compose into the child's layer.
  * A route-named model passes only when every target of the route passes.
  */
 export const assertAllowed = Effect.fn("ModelGovernance.assertAllowed")(function* (
@@ -193,17 +213,30 @@ export const assertAllowed = Effect.fn("ModelGovernance.assertAllowed")(function
     excluded = unionExcluded(excluded, session.subagentPolicy?.excludedModels, layer)
   }
 
-  // Layer 2: the launching agent's subagent lists bind the children it launches.
+  // The explicit overrides for this launch, applied to both the launching
+  // agent's subagent lists (layer 2) and the child agent's own lists (layer 3).
+  const policyOverride =
+    input.agent === undefined ? undefined : input.parent.subagentPolicy?.agentOverrides?.[input.agent]
+
+  // Layer 2: the launching agent's subagent lists bind the children it
+  // launches, with the launch's explicit overrides composed into them — an
+  // override's subagent lists bind even when the launching agent has no
+  // config definition to override.
   const launcher = input.parent.agent === undefined ? undefined : definitions.get(input.parent.agent)
-  if (launcher !== undefined && input.parent.agent !== undefined) {
+  if (input.parent.agent !== undefined) {
     const layer = `subagent models of agent ${input.parent.agent}`
-    narrow(launcher.subagentModels, layer)
-    excluded = unionExcluded(excluded, launcher.subagentExcludedModels, layer)
+    const overridden = applySubagentOverride(
+      applySubagentOverride(
+        { allowed: launcher?.subagentModels, excluded: launcher?.subagentExcludedModels },
+        policyOverride,
+      ),
+      input.override,
+    )
+    narrow(overridden.allowed, layer)
+    excluded = unionExcluded(excluded, overridden.excluded, layer)
   }
 
   // Layer 3: the child agent's own lists, with explicit overrides applied.
-  const policyOverride =
-    input.agent === undefined ? undefined : input.parent.subagentPolicy?.agentOverrides?.[input.agent]
   const definition = input.agent === undefined ? undefined : definitions.get(input.agent)
   const overridden = applyOverride(
     applyOverride({ allowed: definition?.models, excluded: definition?.excludedModels }, policyOverride),

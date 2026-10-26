@@ -175,7 +175,12 @@ For a child of parent P, with child agent A and would-be model M:
 2. **Launching agent's subagent lists.** P's agent definition contributes
    `subagentModels` / `subagentExcludedModels`. These bind the children P
    launches; deeper descendants are bound at their own launch by their own
-   parent's definition, plus layer 1 all the way down.
+   parent's definition, plus layer 1 all the way down. The explicit overrides
+   of step 3 compose into this layer too: an override's `subagentModels` /
+   `subagentExcludedModels` narrow (or, with `force`, replace) the launching
+   agent's subagent lists for the launch it accompanies, with the same force
+   semantics as step 3, and bind even when the launching agent has no config
+   definition of its own.
 3. **Child agent's own lists, with explicit overrides applied.** A's definition
    contributes `models` / `excludedModels`. Overrides come from two explicit
    sources: P's `subagentPolicy.agentOverrides[A]`, and a per-call override from
