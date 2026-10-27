@@ -175,6 +175,20 @@ const daysInMonth = (parts: Pick<LocalParts, "year" | "month">) =>
   // Day 0 of the following month is the last day of this one.
   new Date(Date.UTC(parts.year, parts.month, 0)).getUTCDate()
 
+/** The local calendar day before `parts`, derived from the date itself. Subtracting the day's
+ * elapsed wall-clock minutes from the absolute instant is not equivalent: on the DST fall-back
+ * night the repeated hour makes that subtraction land on the same local day (#585). */
+const previousDay = (parts: LocalParts): LocalParts => {
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.dayOfMonth) - 86_400_000)
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    dayOfMonth: date.getUTCDate(),
+    dayOfWeek: date.getUTCDay(),
+    minutes: 0,
+  }
+}
+
 /**
  * Reads a window from user input. Returns undefined when the object is not a window at all (an
  * invalid timezone, an unreadable day list or time), and an always-active window for `{}`. Fields
@@ -282,7 +296,7 @@ export const active = (window: Window, now = Date.now()): boolean => {
     window.start !== undefined && window.end !== undefined && minutesOf(window.start)! > minutesOf(window.end)!
   if (wraps && current.minutes < minutesOf(window.end)!)
     // Before the end of a wrapping window means it began on the previous local day.
-    return dayMatches(window, partsAt(format, now - (current.minutes + 1) * 60_000))
+    return dayMatches(window, previousDay(current))
   return dayMatches(window, current)
 }
 
