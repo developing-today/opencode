@@ -31,6 +31,10 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
     description:
       "Time-bound weight changes across routes: during a local-time window, matching provider/model targets are ranked higher or lower (or given a fixed weight) on every route they appear on. Weights order every selection mode; equal weights keep their configured order.",
   }),
+  model_route_windows: ConfigModelRoutes.Windows.pipe(optional).annotate({
+    description:
+      'Named, reusable time windows for route rules, keyed by name, e.g. "deepseek-peak": weekdays 01:00-04:00 and 06:00-10:00 UTC. Schedules reference a window by name instead of repeating it, and a route target can gate its eligibility on one: the target is a candidate only while its named window is active (or, inverted, only while it is not). Windows belong to the meter, not the model.',
+  }),
   model_route_tuning: ConfigModelRoutes.Tuning.pipe(optional).annotate({
     description: "Scheduled review of routing history that adjusts model routes automatically",
   }),

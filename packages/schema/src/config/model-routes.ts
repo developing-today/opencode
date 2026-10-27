@@ -30,6 +30,18 @@ const TargetObject = Schema.Struct({
     description:
       "Epoch milliseconds after which this target leaves the route. Used for time-limited pool membership; takes effect when the configuration reloads.",
   }),
+  window: Schema.Union([
+    Schema.String,
+    Schema.Struct({
+      name: Schema.String,
+      invert: Schema.Boolean.pipe(optional),
+    }),
+  ])
+    .pipe(optional)
+    .annotate({
+      description:
+        'Eligibility gate: the name of a window defined in experimental.model_route_windows, or { "name": ..., "invert": true }. The target is only in the route while the named window is active, or while it is not active when inverted — e.g. a DeepSeek target gated on the inverse of "deepseek-peak" is a candidate off-peak only, and the same target gated on "deepseek-peak" itself is the peak fallback. An unknown window name drops the gate, leaving the target always eligible.',
+    }),
 })
 export const Target = Schema.Union([ConfigModel.Selection, TargetObject]).annotate({
   identifier: "Config.ModelRoute.Target",
@@ -142,6 +154,13 @@ export class Window extends Schema.Class<Window>("Config.ModelRoute.Window")({
   }).pipe(optional),
 }) {}
 
+/** A schedule's window: inline, or the name of a window defined once in
+ * experimental.model_route_windows and reused by every rule that shares the meter's clock. */
+const ScheduleWindow = Schema.Union([Window, Schema.String]).annotate({
+  description:
+    "When the change is in force: a window object, or the name of a window from experimental.model_route_windows. An unknown name drops the rule.",
+})
+
 /** A time-bound weight change inside one route. `factor` scales a target's weight; `weight` replaces
  * it. Everything is unchanged outside the window. */
 export class Schedule extends Schema.Class<Schedule>("Config.ModelRoute.Schedule")({
@@ -152,7 +171,7 @@ export class Schedule extends Schema.Class<Schedule>("Config.ModelRoute.Schedule
         'Target references this change covers, `*` allowed, e.g. ["deepseek/*", "openai/gpt-6-*"]. Empty or unset means every target of the route.',
     })
     .pipe(optional),
-  when: Window,
+  when: ScheduleWindow,
   factor: PositiveFinite.annotate({
     description:
       "Multiplies the target's configured weight while the window is active. 0.8 makes a weight of 2 become 1.6; 1.2 makes it 2.4. Exactly one of factor and weight is expected.",
@@ -187,7 +206,7 @@ export class GlobalSchedule extends Schema.Class<GlobalSchedule>("Config.ModelRo
       description: "Route IDs the change is limited to, including nested ones. Empty or unset means every route.",
     })
     .pipe(optional),
-  when: Window,
+  when: ScheduleWindow,
   factor: PositiveFinite.annotate({
     description: "Multiplies the target's configured weight while the window is active.",
   }).pipe(optional),
@@ -283,3 +302,11 @@ const RouteID = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]
 
 export const Info = Schema.Record(RouteID, Route).annotate({ identifier: "Config.ModelRoutes" })
 export type Info = typeof Info.Type
+
+const WindowName = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/))
+
+/** Named, reusable time windows, defined once and referenced by schedules and target gates.
+ * Windows belong to the meter, not the model: `deepseek-peak` is defined here a single time and
+ * every rule that follows DeepSeek's clock names it. */
+export const Windows = Schema.Record(WindowName, Window).annotate({ identifier: "Config.ModelRoute.Windows" })
+export type Windows = typeof Windows.Type
