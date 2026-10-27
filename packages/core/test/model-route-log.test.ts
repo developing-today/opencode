@@ -452,6 +452,37 @@ describe("error bodies", () => {
   test("a request can keep its body without the setting", () => {
     expect(ModelRouteLog.failureFields(reason, { captureBody: true }).error_body).toHaveLength(2_000)
   })
+
+  test("common credential formats are redacted from a captured body", () => {
+    const secrets = [
+      "ghp_" + "A".repeat(36),
+      "gho_" + "A".repeat(36),
+      "github_pat_" + "B".repeat(30),
+      "AKIA" + "C".repeat(16),
+      "ASIA" + "D".repeat(16),
+      "xoxb-" + "1".repeat(12) + "-abcdefghij",
+      "xoxp-" + "2".repeat(12) + "-abcdefghij",
+      "AIza" + "E".repeat(35),
+      "eyJ" + "F".repeat(10) + "." + "G".repeat(10) + "." + "H".repeat(10),
+      "dXNlcjpwYXNz",
+      "urlsecretpass",
+    ]
+    const body = [
+      "retry later ordinary text 12345 https://example.com/docs",
+      ...secrets.slice(0, 8),
+      `token ${secrets[8]}`,
+      `Basic ${secrets[9]}`,
+      `https://user:${secrets[10]}@example.com/path`,
+    ].join(" ")
+    const kept = ModelRouteLog.failureFields(
+      { _tag: "RateLimit", message: "rate limited", body },
+      { captureBody: true },
+    ).error_body
+    for (const secret of secrets) expect(kept).not.toContain(secret)
+    expect(kept).toContain("retry later ordinary text 12345 https://example.com/docs")
+    expect(kept).toContain("Basic [REDACTED]")
+    expect(kept).toContain("https://user:[REDACTED]@example.com/path")
+  })
 })
 
 describe("usage restore", () => {
