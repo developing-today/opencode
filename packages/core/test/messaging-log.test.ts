@@ -178,4 +178,21 @@ describe("MessagingLog.entries", () => {
     expect(clipped.endsWith("b".repeat(10))).toBe(true)
     expect(clipped).toContain("chars]")
   })
+
+  test("clip never exceeds its maximum at small limits", () => {
+    const text = "a".repeat(500) + "b".repeat(500)
+    for (const chars of [1, 10, 20, 30, 40, 50, 100]) {
+      expect(MessagingLog.clip(text, chars).length).toBeLessThanOrEqual(chars)
+    }
+  })
+
+  test("clip keeps the omitted count accurate when the head shrinks to fit the marker", () => {
+    const clipped = MessagingLog.clip("a".repeat(1000), 30)
+    expect(clipped.length).toBe(30)
+    expect(clipped).toContain("[985 chars]")
+  })
+
+  test("clip truncates plainly when the omission marker alone exceeds the limit", () => {
+    expect(MessagingLog.clip("a".repeat(100), 10)).toBe("a".repeat(10))
+  })
 })
