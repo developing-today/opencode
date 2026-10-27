@@ -166,9 +166,8 @@ export const parseQuotaReset = (message: string | undefined, now: number): numbe
   // Scan every absolute candidate: an unparseable first date (e.g. month 13) must not shadow
   // a later valid reset stated in the same message.
   for (const [, absolute] of text.matchAll(new RegExp(ModelRouteLimits.ABSOLUTE_TIME.source, "g"))) {
-
-    const date = Date.parse(absolute)
-    if (!Number.isNaN(date)) return date
+    const date = ModelRouteLimits.parseAbsoluteTime(absolute)
+    if (date !== undefined) return date
   }
   // The relative form mirrors ModelRouteLimits: decimal amounts ("in 1.5 hours") and compound
   // sequences ("in 1 hour 30 minutes", summed) both read as the total wait.

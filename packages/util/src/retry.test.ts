@@ -2,6 +2,35 @@ import { describe, expect, test } from "bun:test"
 import { retry } from "./retry.js"
 
 describe("client retry", () => {
+  test("runs once when attempts is zero", async () => {
+    let calls = 0
+    const value = await retry(
+      async () => {
+        calls++
+        return "ready"
+      },
+      { attempts: 0 },
+    )
+
+    expect(value).toBe("ready")
+    expect(calls).toBe(1)
+  })
+
+  test("throws the operation error when attempts is negative", async () => {
+    let calls = 0
+    const error = new Error("operation failed")
+    await expect(
+      retry(
+        async () => {
+          calls++
+          throw error
+        },
+        { attempts: -1 },
+      ),
+    ).rejects.toBe(error)
+    expect(calls).toBe(1)
+  })
+
   test("retries transient failures up to the configured attempt count", async () => {
     const failures: string[] = []
     const value = await retry(

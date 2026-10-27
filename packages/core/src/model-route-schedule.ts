@@ -223,7 +223,13 @@ export const parse = (value: unknown): Window | undefined => {
     if (!Array.isArray(rawDaysOfMonth)) return undefined
     const parsed = rawDaysOfMonth.map(dayOfMonth)
     if (parsed.length === 0 || parsed.some((day) => day === undefined)) return undefined
-    const days = [...new Set(parsed as number[])]
+    // Canonical order, like daysOfWeek: numeric days ascending, with the -1 "last day"
+    // sentinel last — a raw numeric sort would put the sentinel first.
+    const days = [...new Set(parsed as number[])].sort((left, right) => {
+      if (left === -1) return 1
+      if (right === -1) return -1
+      return left - right
+    })
     result.daysOfMonth = days
   }
 

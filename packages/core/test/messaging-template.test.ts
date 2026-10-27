@@ -57,3 +57,27 @@ describe("MessagingTemplate.render expansion limits", () => {
     await expect(rendered("{v1}", chain(8))).resolves.toBe("done")
   })
 })
+
+describe("MessagingTemplate.parseTime bare epochs", () => {
+  const now = Date.parse("2026-10-27T00:00:00Z")
+
+  test("a 10-digit epoch-seconds value is scaled to milliseconds", () => {
+    expect(MessagingTemplate.parseTime("1767225600", now)).toBe(1767225600000)
+  })
+
+  test("a 13-digit epoch-milliseconds value is read as-is and agrees with the seconds form", () => {
+    expect(MessagingTemplate.parseTime("1767225600000", now)).toBe(1767225600000)
+    expect(MessagingTemplate.parseTime("1767225600000", now)).toBe(MessagingTemplate.parseTime("1767225600", now))
+  })
+
+  test("other bare-digit lengths are rejected instead of silently misread", () => {
+    expect(MessagingTemplate.parseTime("999999999", now)).toBeUndefined()
+    expect(MessagingTemplate.parseTime("17672256000", now)).toBeUndefined()
+    expect(MessagingTemplate.parseTime("17672256000000", now)).toBeUndefined()
+  })
+
+  test("ISO and relative forms still parse", () => {
+    expect(MessagingTemplate.parseTime("2026-01-01T00:00:00Z", now)).toBe(1767225600000)
+    expect(MessagingTemplate.parseTime("2h", now)).toBe(now - 2 * 3_600_000)
+  })
+})
