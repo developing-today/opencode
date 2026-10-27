@@ -79,6 +79,24 @@ export const substitute = Effect.fn("ConfigVariable.substitute")(function* (inpu
   return yield* substituteFiles(input, env(true))
 })
 
+/** Whether a reference at the end of `prefix` — the config text before it, back to the start of
+ * its line — sits inside a // comment. A // outside any string starts the comment (at the line
+ * start or trailing live code); a // inside a string value, like a URL's, does not. */
+const inComment = (prefix: string) => {
+  let inString = false
+  for (let i = 0; i < prefix.length; i++) {
+    const char = prefix[i]
+    if (inString) {
+      if (char === "\\") i++
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') inString = true
+    else if (char === "/" && prefix[i + 1] === "/") return true
+  }
+  return false
+}
+
 const substituteFiles = Effect.fnUntraced(function* (input: SubstituteInput, substituted: Substituted) {
   const fs = yield* FSUtil.Service
   const text = substituted.text
@@ -97,8 +115,7 @@ const substituteFiles = Effect.fnUntraced(function* (input: SubstituteInput, sub
     // into the config.
     const authored = substituted.authored.some(([start, end]) => index >= start && index + token.length <= end)
     const lineStart = text.lastIndexOf("\n", index - 1) + 1
-    const prefix = text.slice(lineStart, index).trimStart()
-    if (!authored || prefix.startsWith("//")) {
+    if (!authored || inComment(text.slice(lineStart, index))) {
       out += token
       cursor = index + token.length
       continue

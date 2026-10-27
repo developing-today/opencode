@@ -1571,6 +1571,33 @@ describe("Config", () => {
     ),
   )
 
+  it.live("does not expand file references in trailing // comments", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() => fs.writeFile(path.join(tmp.path, "secret.txt"), "TOPSECRET"))
+          const substitute = (text: string) =>
+            ConfigVariable.substitute({ type: "virtual", source: "test", dir: tmp.path, text, env: {} })
+
+          // Trailing comment: both tokens stay verbatim, so neither file is read
+          // (the existing one would become TOPSECRET, the missing one would vanish).
+          const trailing = yield* substitute(
+            ["{", '  "v": "ok", // example: {file:secret.txt} and {file:missing.txt}', "}"].join("\n"),
+          )
+          expect(trailing).toContain("// example: {file:secret.txt} and {file:missing.txt}")
+
+          // Full-line comment: already covered by the line-start guard, still verbatim.
+          const fullLine = yield* substitute(["{", "  // {file:secret.txt}", '  "v": "ok"', "}"].join("\n"))
+          expect(fullLine).toContain("// {file:secret.txt}")
+
+          // A // inside a string value (a URL) does not start a comment: the token still expands.
+          const inString = yield* substitute('{ "v": "https://example.com/{file:secret.txt}" }')
+          expect(JSON.parse(inString)).toEqual({ v: "https://example.com/TOPSECRET" })
+        }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
+      ),
+    ),
+  )
+
   it.live("does not expand file references from env values in the escaped repair pass", () =>
     Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
       Effect.flatMap((tmp) =>
