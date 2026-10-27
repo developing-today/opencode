@@ -500,7 +500,7 @@ export function timeZone() {
 export const defaultSessionStart =
   "Session started {session_start} ({system_time_zone}). Session ID: {session_id}.{session_lineage}"
 
-/** Parses an ISO time or a relative age such as 90s, 15m, 2h, 3d or 1w into epoch milliseconds. */
+/** Parses an ISO time, a relative age such as 90s, 15m, 2h, 3d or 1w, or a bare epoch timestamp into epoch milliseconds. Bare epochs are magnitude-aware: exactly 10 digits are epoch seconds (the form most tools emit) and are scaled to milliseconds; exactly 13 digits are epoch milliseconds. Any other bare-digit length is rejected (undefined, so callers raise Invalid time) instead of being silently misread. */
 export function parseTime(input: string, now: number): number | undefined {
   const relative = /^(\d+(?:\.\d+)?)\s*(s|m|h|d|w)$/i.exec(input.trim())
   if (relative) {
@@ -509,7 +509,10 @@ export function parseTime(input: string, now: number): number | undefined {
     ]
     return now - Number(relative[1]) * unit
   }
-  if (/^\d{10,}$/.test(input.trim())) return Number(input.trim())
+  const bare = input.trim()
+  if (/^\d{10}$/.test(bare)) return Number(bare) * 1_000
+  if (/^\d{13}$/.test(bare)) return Number(bare)
+  if (/^\d+$/.test(bare)) return undefined
   const parsed = Date.parse(input)
   return Number.isNaN(parsed) ? undefined : parsed
 }
