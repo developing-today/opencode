@@ -1508,6 +1508,46 @@ describe("Config", () => {
     }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
   )
 
+  it.effect("does not substitute env references on // comment lines", () =>
+    Effect.gen(function* () {
+      const substitute = (text: string, env: Record<string, string>) =>
+        ConfigVariable.substitute({ type: "virtual", source: "test", dir: "/", text, env })
+
+      const commented = yield* substitute(
+        ["{", "  // example: {env:SECRET} and {env:OPENCODE_TEST_MISSING:-fallback}", '  "v": "{env:SECRET}"', "}"].join(
+          "\n",
+        ),
+        { SECRET: "injected" },
+      )
+      expect(commented).toBe(
+        ["{", "  // example: {env:SECRET} and {env:OPENCODE_TEST_MISSING:-fallback}", '  "v": "injected"', "}"].join("\n"),
+      )
+
+      const multiline = ['{', "  // note: {env:MULTILINE}", '  "v": "ok"', "}"].join("\n")
+      const result = yield* substitute(multiline, { MULTILINE: 'evil"\n, "injected": "yes' })
+      expect(result).toBe(multiline)
+    }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
+  )
+
+  it.effect("does not substitute env references on // comment lines in the escaped repair pass", () =>
+    Effect.gen(function* () {
+      const value = String.raw`C:\secrets\key`
+      const text = yield* ConfigVariable.substitute({
+        type: "virtual",
+        source: "test",
+        dir: "/",
+        text: ["{", "  // path example: {env:WINPATH}", '  "v": "{env:WINPATH}"', "}"].join("\n"),
+        env: { WINPATH: value },
+      })
+      expect(text).toContain("// path example: {env:WINPATH}")
+      const stripped = text
+        .split("\n")
+        .filter((line) => !line.trimStart().startsWith("//"))
+        .join("\n")
+      expect(JSON.parse(stripped)).toEqual({ v: value })
+    }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
+  )
+
   it.live("does not expand file references introduced by env values or fallbacks", () =>
     Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
       Effect.flatMap((tmp) =>

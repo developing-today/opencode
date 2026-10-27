@@ -50,6 +50,15 @@ export const substitute = Effect.fn("ConfigVariable.substitute")(function* (inpu
     for (const match of input.text.matchAll(/\{env:([^}]+)\}/g)) {
       const token = match[1]
       push(input.text.slice(cursor, match.index), true)
+      // Same comment-line guard as the file pass below: a reference on a // comment line
+      // stays literal, so a commented-out example never expands — and a newline in the
+      // value cannot break out of the comment into live config text.
+      const lineStart = input.text.lastIndexOf("\n", match.index - 1) + 1
+      if (input.text.slice(lineStart, match.index).trimStart().startsWith("//")) {
+        push(match[0], true)
+        cursor = match.index + match[0].length
+        continue
+      }
       // Shell-style default: {env:VAR:-fallback} resolves to the fallback when VAR is unset
       // or empty, so a config can name a working default instead of silently substituting "".
       const separator = token.indexOf(":-")
