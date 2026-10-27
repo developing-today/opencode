@@ -1,6 +1,6 @@
 export * as ModelRouteLog from "./model-route-log.js"
 
-import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm" 
+import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm"
 import { Effect, Layer, Queue } from "effect"
 import type { AIError, HttpContext } from "@opencode/ai"
 import { RequestExecutor, type StreamOptions } from "@opencode/ai/route"
@@ -347,12 +347,7 @@ export const restoreCooldownsFrom = (db: Database.Interface["db"]) =>
         time: RouteAttemptTable.time_ended,
       })
       .from(RouteAttemptTable)
-      .where(
-        and(
-          gte(RouteAttemptTable.time_ended, now - 86_400_000),
-          sql`${RouteAttemptTable.quota} is not null`,
-        ),
-      )
+      .where(and(gte(RouteAttemptTable.time_ended, now - 86_400_000), sql`${RouteAttemptTable.quota} is not null`))
       .orderBy(asc(RouteAttemptTable.time_ended))
       .all()
       .pipe(Effect.orElseSucceed(() => []))
@@ -377,9 +372,7 @@ export const restoreCooldownsFrom = (db: Database.Interface["db"]) =>
       else windows.set(id, { providerID: row.providerID, modelID: row.modelID, until: 0, snapshot: parsed })
     }
     restoreCooldowns?.([...latest.values()].filter((row) => row.until > now))
-    restoreLimits?.(
-      [...windows.values()].filter((row) => row.until > now || row.snapshot !== undefined),
-    )
+    restoreLimits?.([...windows.values()].filter((row) => row.until > now || row.snapshot !== undefined))
   })
 
 /** Usage of the last day, so budgets survive a restart. */
@@ -677,8 +670,10 @@ export const sessionUsage = (db: Database.Interface["db"], since: number, limit:
     .limit(limit)
     .all()
 
-/** Totals per session, pool and target, for the sessions named. */
-export const sessionTargetUsage = (db: Database.Interface["db"], sessionIDs: readonly string[]) =>
+/** Totals per session, pool and target, for the sessions named, counting only attempts started at
+ * or after `since` — the same bound `sessionUsage` applies, so a report never mixes all-time
+ * per-target rows with windowed session totals (#576). */
+export const sessionTargetUsage = (db: Database.Interface["db"], sessionIDs: readonly string[], since = 0) =>
   sessionIDs.length === 0
     ? Effect.succeed([])
     : db
@@ -690,7 +685,7 @@ export const sessionTargetUsage = (db: Database.Interface["db"], sessionIDs: rea
           ...usageColumns,
         })
         .from(RouteAttemptTable)
-        .where(inArray(RouteAttemptTable.session_id, [...sessionIDs]))
+        .where(and(inArray(RouteAttemptTable.session_id, [...sessionIDs]), gte(RouteAttemptTable.time_started, since)))
         .groupBy(
           RouteAttemptTable.session_id,
           RouteAttemptTable.route_id,

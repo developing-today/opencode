@@ -81,6 +81,7 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
         const sessionTargets = yield* ModelRouteLog.sessionTargetUsage(
           db,
           sessions.flatMap((row) => (row.sessionID === null ? [] : [row.sessionID])),
+          since,
         )
         const targets = yield* ModelRouteLog.targetUsage(db, since)
         const days = yield* ModelRouteLog.dailyUsage(db, since)

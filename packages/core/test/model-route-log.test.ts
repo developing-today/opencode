@@ -4,6 +4,8 @@ import { Database } from "@opencode/core/database/database"
 import { ModelRoute } from "@opencode/core/model-route"
 import { Permission } from "@opencode/core/permission"
 import { ModelRouteLog } from "@opencode/core/model-route-log"
+import { ModelPlan } from "@opencode/core/model-plan"
+import { ModelUsage } from "@opencode/core/model-usage"
 import { ModelRouteReview } from "@opencode/core/model-route-review"
 import { AIError, QuotaExceededError } from "@opencode/ai"
 import { RouteStatsTool } from "@opencode/core/tool/plugin/route-stats"
@@ -214,6 +216,59 @@ describe("usage history", () => {
       }>
       expect(offers.find((row) => row.target === "openai/gpt-6-luna")).toMatchObject({ offered: 1, chosen: 1 })
       expect(offers.find((row) => row.target === "azure/gpt-6-luna")).toMatchObject({ offered: 1, chosen: 0 })
+    }),
+  )
+  it.live("bounds session target usage to the report window, so plan-window shares use in-window usage (#576)", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      ModelRouteLog.record({
+        kind: "attempt",
+        row: attempt({
+          route_id: "usage-pool",
+          session_id: "ses_window",
+          time_started: 1_000,
+          time_ended: 2_000,
+          tokens_input: 900,
+        }),
+      })
+      ModelRouteLog.record({
+        kind: "attempt",
+        row: attempt({
+          route_id: "usage-pool",
+          session_id: "ses_window",
+          time_started: 3_000,
+          time_ended: 4_000,
+          tokens_input: 100,
+        }),
+      })
+      yield* Effect.sleep("100 millis")
+
+      const sessions = (yield* ModelRouteLog.sessionUsage(db, 3_000, 50)).flatMap((row) =>
+        row.sessionID === "ses_window" ? [{ ...row, sessionID: row.sessionID }] : [],
+      )
+      expect(sessions[0]).toMatchObject({ requests: 1, input: 100 })
+
+      const bounded = yield* ModelRouteLog.sessionTargetUsage(db, ["ses_window"], 3_000)
+      expect(bounded).toEqual([expect.objectContaining({ requests: 1, input: 100 })])
+      const allTime = yield* ModelRouteLog.sessionTargetUsage(db, ["ses_window"])
+      expect(allTime).toEqual([expect.objectContaining({ requests: 2, input: 1_000 })])
+
+      const plan = {
+        id: "openai-plan",
+        providerID: "openai",
+        label: "Plan",
+        coverage: "subscription",
+        quotas: [],
+        status: "active",
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+      } as ModelPlan.Plan
+      const window = { name: "daily", unit: "tokens", limit: 1_000, windowHours: 24 } as ModelPlan.QuotaWindow
+      const [report] = ModelUsage.sessionReports(sessions, bounded, [{ plan, window }])
+      // In-window usage is 100 metered tokens of a 1,000 limit; the all-time rows would say 100%.
+      expect(report?.windows).toEqual([
+        { plan: "openai-plan", window: "daily", unit: "tokens", used: 100, percent: 10 },
+      ])
     }),
   )
 })
