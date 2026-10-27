@@ -1,15 +1,12 @@
 export * as Session from "./session.js"
 
-import { Context, DateTime, Effect, Fiber, Option, Scope } from "effect"
-import type { Entry } from "@opencode/schema/config"
+import { DateTime, Effect, Fiber, Option, Scope } from "effect"
 import type { Agent } from "@opencode/schema/agent"
 import type { Model } from "@opencode/schema/model"
 import type { Permission } from "@opencode/schema/permission"
 import { Event } from "@opencode/schema/event"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Bus } from "../bus.js"
-import { Config } from "../config.js"
-import { Provider } from "../provider.js"
 import { Database } from "../database/database.js"
 import { Instance } from "../instance/service.js"
 import { LocationServiceMap } from "../location-service-map.js"
@@ -33,6 +30,7 @@ import { SessionRevert } from "./revert.js"
 import { SessionShell } from "./shell.js"
 import { SessionSkill } from "./skill.js"
 import { ModelGovernance } from "./model-governance.js"
+import { GovernanceConfig } from "./governance-config.js"
 import { SessionSchema } from "./schema.js"
 import { SessionStore } from "./store.js"
 
@@ -105,43 +103,8 @@ export const make = Effect.fn("Session.make")(function* () {
     yield* get(sessionID)
     yield* bus.publish(SessionEvent.SubagentPolicyUpdated, { sessionID, subagentPolicy: input.subagentPolicy })
   })
-  // Governance reads agent definitions from the session location's config
-  // entries, but only when the location's services are already initialized:
-  // session operations never initialize a location just to read them. An
-  // uninitialized location has no definition layer; session policies still
-  // apply.
-  // Governance also judges route targets against the location's provider
-  // catalog (#530), read from the same already-initialized context. A
-  // location with no provider service supplies no catalog and route targets
-  // are judged literally, as before.
-  const governanceConfig = (session: SessionSchema.Info) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        if (locations === undefined)
-          return { entries: [] as Entry[], catalog: undefined as ModelGovernance.Catalog | undefined }
-        const context = yield* locations.contextEffectOption(session.location)
-        if (Option.isNone(context)) return { entries: [] as Entry[], catalog: undefined as ModelGovernance.Catalog | undefined }
-        const config = Context.getOption(context.value, Config.Service)
-        const entries = config._tag === "Some" ? yield* config.value.entries() : ([] as Entry[])
-        const provider = Context.getOption(context.value, Provider.Service)
-        if (provider._tag === "None") return { entries, catalog: undefined }
-        const snapshot = yield* provider.value.snapshot()
-        const catalog: ModelGovernance.Catalog = new Map(
-          Array.from(snapshot.records, ([providerID, record]) => [
-            providerID as string,
-            new Map(
-              Array.from(record.models, ([id, model]) => [
-                id as string,
-                { enabled: model.enabled, variants: model.variants },
-              ]),
-            ),
-          ]),
-        )
-        return { entries, catalog }
-      }),
-    ).pipe(
-      Effect.orElseSucceed(() => ({ entries: [] as Entry[], catalog: undefined as ModelGovernance.Catalog | undefined })),
-    )
+  // Governance inputs (config entries + provider catalog) come from the one
+  // shared construction in governance-config.ts: GovernanceConfig.load.
   const switchAgent = Effect.fn("Session.switchAgent")(function* (
     sessionID: SessionSchema.ID,
     input: { agent: Agent.ID; model?: Model.Ref },
@@ -155,7 +118,7 @@ export const make = Effect.fn("Session.make")(function* () {
     // neither exists.
     if (session.parentID) {
       const parent = yield* get(session.parentID)
-      const { entries, catalog } = yield* governanceConfig(session)
+      const { entries, catalog } = yield* GovernanceConfig.load(locations, session.location)
       yield* ModelGovernance.assertAllowed(
         { get },
         { entries: () => Effect.succeed(entries), catalog: () => Effect.succeed(catalog) },
@@ -183,7 +146,7 @@ export const make = Effect.fn("Session.make")(function* () {
     // allows; top-level sessions are unchecked.
     if (session.parentID) {
       const parent = yield* get(session.parentID)
-      const { entries, catalog } = yield* governanceConfig(session)
+      const { entries, catalog } = yield* GovernanceConfig.load(locations, session.location)
       yield* ModelGovernance.assertAllowed(
         { get },
         { entries: () => Effect.succeed(entries), catalog: () => Effect.succeed(catalog) },
