@@ -260,6 +260,10 @@ export const parse = (value: unknown): Window | undefined => {
     result[key] = raw
   }
   if (result.from !== undefined && result.until !== undefined && result.from >= result.until) return undefined
+  // The same empty-range rule for the daily window: start == end can never be active
+  // (minuteMatches treats it as empty, not a full day), so accepting it would store a
+  // rule that silently never fires. An all-day window omits both fields instead.
+  if (result.start !== undefined && result.start === result.end) return undefined
 
   return result
 }

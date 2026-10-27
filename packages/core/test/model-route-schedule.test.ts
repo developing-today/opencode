@@ -155,7 +155,18 @@ describe("ModelRouteSchedule.active", () => {
   })
 
   test("an equal start and end is an empty window, not a full day", () => {
-    const window = ModelRouteSchedule.parse({ start: "09:00", end: "09:00" })!
+    const window: ModelRouteSchedule.Window = { start: "09:00", end: "09:00" }
     expect(ModelRouteSchedule.active(window, monday)).toBe(false)
+  })
+
+  test("parse rejects a start equal to its end, like an empty from/until range", () => {
+    expect(ModelRouteSchedule.parse({ start: "09:00", end: "09:00" })).toBeUndefined()
+    // Spellings that normalize to the same time are equal too.
+    expect(ModelRouteSchedule.parse({ start: "9:00", end: "09:00" })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["mon"], start: "00:00", end: "00:00" })).toBeUndefined()
+    // A wrapping window and one-sided windows are unaffected.
+    expect(ModelRouteSchedule.parse({ start: "22:00", end: "02:00" })).toEqual({ start: "22:00", end: "02:00" })
+    expect(ModelRouteSchedule.parse({ start: "09:00" })).toEqual({ start: "09:00" })
+    expect(ModelRouteSchedule.parse({ end: "09:00" })).toEqual({ end: "09:00" })
   })
 })
