@@ -318,7 +318,7 @@ export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: N
 export const daysSince = (date: string | undefined, now: number) => {
   if (date === undefined) return null
   const at = Date.parse(date)
-  return Number.isNaN(at) ? null : Math.floor((now - at) / 86_400_000)
+  return Number.isNaN(at) ? null : Math.max(0, Math.floor((now - at) / 86_400_000))
 }
 
 const GENERAL_GUIDANCE = [

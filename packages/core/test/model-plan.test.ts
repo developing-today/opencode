@@ -150,9 +150,15 @@ describe("ModelPlan store", () => {
     expect(ModelPlan.readNotes({ limit: 1 }, root).notes[0]?.kind).toBe("expectation")
   })
 
-  test("staleness counts whole days, and a blank note is refused", () => {
-    expect(ModelPlan.daysSince("2026-10-04", Date.parse(NOW))).toBe(10)
-    expect(ModelPlan.daysSince(undefined, Date.parse(NOW))).toBeNull()
+  test("staleness counts whole days without going negative, and a blank note is refused", () => {
+    const now = Date.parse(NOW)
+    expect(ModelPlan.daysSince("2026-10-04", now)).toBe(10)
+    expect(ModelPlan.daysSince(new Date(now - 60 * 60 * 1000).toISOString(), now)).toBe(0)
+    expect(ModelPlan.daysSince(new Date(now - 25 * 60 * 60 * 1000).toISOString(), now)).toBe(1)
+    expect(ModelPlan.daysSince(new Date(now + 60 * 60 * 1000).toISOString(), now)).toBe(0)
+    expect(ModelPlan.daysSince(new Date(now + 10 * 86_400_000).toISOString(), now)).toBe(0)
+    expect(ModelPlan.daysSince(undefined, now)).toBeNull()
+    expect(ModelPlan.daysSince("not a date", now)).toBeNull()
     expect(() => ModelPlan.addNote({ text: "   " }, NOW, dir())).toThrow("some text")
   })
 
