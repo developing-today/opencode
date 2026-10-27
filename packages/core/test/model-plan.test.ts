@@ -150,6 +150,40 @@ describe("ModelPlan store", () => {
     expect(ModelPlan.readNotes({ limit: 1 }, root).notes[0]?.kind).toBe("expectation")
   })
 
+  test("notes sort chronologically across timestamp formats and limits keep the newest", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "half second later" }, "2026-10-27T09:00:00.500Z", root)
+    ModelPlan.addNote({ text: "same time without milliseconds" }, "2026-10-27T09:00:00Z", root)
+    ModelPlan.addNote({ text: "offset, but earliest" }, "2026-10-27T10:30:00+02:00", root)
+
+    expect(ModelPlan.readNotes({}, root).notes.map((note) => note.text)).toEqual([
+      "offset, but earliest",
+      "same time without milliseconds",
+      "half second later",
+    ])
+    expect(ModelPlan.readNotes({ limit: 1 }, root).notes.map((note) => note.text)).toEqual(["half second later"])
+    expect(ModelPlan.readNotes({ limit: 2 }, root).notes.map((note) => note.text)).toEqual([
+      "same time without milliseconds",
+      "half second later",
+    ])
+  })
+
+  test("unparseable timestamps sort before parsed dates and equal instants stay stable", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "unparseable" }, "not-a-date", root)
+    ModelPlan.addNote({ text: "equal instant first" }, "2026-10-27T09:00:00Z", root)
+    ModelPlan.addNote({ text: "equal instant second" }, "2026-10-27T11:00:00+02:00", root)
+    ModelPlan.addNote({ text: "later" }, "2026-10-27T09:00:01Z", root)
+
+    expect(ModelPlan.readNotes({}, root).notes.map((note) => note.text)).toEqual([
+      "unparseable",
+      "equal instant first",
+      "equal instant second",
+      "later",
+    ])
+    expect(ModelPlan.readNotes({ limit: 1 }, root).notes.map((note) => note.text)).toEqual(["later"])
+  })
+
   test("staleness counts whole days, and a blank note is refused", () => {
     expect(ModelPlan.daysSince("2026-10-04", Date.parse(NOW))).toBe(10)
     expect(ModelPlan.daysSince(undefined, Date.parse(NOW))).toBeNull()
