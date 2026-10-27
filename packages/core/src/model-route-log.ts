@@ -216,16 +216,24 @@ export const onCaptureErrorBodies = (read: () => boolean) => {
   captureErrorBodies = read
 }
 
-/** Scrubs what looks like a credential from a provider error body before it is stored: bearer tokens,
- * key-like fields, and `sk-`-style keys. A heuristic, which is why keeping bodies is opt-in. */
+/** Scrubs what looks like a credential from a provider error body before it is stored: bearer and
+ * basic auth, key-like fields, `sk-`-style keys, and the published GitHub, AWS, Slack, Google and
+ * JWT token formats, plus passwords in URL userinfo. A heuristic, which is why keeping bodies is opt-in. */
 const redactBody = (body: string) =>
   body
     .replace(/\bbearer\s+[^\s"',;]+/gi, "Bearer [REDACTED]")
+    .replace(/\bbasic\s+[A-Za-z0-9+/=]{8,}/gi, "Basic [REDACTED]")
     .replace(
       /(["']?(?:api[_-]?key|authorization|access[_-]?token|token|secret|password)["']?\s*[:=]\s*["']?)[^\s"',;}]+/gi,
       "$1[REDACTED]",
     )
     .replace(/\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{8,}/g, "[REDACTED]")
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g, "[REDACTED]")
+    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "[REDACTED]")
+    .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}/g, "[REDACTED]")
+    .replace(/\bAIza[A-Za-z0-9_-]{10,}/g, "[REDACTED]")
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[REDACTED]")
+    .replace(/(\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s/:@]+:)[^\s/@]+@/g, "$1[REDACTED]@")
 
 export const failureFields = (reason: unknown, options?: { readonly captureBody?: boolean }) => {
   const value = (reason ?? {}) as Record<string, unknown>
