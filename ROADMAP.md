@@ -65,7 +65,6 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 
 | Title                                    | Horizon | Status   | Intent                                                                                                      | Links |
 | ---------------------------------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------- | ----- |
-| A Nix check that completes               | Next    | proposed | Replace `nix-eval` and `nix-hashes`, which have effectively never finished.                                 | #49   |
 
 ## Upstream sync
 

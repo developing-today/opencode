@@ -151,6 +151,19 @@ describe("ModelRouteTuning.parseQuotaReset", () => {
     // Decimal and compound relative forms read as the total wait, like in ModelRouteLimits.
     expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 1.5 hours", at)).toBe(at + 5_400_000)
     expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 1 hour 30 minutes", at)).toBe(at + 5_400_000)
+    // Paired with model-route-limits: every absolute-time keyword reads the same instant here.
+    const instant = Date.parse("2026-01-02T00:00:00Z")
+    for (const message of [
+      "quota expires at 2026-01-02T00:00:00Z",
+      "quota retry at 2026-01-02T00:00:00Z",
+      "quota wait until 2026-01-02T00:00:00Z",
+      "quota try again at 2026-01-02T00:00:00Z",
+      "quota available at 2026-01-02T00:00:00Z",
+      "quota resets at 2026-01-02T00:00:00Z",
+    ])
+      expect(ModelRouteTuning.parseQuotaReset(message, at)).toBe(instant)
+    // The quota gate is unchanged: the same keywords without a quota/limit mention read nothing.
+    expect(ModelRouteTuning.parseQuotaReset("available at 2026-01-02T00:00:00Z", at)).toBeUndefined()
     expect(ModelRouteTuning.parseQuotaReset("try in 5 minutes", at)).toBeUndefined()
     expect(ModelRouteTuning.parseQuotaReset(undefined, at)).toBeUndefined()
   })

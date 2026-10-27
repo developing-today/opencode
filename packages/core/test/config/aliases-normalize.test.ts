@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import { Schema } from "effect"
+import { Config } from "@opencode/core/config"
 import { ConfigNormalize } from "@opencode/core/config/normalize"
+import { ModelAlias } from "@opencode/core/model-alias"
+import { Info } from "@opencode/schema/config"
 
 describe("ConfigNormalize with Aliases", () => {
   test("resolves aliases in default model, agents, commands, and model_routes", () => {
@@ -143,5 +147,31 @@ describe("ConfigNormalize with Aliases", () => {
       providerID: "deepseek",
       model: "fast-model",
     })
+  })
+
+  test("the resolver's config seam returns the aliases and expands a bare alias", () => {
+    const rawConfig = {
+      aliases: {
+        providers: { ds: "deepseek" },
+        models: { flash: "deepseek/deepseek-chat#high", "deepseek/pro": "deepseek-v4-pro" },
+        variants: { hi: "high", "deepseek/*#hi": "max" },
+      },
+    }
+
+    const result = ConfigNormalize.normalize(rawConfig)
+    if (result.type !== "normalized") throw new Error("expected normalized config")
+    const info = Schema.decodeUnknownSync(Info, { errors: "all", onExcessProperty: "ignore" })(
+      result.encoded,
+    ) as Info
+    const entries = [{ type: "document" as const, info }]
+
+    // This is exactly what ModelResolver.resolve and SessionRunnerModel.resolve read.
+    const aliases = Config.latest(entries, "aliases")
+    expect(aliases).toBeDefined()
+
+    // A bare alias arrives from the CLI as providerID with an empty model id.
+    expect(ModelAlias.resolve(aliases, "flash")).toBe("deepseek/deepseek-chat#high")
+    expect(ModelAlias.resolve(aliases, "ds/pro")).toBe("deepseek/deepseek-v4-pro")
+    expect(ModelAlias.resolve(aliases, "ds/deepseek-chat#hi")).toBe("deepseek/deepseek-chat#max")
   })
 })

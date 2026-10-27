@@ -35,6 +35,14 @@ describe("ModelRouteSchedule.parse", () => {
     expect(ModelRouteSchedule.parse({ from: 100, until: 100 })).toBeUndefined()
   })
 
+  test("accepts zero-padded weekday strings like days of month", () => {
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["06"] })).toEqual({ daysOfWeek: [6] })
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["00", "01", 2] })).toEqual({ daysOfWeek: [0, 1, 2] })
+    // Padding does not widen the range, and a mixed list is still rejected whole.
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["07"] })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["06", "frieday"] })).toBeUndefined()
+  })
+
   test("keeps named days from every conventional spelling", () => {
     const parsed = ModelRouteSchedule.parse({ daysOfWeek: ["tues", "thurs", "sun"] })
     expect(parsed?.daysOfWeek).toEqual([0, 2, 4])
@@ -76,6 +84,48 @@ describe("ModelRouteSchedule.active", () => {
     expect(ModelRouteSchedule.active(window, monday + 9 * HOUR)).toBe(true) // Tue 01:00
     expect(ModelRouteSchedule.active(window, monday + 11 * HOUR)).toBe(false) // Tue 03:00
     expect(ModelRouteSchedule.active(window, monday - 2 * HOUR)).toBe(false) // Sun 13:00
+  })
+
+  test("a wrapping window's tail belongs to the previous day on the DST fall-back night", () => {
+    // DST ends in Chicago on Sun 2026-11-01: 02:00 CDT falls back to 01:00 CST, so 01:30 occurs twice.
+    const saturday = ModelRouteSchedule.parse({
+      daysOfWeek: ["sat"],
+      start: "22:00",
+      end: "02:00",
+      timezone: "America/Chicago",
+    })!
+    const sunday = ModelRouteSchedule.parse({
+      daysOfWeek: ["sun"],
+      start: "22:00",
+      end: "02:00",
+      timezone: "America/Chicago",
+    })!
+    const first = Date.UTC(2026, 10, 1, 6, 30) // Sun 01:30 CDT, first occurrence
+    const repeated = Date.UTC(2026, 10, 1, 7, 30) // Sun 01:30 CST, repeated hour
+    expect(ModelRouteSchedule.active(saturday, first)).toBe(true)
+    expect(ModelRouteSchedule.active(saturday, repeated)).toBe(true)
+    expect(ModelRouteSchedule.active(saturday, Date.UTC(2026, 10, 1, 7, 59))).toBe(true) // 01:59 CST
+    expect(ModelRouteSchedule.active(sunday, repeated)).toBe(false)
+    // Normal week control: Sun 2026-11-08 01:30 CST is Saturday Nov 7's tail.
+    expect(ModelRouteSchedule.active(saturday, Date.UTC(2026, 10, 8, 7, 30))).toBe(true)
+  })
+
+  test("a wrapping window's tail judges days of month on the previous day", () => {
+    // Oct 31 2026 is the last day of October; its 22:00-02:00 window runs into Nov 1.
+    const window = ModelRouteSchedule.parse({
+      daysOfMonth: [-1],
+      start: "22:00",
+      end: "02:00",
+      timezone: "America/Chicago",
+    })!
+    expect(ModelRouteSchedule.active(window, Date.UTC(2026, 10, 1, 7, 30))).toBe(true) // Nov 1 01:30 CST, repeated hour
+    const first = ModelRouteSchedule.parse({
+      daysOfMonth: [1],
+      start: "22:00",
+      end: "02:00",
+      timezone: "America/Chicago",
+    })!
+    expect(ModelRouteSchedule.active(first, Date.UTC(2026, 10, 1, 7, 30))).toBe(false)
   })
 
   test("an end with no start means until that time, and a start with no end means from it", () => {

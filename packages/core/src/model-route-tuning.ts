@@ -160,14 +160,13 @@ export const parseQuotaReset = (message: string | undefined, now: number): numbe
   const text = message.toLowerCase()
   if (!/(?:quota|limit|rate limit)/.test(text)) return undefined
   // The zone designator stays in the capture so Date.parse honours it instead of reading the
-  // timestamp as local time (see ModelRouteLimits.resetAtFromMessage). The filler between the
-  // keyword and the date also allows hyphens, so a hyphenated non-date word ("reset at
-  // not-a-date 2026-01-02…") does not break the match before the real date.
+  // timestamp as local time (see ModelRouteLimits.resetAtFromMessage).
+  // The absolute branch shares ModelRouteLimits.ABSOLUTE_TIME so the two parsers cannot
+  // drift apart on keywords again; the quota gate above stays local to this parser.
   // Scan every absolute candidate: an unparseable first date (e.g. month 13) must not shadow
   // a later valid reset stated in the same message.
-  const absolutePattern =
-    /(?:reset|resume|back|available|return)[-a-z ]{0,20}(?:at|on)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?)/g
-  for (const [, absolute] of text.matchAll(absolutePattern)) {
+  for (const [, absolute] of text.matchAll(new RegExp(ModelRouteLimits.ABSOLUTE_TIME.source, "g"))) {
+
     const date = Date.parse(absolute)
     if (!Number.isNaN(date)) return date
   }
