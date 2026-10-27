@@ -69,6 +69,22 @@ export interface Member {
   readonly takeRate: number | null
   /** Selections in which it was left out, by reason: cooldown, provider-limit, user-skip, soft-budget, already-tried. */
   readonly excluded: Readonly<Record<string, number>>
+  /** Per-layer weight attribution from the most recent selection it was a candidate in, or null
+   * when no recorded decision carries layers for it (decisions recorded before #589, or none). */
+  readonly weightLayers: WeightLayers | null
+}
+
+/** The weight a candidate carried after each layer of the route weight computation in one
+ * selection (#589): configured `base`, then `scheduled`, `prefer`, `adjustment`, and `demotion`
+ * (the final effective weight). `gate` is the eligibility-gate verdict slot (#566); null until
+ * gates exist. */
+export interface WeightLayers {
+  readonly base: number
+  readonly scheduled: number
+  readonly prefer: number
+  readonly adjustment: number
+  readonly demotion: number
+  readonly gate: string | null
 }
 
 export interface RouteSummary {
@@ -145,6 +161,29 @@ const weightsOf = (detail: Record<string, unknown> | null): Readonly<Record<stri
   )
 }
 
+/** The per-layer weight attribution a selection recorded, per candidate label. */
+export const layersOf = (detail: Record<string, unknown> | null): Readonly<Record<string, WeightLayers>> => {
+  const value = detail?.layers
+  if (typeof value !== "object" || value === null) return {}
+  const layers: Record<string, WeightLayers> = {}
+  for (const [label, item] of Object.entries(value)) {
+    if (typeof item !== "object" || item === null) continue
+    const fields = item as Record<string, unknown>
+    const numbers = ["base", "scheduled", "prefer", "adjustment", "demotion"].map((key) => fields[key])
+    if (numbers.some((field) => typeof field !== "number")) continue
+    const [base, scheduled, prefer, adjustment, demotion] = numbers as number[]
+    layers[label] = {
+      base,
+      scheduled,
+      prefer,
+      adjustment,
+      demotion,
+      gate: typeof fields.gate === "string" ? fields.gate : null,
+    }
+  }
+  return layers
+}
+
 /** Who a selection left out and why. The `-until:<time>` suffix is dropped so that reasons group. */
 const excludedOf = (detail: Record<string, unknown> | null) => {
   const value = detail?.excluded
@@ -189,9 +228,11 @@ const memberOf = (
   let drawsWon = 0
   let shares = 0
   let shareTotal = 0
+  let weightLayers: WeightLayers | null = null
   for (const decision of decisions) {
     if (decision.candidates.includes(target)) {
       offered += 1
+      weightLayers = layersOf(decision.detail)[target] ?? weightLayers
       if (decision.chosen === target) chosen += 1
       if (decision.reason === "drawn") {
         const weights = weightsOf(decision.detail)
@@ -233,6 +274,7 @@ const memberOf = (
     expectedShare: shares === 0 ? null : round(shareTotal / shares, 3),
     takeRate: draws === 0 ? null : round(drawsWon / draws, 3),
     excluded,
+    weightLayers,
   }
 }
 
