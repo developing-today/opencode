@@ -274,6 +274,13 @@ describe("Form", () => {
 
       expect(
         yield* flipCreate([
+          { key: "a", type: "external", url: "https://example.com" },
+          { key: "b", type: "string", when: [{ key: "a", op: "eq", value: "yes" }] },
+        ]),
+      ).toEqual(new Form.InvalidFormError({ message: "Form field condition value must be a boolean: b -> a" }))
+
+      expect(
+        yield* flipCreate([
           { key: "a", type: "string", options: [{ value: "x", label: "X" }] },
           { key: "b", type: "string", when: [{ key: "a", op: "eq", value: "y" }] },
         ]),
@@ -282,6 +289,31 @@ describe("Form", () => {
           message: "Form field condition value must be one of the field's options: b -> a",
         }),
       )
+    }),
+  )
+
+  it.effect("gates fields on an external acknowledgement via when", () =>
+    Effect.gen(function* () {
+      const service = yield* Form.Service
+      const created = yield* service.create({
+        sessionID: "global",
+        title: "External gated form",
+        fields: [
+          { key: "authorization", type: "external", url: "https://example.com/setup", title: "Open setup" },
+          { key: "code", type: "string", required: true, when: [{ key: "authorization", op: "eq", value: true }] },
+        ],
+      })
+
+      const missing = yield* service.reply({ id: created.id, answer: { authorization: true } }).pipe(Effect.flip)
+      expect(missing).toEqual(
+        new Form.InvalidAnswerError({ id: created.id, message: "Missing required form field: code" }),
+      )
+
+      yield* service.reply({ id: created.id, answer: { authorization: true, code: "x" } })
+      expect(yield* service.state(created.id)).toEqual({
+        status: "answered",
+        answer: { authorization: true, code: "x" },
+      })
     }),
   )
 

@@ -275,12 +275,17 @@ function matches(when: Form.When, value: Form.Value | undefined) {
 // silently never matching.
 export function validateFields(fields: ReadonlyArray<Form.Field>) {
   if (fields.length === 0) return "Form must have at least one field"
-  const earlier = new Map<string, InputField>()
+  const earlier = new Map<string, Form.Field>()
   const keys = new Set<string>()
   for (const field of fields) {
     if (keys.has(field.key)) return `Duplicate form field key: ${field.key}`
     keys.add(field.key)
-    if (field.type === "external") continue
+    // External fields count as defined for `when` references too (as they already do for
+    // duplicate keys): an acknowledgement is a boolean answer, so a field may gate on it.
+    if (field.type === "external") {
+      earlier.set(field.key, field)
+      continue
+    }
     for (const when of field.when ?? []) {
       const target = earlier.get(when.key)
       if (!target) return `Form field condition must reference an earlier field: ${field.key} -> ${when.key}`
@@ -291,8 +296,9 @@ export function validateFields(fields: ReadonlyArray<Form.Field>) {
   }
 }
 
-function validateWhen(when: Form.When, target: InputField) {
-  if (target.type === "boolean") {
+function validateWhen(when: Form.When, target: Form.Field) {
+  // External targets are boolean too: the only valid answer is the `true` acknowledgement.
+  if (target.type === "boolean" || target.type === "external") {
     if (typeof when.value !== "boolean") return "Form field condition value must be a boolean"
     return
   }
