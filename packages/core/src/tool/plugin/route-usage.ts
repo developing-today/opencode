@@ -66,9 +66,9 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
     } catch (error) {
       planError = error instanceof Error ? error.message : String(error)
     }
-    const windows = plans.flatMap((plan) =>
-      plan.quotas.flatMap((window) => (window.windowHours === undefined ? [] : [{ plan, window }])),
-    )
+    // Every quota window is reported. A window without windowHours has no defined lookback, so its
+    // usage is unknown (null below) rather than a number computed over an invented window.
+    const windows = plans.flatMap((plan) => plan.quotas.map((window) => ({ plan, window })))
 
     const read = yield* ModelRouteLog.withDb((db) =>
       Effect.gen(function* () {
@@ -77,12 +77,16 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
         const sessionTargets = yield* ModelRouteLog.sessionTargetUsage(db, since, sessionIDs)
         const windowSessionTargets: (readonly ModelUsage.SessionTargetRow[])[] = []
         for (const { window } of windows) {
+          // No windowHours: no defined lookback to attribute session usage over, so no rows; the
+          // window is also left out of the session-share list below.
           windowSessionTargets.push(
-            (yield* ModelRouteLog.sessionTargetUsage(
-              db,
-              now - (window.windowHours ?? 0) * 3_600_000,
-              sessionIDs,
-            )) as ModelUsage.SessionTargetRow[],
+            window.windowHours === undefined
+              ? []
+              : ((yield* ModelRouteLog.sessionTargetUsage(
+                  db,
+                  now - window.windowHours * 3_600_000,
+                  sessionIDs,
+                )) as ModelUsage.SessionTargetRow[]),
           )
         }
         const targets = yield* ModelRouteLog.targetUsage(db, since)
@@ -90,7 +94,8 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
         const offers = (yield* ModelRouteLog.offerUsage(db, since, input.route)) as ModelUsage.OfferRow[]
         const windowTotals: { plan: string; window: string; totals: ModelUsage.Totals }[] = []
         for (const { plan, window } of windows) {
-          const rows = yield* ModelRouteLog.targetUsage(db, now - (window.windowHours ?? 0) * 3_600_000)
+          if (window.windowHours === undefined) continue
+          const rows = yield* ModelRouteLog.targetUsage(db, now - window.windowHours * 3_600_000)
           windowTotals.push({
             plan: plan.id,
             window: window.name,
@@ -117,13 +122,20 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
       (history?.sessionTargets ?? []).flatMap((row) =>
         row.sessionID === null ? [] : [{ ...row, sessionID: row.sessionID }],
       ),
-      windows.map(({ plan, window }, index) => ({
-        plan,
-        window,
-        rows: (history?.windowSessionTargets[index] ?? []).flatMap((row) =>
-          row.sessionID === null ? [] : [{ ...row, sessionID: row.sessionID }],
-        ),
-      })),
+      // Session shares are only computed for windows with a defined lookback (windowHours).
+      windows.flatMap(({ plan, window }, index) =>
+        window.windowHours === undefined
+          ? []
+          : [
+              {
+                plan,
+                window,
+                rows: (history?.windowSessionTargets[index] ?? []).flatMap((row) =>
+                  row.sessionID === null ? [] : [{ ...row, sessionID: row.sessionID }],
+                ),
+              },
+            ],
+      ),
     ).filter(
       (session) =>
         (input.provider === undefined && input.model === undefined) ||
@@ -133,7 +145,11 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
     const planReports = windows.map(({ plan, window }) => {
       const found = history?.windowTotals.find((item) => item.plan === plan.id && item.window === window.name)
       const report = ModelUsage.windowReport(plan, window, found?.totals ?? ModelUsage.zero)
-      return history === undefined ? { ...report, used: null, percent: null, remaining: null } : report
+      // Usage is unknown when there is no history database, and for a window without windowHours
+      // there is no defined period to total over — both are shown as unknown, never as zero.
+      return history === undefined || window.windowHours === undefined
+        ? { ...report, used: null, percent: null, remaining: null }
+        : report
     })
     return {
       hours,
