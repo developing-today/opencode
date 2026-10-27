@@ -68,6 +68,15 @@ describe("ModelUsage", () => {
     })
   })
 
+  test("slash-less targets split as model with an empty provider, never a mangled provider", () => {
+    expect(ModelUsage.splitTarget("openai/gpt-6-luna")).toEqual({ providerID: "openai", modelID: "gpt-6-luna" })
+    // First slash wins: model ids may contain further slashes.
+    expect(ModelUsage.splitTarget("openai/org/gpt-6")).toEqual({ providerID: "openai", modelID: "org/gpt-6" })
+    expect(ModelUsage.splitTarget("gpt-5")).toEqual({ providerID: "", modelID: "gpt-5" })
+    const reports = ModelUsage.targetReports([], ["gpt-5"], [], new Map())
+    expect(reports).toMatchObject([{ target: "gpt-5", providerID: "", modelID: "gpt-5", requests: 0 }])
+  })
+
   test("a session lists the pools and models it used, with their requests", () => {
     const sessions = [{ sessionID: "s1", first: 1, last: 9, ...totals({ requests: 3 }) }]
     const rows = [

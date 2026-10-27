@@ -44,11 +44,6 @@ export interface Options {
 
 const NO_SOURCE: Source = { routes: new Map() }
 
-const splitTarget = (target: string) => {
-  const slash = target.indexOf("/")
-  return { providerID: target.slice(0, slash), modelID: target.slice(slash + 1) }
-}
-
 export const collect = (input: Input, source: Source = NO_SOURCE, options: Options = {}) =>
   Effect.gen(function* () {
     const now = options.now?.() ?? Date.now()
@@ -111,7 +106,7 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
     const offers = history?.offers ?? []
     const targets = ModelUsage.targetReports(
       (history?.targets ?? []).filter(matches),
-      configuredTargets.filter((target) => matches(splitTarget(target))),
+      configuredTargets.filter((target) => matches(ModelUsage.splitTarget(target))),
       offers,
       pools,
     )
@@ -132,7 +127,7 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
     ).filter(
       (session) =>
         (input.provider === undefined && input.model === undefined) ||
-        session.targets.some((item) => matches(splitTarget(item.target))),
+        session.targets.some((item) => matches(ModelUsage.splitTarget(item.target))),
     )
     const days = ModelUsage.dayReports((history?.days ?? []).filter(matches))
     const planReports = windows.map(({ plan, window }) => {
