@@ -1508,6 +1508,45 @@ describe("Config", () => {
     }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
   )
 
+  it.effect("does not substitute env references inside // comments", () =>
+    Effect.gen(function* () {
+      const text = yield* ConfigVariable.substitute({
+        type: "virtual",
+        source: "test",
+        dir: "/",
+        text: [
+          "{",
+          "  // note: {env:PROBE_NOTE}",
+          '  "value": "{env:PROBE_VALUE}"',
+          "}",
+        ].join("\n"),
+        env: { PROBE_NOTE: "injected", PROBE_VALUE: "real" },
+      })
+      expect(text).toContain("// note: {env:PROBE_NOTE}")
+      expect(JSON.parse(text)).toEqual({ value: "real" })
+    }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
+  )
+
+  it.effect("a newline-bearing env value cannot break out of a // comment", () =>
+    Effect.gen(function* () {
+      const text = yield* ConfigVariable.substitute({
+        type: "virtual",
+        source: "test",
+        dir: "/",
+        text: [
+          "{",
+          "  // note: {env:PROBE_NOTE}",
+          '  "value": "{env:MULTI}"',
+          "}",
+        ].join("\n"),
+        env: { PROBE_NOTE: "injected\nbreakout", MULTI: "a\nb" },
+      })
+      expect(text).toContain("// note: {env:PROBE_NOTE}")
+      expect(text).not.toContain("injected")
+      expect(JSON.parse(text)).toEqual({ value: "a\nb" })
+    }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
+  )
+
   it.live("does not load legacy config.json files", () =>
     Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
       Effect.flatMap((tmp) =>

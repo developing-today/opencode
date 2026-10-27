@@ -24,16 +24,32 @@ type SubstituteInput = ParseSource & {
 
 /** Apply {env:VAR}, {env:VAR:-fallback} and {file:path} substitutions to config text. */
 export const substitute = Effect.fn("ConfigVariable.substitute")(function* (input: SubstituteInput) {
-  const env = (escape: boolean) =>
-    input.text.replace(/\{env:([^}]+)\}/g, (_, token: string) => {
+  const env = (escape: boolean) => {
+    let out = ""
+    let cursor = 0
+    for (const match of input.text.matchAll(/\{env:([^}]+)\}/g)) {
+      const token = match[1]
+      const index = match.index
+      out += input.text.slice(cursor, index)
+      cursor = index + match[0].length
+      // Like {file:...} below, a reference on a // comment line is prose, not a substitution:
+      // replacing it would leak the value into the comment, and a newline in the value would
+      // break out of the comment and change what the config says.
+      const lineStart = input.text.lastIndexOf("\n", index - 1) + 1
+      if (input.text.slice(lineStart, index).trimStart().startsWith("//")) {
+        out += match[0]
+        continue
+      }
       // Shell-style default: {env:VAR:-fallback} resolves to the fallback when VAR is unset
       // or empty, so a config can name a working default instead of silently substituting "".
       const separator = token.indexOf(":-")
       const name = separator === -1 ? token : token.slice(0, separator)
       const fallback = separator === -1 ? "" : token.slice(separator + 2)
       const value = (input.env?.[name] ?? process.env[name]) || fallback
-      return escape ? JSON.stringify(value).slice(1, -1) : value
-    })
+      out += escape ? JSON.stringify(value).slice(1, -1) : value
+    }
+    return out + input.text.slice(cursor)
+  }
   // Escape only when raw values break the JSON (e.g. Windows paths), so configs that parse today keep their meaning.
   const raw = yield* substituteFiles(input, env(false))
   const errors: ParseError[] = []
