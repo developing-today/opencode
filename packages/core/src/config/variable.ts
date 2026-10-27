@@ -30,6 +30,25 @@ type Substituted = {
   authored: Array<readonly [number, number]>
 }
 
+/** Whether a `//` comment starts before `index` on its line. String-aware: a `//` inside a
+ * quoted string (a URL, say) is not a comment, so a live reference later on the line still
+ * expands; a reference after a real comment is comment text even when code precedes the
+ * comment on the same line. */
+const commented = (text: string, lineStart: number, index: number) => {
+  let quoted = false
+  for (let i = lineStart; i < index; i++) {
+    const char = text[i]
+    if (quoted) {
+      if (char === "\\") i++
+      else if (char === '"') quoted = false
+      continue
+    }
+    if (char === '"') quoted = true
+    else if (char === "/" && text[i + 1] === "/") return true
+  }
+  return false
+}
+
 /** Apply {env:VAR}, {env:VAR:-fallback} and {file:path} substitutions to config text. */
 export const substitute = Effect.fn("ConfigVariable.substitute")(function* (input: SubstituteInput) {
   const env = (escape: boolean): Substituted => {
@@ -54,7 +73,7 @@ export const substitute = Effect.fn("ConfigVariable.substitute")(function* (inpu
       // stays literal, so a commented-out example never expands — and a newline in the
       // value cannot break out of the comment into live config text.
       const lineStart = input.text.lastIndexOf("\n", match.index - 1) + 1
-      if (input.text.slice(lineStart, match.index).trimStart().startsWith("//")) {
+      if (commented(input.text, lineStart, match.index)) {
         push(match[0], true)
         cursor = match.index + match[0].length
         continue
@@ -97,8 +116,7 @@ const substituteFiles = Effect.fnUntraced(function* (input: SubstituteInput, sub
     // into the config.
     const authored = substituted.authored.some(([start, end]) => index >= start && index + token.length <= end)
     const lineStart = text.lastIndexOf("\n", index - 1) + 1
-    const prefix = text.slice(lineStart, index).trimStart()
-    if (!authored || prefix.startsWith("//")) {
+    if (!authored || commented(text, lineStart, index)) {
       out += token
       cursor = index + token.length
       continue
