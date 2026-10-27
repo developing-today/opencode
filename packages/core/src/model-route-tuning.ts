@@ -161,10 +161,9 @@ export const parseQuotaReset = (message: string | undefined, now: number): numbe
   if (!/(?:quota|limit|rate limit)/.test(text)) return undefined
   // The zone designator stays in the capture so Date.parse honours it instead of reading the
   // timestamp as local time (see ModelRouteLimits.resetAtFromMessage).
-  const absolute =
-    /(?:reset|resume|back|available|return)[a-z ]{0,20}(?:at|on)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?)/.exec(
-      text,
-    )?.[1]
+  // The absolute branch shares ModelRouteLimits.ABSOLUTE_TIME so the two parsers cannot
+  // drift apart on keywords again; the quota gate above stays this parser's own.
+  const absolute = ModelRouteLimits.ABSOLUTE_TIME.exec(text)?.[1]
   if (absolute) {
     const date = Date.parse(absolute)
     if (!Number.isNaN(date)) return date
