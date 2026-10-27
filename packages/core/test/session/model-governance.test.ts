@@ -467,6 +467,36 @@ describe("ModelGovernance.assertAllowed", () => {
     await run({ all: [parent], parent, configInput, catalogInput, model: ref("opencode-route/main") })
   })
 
+  test("an expired nested-route target is not judged and a live one is (#580)", async () => {
+    const parent = info("ses_parent", { subagentPolicy: { excludedModels: ["test/b"] } })
+    const catalogInput = { test: { a: {}, b: {} } }
+    const expiredConfig = {
+      experimental: {
+        model_routes: {
+          main: { targets: [{ model: "opencode-route/pool", until: 1 }, "test/a"] },
+          pool: { targets: ["test/b"] },
+        },
+      },
+    }
+    await run({ all: [parent], parent, configInput: expiredConfig, catalogInput, model: ref("opencode-route/main") })
+    const liveConfig = {
+      experimental: {
+        model_routes: {
+          main: { targets: [{ model: "opencode-route/pool", until: Date.now() + 60_000 }, "test/a"] },
+          pool: { targets: ["test/b"] },
+        },
+      },
+    }
+    const message = await runDenied({
+      all: [parent],
+      parent,
+      configInput: liveConfig,
+      catalogInput,
+      model: ref("opencode-route/main"),
+    })
+    expect(message).toContain("test/b")
+  })
+
   test("a disabled route target is not judged (#530d)", async () => {
     const parent = info("ses_parent", { subagentPolicy: { excludedModels: ["test/b"] } })
     const configInput = { experimental: { model_routes: { main: { targets: ["test/a", "test/b"] } } } }

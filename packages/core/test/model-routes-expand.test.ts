@@ -39,6 +39,31 @@ describe("pool targets", () => {
     expect(leaves.map((leaf) => String(leaf.ref.id))).toEqual(["claude-sonnet-4-5", "claude-opus-4-1"])
   })
 
+  test("a time-limited nested-route target is dropped when expired and expanded while live (#580)", () => {
+    const nested = (until: number) =>
+      new Map<string, ConfigModelRoutes.Route>([
+        [
+          "pool",
+          {
+            targets: [{ model: { providerID: "anthropic", model: "claude-opus-4-1" } }],
+          } as unknown as ConfigModelRoutes.Route,
+        ],
+        [
+          "r",
+          {
+            targets: [
+              { model: { providerID: "opencode-route", model: "pool" }, until },
+              { model: { providerID: "openai", model: "gpt-6-luna" } },
+            ],
+          } as unknown as ConfigModelRoutes.Route,
+        ],
+      ])
+    const expired = expand("r", nested(now - 1), definitions)
+    expect(expired.leaves.map((leaf) => String(leaf.ref.id))).toEqual(["gpt-6-luna"])
+    const live = expand("r", nested(now + 60_000), definitions)
+    expect(live.leaves.map((leaf) => String(leaf.ref.id))).toEqual(["claude-opus-4-1", "gpt-6-luna"])
+  })
+
   test("a glob that matches nothing contributes nothing and does not fail the route", () => {
     const { leaves } = expand("r", route(["anthropic/*mistral*", "openai/gpt-6-luna"]), definitions)
     expect(leaves.map((leaf) => String(leaf.ref.id))).toEqual(["gpt-6-luna"])

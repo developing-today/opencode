@@ -207,9 +207,9 @@ function routeTargets(
       selection.variant === undefined || selection.variant === "default"
         ? undefined
         : Model.VariantID.make(selection.variant)
+    if (object?.until !== undefined && Date.now() >= object.until) return []
     if (selection.providerID === "opencode-route")
       return routeTargets(entries, selection.model, seen, selectionVariant ?? requested, catalog)
-    if (object?.until !== undefined && Date.now() >= object.until) return []
     const rawVariant =
       selectionVariant ??
       (requested === undefined
