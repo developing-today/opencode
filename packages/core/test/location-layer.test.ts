@@ -652,6 +652,57 @@ describe("LocationServiceMap", () => {
     ),
   )
 
+  it.live("presents a route's context cap as its input limit when targets define one", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            fs.writeFile(
+              path.join(dir.path, "opencode.json"),
+              JSON.stringify({
+                providers: {
+                  pool: {
+                    name: "Pool",
+                    package: "test-provider",
+                    models: {
+                      one: { limit: { context: 200_000, input: 180_000 } },
+                      two: { limit: { context: 300_000, input: 250_000 } },
+                    },
+                  },
+                },
+                experimental: {
+                  model_routes: {
+                    plain: { targets: ["pool/one", "pool/two"] },
+                    capped: { targets: ["pool/one", "pool/two"], limit: { context: 100_000 } },
+                    overcapped: { targets: ["pool/one", "pool/two"], limit: { context: 500_000 } },
+                  },
+                },
+              }),
+            ),
+          )
+          yield* Effect.gen(function* () {
+            yield* Reference.Service
+            const plugins = yield* Plugin.Service
+            yield* plugins.awaitActivation
+            const models = yield* Model.Service
+            const input = (id: string) =>
+              Effect.map(models.get(ModelRoute.PROVIDER_ID, Model.ID.make(id)), (model) => model?.limit.input)
+            expect(yield* input("plain")).toBe(180_000)
+            // Compaction prefers limit.input over limit.context, so the cap must reach the
+            // presented input limit or it never takes effect for input-carrying targets.
+            expect(yield* input("capped")).toBe(100_000)
+            // A cap above every target's own input limit changes nothing.
+            expect(yield* input("overcapped")).toBe(180_000)
+          }).pipe(
+            Effect.provide(
+              LocationServiceMap.Service.get(Location.Ref.make({ directory: AbsolutePath.make(dir.path) })),
+            ),
+          )
+        }),
+      ),
+    ),
+  )
+
   it.live('applies providers["opencode-route"] model settings to the pools it builds', () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),
