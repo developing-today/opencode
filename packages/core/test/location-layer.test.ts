@@ -605,6 +605,53 @@ describe("LocationServiceMap", () => {
     ),
   )
 
+  it.live("presents a route's configured context cap as its model limit", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            fs.writeFile(
+              path.join(dir.path, "opencode.json"),
+              JSON.stringify({
+                providers: {
+                  pool: {
+                    name: "Pool",
+                    package: "test-provider",
+                    models: { one: { limit: { context: 200_000 } }, two: { limit: { context: 300_000 } } },
+                  },
+                },
+                experimental: {
+                  model_routes: {
+                    plain: { targets: ["pool/one", "pool/two"] },
+                    capped: { targets: ["pool/one", "pool/two"], limit: { context: 100_000 } },
+                    overcapped: { targets: ["pool/one", "pool/two"], limit: { context: 500_000 } },
+                  },
+                },
+              }),
+            ),
+          )
+          yield* Effect.gen(function* () {
+            yield* Reference.Service
+            const plugins = yield* Plugin.Service
+            yield* plugins.awaitActivation
+            const models = yield* Model.Service
+            const context = (id: string) =>
+              Effect.map(models.get(ModelRoute.PROVIDER_ID, Model.ID.make(id)), (model) => model?.limit.context)
+            expect(yield* context("plain")).toBe(200_000)
+            expect(yield* context("capped")).toBe(100_000)
+            // A cap above every target's own limit changes nothing: the route can never
+            // present more context than its targets support.
+            expect(yield* context("overcapped")).toBe(200_000)
+          }).pipe(
+            Effect.provide(
+              LocationServiceMap.Service.get(Location.Ref.make({ directory: AbsolutePath.make(dir.path) })),
+            ),
+          )
+        }),
+      ),
+    ),
+  )
+
   it.live('applies providers["opencode-route"] model settings to the pools it builds', () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),
