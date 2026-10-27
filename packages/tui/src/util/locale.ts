@@ -50,6 +50,7 @@ export function duration(input: number) {
 
 export function truncate(str: string, len: number): string {
   if (str.length <= len) return str
+  if (len <= 0) return ""
   return str.slice(0, len - 1) + "…"
 }
 
@@ -83,17 +84,23 @@ export function truncateWidth(str: string, width: number): string {
 
 export function truncateLeft(str: string, len: number): string {
   if (str.length <= len) return str
+  if (len <= 0) return ""
+  if (len === 1) return "…"
   return "…" + str.slice(-(len - 1))
 }
 
 export function truncateMiddle(str: string, maxLength: number = 35): string {
   if (str.length <= maxLength) return str
 
+  if (maxLength <= 0) return ""
+
   const ellipsis = "…"
   const keepStart = Math.ceil((maxLength - ellipsis.length) / 2)
   const keepEnd = Math.floor((maxLength - ellipsis.length) / 2)
 
-  return str.slice(0, keepStart) + ellipsis + str.slice(-keepEnd)
+  // slice(-0) is slice(0): at maxLength 1-2 nothing is kept from the end, and
+  // slicing with it would return the whole string.
+  return str.slice(0, keepStart) + ellipsis + (keepEnd > 0 ? str.slice(-keepEnd) : "")
 }
 
 export * as Locale from "./locale"
