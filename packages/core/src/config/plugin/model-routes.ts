@@ -110,7 +110,15 @@ export const Plugin = define({
             context: route.limit?.context !== undefined ? Math.min(route.limit.context, leafContext) : leafContext,
             output: Math.min(...expanded.map((target) => target.model.limit.output)),
             ...(expanded.every((target) => target.model.limit.input !== undefined)
-              ? { input: Math.min(...expanded.map((target) => target.model.limit.input!)) }
+              ? {
+                  // The context cap applies to the presented input limit too: compaction
+                  // prefers limit.input over limit.context (calculateCeiling), so an uncapped
+                  // input would silently bypass the cap whenever targets define one.
+                  input:
+                    route.limit?.context !== undefined
+                      ? Math.min(route.limit.context, ...expanded.map((target) => target.model.limit.input!))
+                      : Math.min(...expanded.map((target) => target.model.limit.input!)),
+                }
               : {}),
           },
         })
