@@ -45,6 +45,26 @@ const UNITS: Readonly<Record<string, number>> = {
   d: 86_400_000,
 }
 
+/** Date.parse with a calendar check, shared by every quota-reset parser in this surface
+ * (resetMs, resetAtFromMessage here, ModelRouteTuning.parseQuotaReset): Date.parse silently
+ * rolls overflow days such as Feb 30 into the next month instead of returning NaN, so an
+ * ISO date's components must round-trip through a real calendar date (the same check
+ * Model.parseReleaseDate makes) before the parsed instant is trusted. */
+export const parseAbsoluteTime = (text: string): number | undefined => {
+  const date = Date.parse(text)
+  if (Number.isNaN(date)) return undefined
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text)
+  if (!iso) return date
+  const year = Number(iso[1])
+  const month = Number(iso[2])
+  const day = Number(iso[3])
+  const probe = new Date(0)
+  probe.setUTCFullYear(year, month - 1, day)
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day)
+    return undefined
+  return date
+}
+
 /** Milliseconds until a reset, from the forms providers use: a duration ("1s", "6m0s", "250ms",
  * "1h2m3.5s"), plain seconds, or a timestamp. Undefined when the value is none of those. */
 export const resetMs = (value: string, at: number): number | undefined => {
@@ -56,8 +76,8 @@ export const resetMs = (value: string, at: number): number | undefined => {
     for (const [, amount, unit] of text.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h|d)/g)) total += Number(amount) * UNITS[unit]
     return total
   }
-  const date = Date.parse(text)
-  return Number.isNaN(date) ? undefined : Math.max(0, date - at)
+  const date = parseAbsoluteTime(text)
+  return date === undefined ? undefined : Math.max(0, date - at)
 }
 
 // The zone designator is part of the capture: dropping it would make Date.parse read a
@@ -100,8 +120,8 @@ export const resetAtFromMessage = (message: string | undefined, now: number): nu
   // Scan every absolute candidate: an unparseable first date (e.g. month 13) must not shadow
   // a later valid reset stated in the same message.
   for (const [, absolute] of message.toLowerCase().matchAll(new RegExp(ABSOLUTE_TIME.source, "g"))) {
-    const date = Date.parse(absolute)
-    if (!Number.isNaN(date)) return date
+    const date = parseAbsoluteTime(absolute)
+    if (date !== undefined) return date
   }
   const relative = relativeMs(message.toLowerCase())
   return relative === undefined ? undefined : now + relative

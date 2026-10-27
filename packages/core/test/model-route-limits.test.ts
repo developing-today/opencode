@@ -115,6 +115,23 @@ describe("ModelRouteLimits.retryHintFromMessage", () => {
     expect(ModelRouteLimits.resetAtFromMessage("quota reset at 2026-13-01", at)).toBeUndefined()
   })
 
+  test("treats calendar-invalid dates as unparseable instead of rolling them forward", () => {
+    // Date.parse rolls Feb 30 to Mar 2 and Apr 31 to May 1; neither states a reset.
+    expect(ModelRouteLimits.resetAtFromMessage("quota reset at 2026-02-30", at)).toBeUndefined()
+    expect(ModelRouteLimits.resetAtFromMessage("quota reset at 2026-04-31T00:00:00Z", at)).toBeUndefined()
+    expect(ModelRouteLimits.resetAtFromMessage("quota reset at 2026-02-29", at)).toBeUndefined()
+    // Scanning continues past the rolled date to the valid reset stated after it.
+    expect(
+      ModelRouteLimits.resetAtFromMessage("quota reset at 2026-02-30, back at 2026-03-05T00:00:00Z", at),
+    ).toBe(Date.parse("2026-03-05T00:00:00Z"))
+    // Valid dates parse exactly as before, Feb 29 on a leap year included.
+    expect(ModelRouteLimits.resetAtFromMessage("quota reset at 2024-02-29", at)).toBe(Date.parse("2024-02-29"))
+    expect(ModelRouteLimits.resetAtFromMessage("quota reset at 2026-02-28", at)).toBe(Date.parse("2026-02-28"))
+    // The header form agrees: a calendar-invalid timestamp states no reset.
+    expect(ModelRouteLimits.resetMs("2026-04-31", at)).toBeUndefined()
+    expect(ModelRouteLimits.resetMs("2026-02-30", at)).toBeUndefined()
+  })
+
   test("reads decimal and compound relative waits as the total", () => {
     expect(ModelRouteLimits.retryHintFromMessage("try again in 1.5 hours", at)).toBe(5_400_000)
     expect(ModelRouteLimits.resetAtFromMessage("try again in 1.5 hours", at)).toBe(at + 5_400_000)
