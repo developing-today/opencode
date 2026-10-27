@@ -124,6 +124,13 @@ describe("ModelPlan store", () => {
     expect(pooled.pools.hard).toMatchObject({ tier: "frontier", purpose: "debugging with an unknown cause" })
   })
 
+  test("slug never ends in a dash, including when the 64-char slice cuts after a separator", () => {
+    expect(ModelPlan.slug("a".repeat(63) + " b c")).toBe("a".repeat(63))
+    expect(ModelPlan.slug("a".repeat(64))).toBe("a".repeat(64))
+    expect(ModelPlan.slug("Claude Max 20x")).toBe("claude-max-20x")
+    expect(ModelPlan.slug("--weird--name--")).toBe("weird-name")
+  })
+
   test("notes are appended, filtered and kept in order, and a damaged line is skipped and counted", () => {
     const root = dir()
     ModelPlan.addNote(

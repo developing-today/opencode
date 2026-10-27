@@ -171,6 +171,8 @@ export const slug = (value: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 64)
+    // The slice can cut right after a separator, leaving a trailing dash the trim above missed.
+    .replace(/-+$/, "")
 
 /** Fields to change on a plan. A field left out is kept; a field set to null is removed. */
 export interface PlanPatch {
