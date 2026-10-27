@@ -84,6 +84,42 @@ describe("ConfigNormalize with Aliases", () => {
     expect(result.encoded.aliases).toEqual(rawConfig.aliases)
   })
 
+  test("preserves entries named __proto__ in agents and model_routes", () => {
+    const rawConfig = {
+      aliases: {
+        models: {
+          flash: "deepseek/deepseek-chat#high",
+        },
+      },
+      agents: JSON.parse('{"__proto__": {"model": "flash"}}'),
+      experimental: {
+        model_routes: JSON.parse('{"__proto__": {"targets": ["flash"], "selection": "ordered"}}'),
+      },
+    }
+
+    const result = ConfigNormalize.normalize(rawConfig)
+    expect(result.type).toBe("normalized")
+    if (result.type !== "normalized") return
+
+    const agents = result.encoded.agents as Record<string, any>
+    expect(Object.prototype.hasOwnProperty.call(agents, "__proto__")).toBe(true)
+    expect(Object.getPrototypeOf(agents)).toBe(Object.prototype)
+    expect(agents["__proto__"].model).toEqual({
+      providerID: "deepseek",
+      model: "deepseek-chat",
+      variant: "high",
+    })
+
+    const routes = (result.encoded.experimental as Record<string, any>).model_routes as Record<string, any>
+    expect(Object.prototype.hasOwnProperty.call(routes, "__proto__")).toBe(true)
+    expect(Object.getPrototypeOf(routes)).toBe(Object.prototype)
+    expect(routes["__proto__"].targets[0]).toEqual({
+      providerID: "deepseek",
+      model: "deepseek-chat",
+      variant: "high",
+    })
+  })
+
   test("accepts aliases placed under experimental.aliases as well", () => {
     const rawConfig = {
       experimental: {
