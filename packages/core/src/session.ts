@@ -1,7 +1,7 @@
 export * as Session from "./session.js"
 export * from "./session/schema.js"
 
-import { Effect, Layer, Schema, Context, Option, Stream } from "effect"
+import { Effect, Layer, Schema, Context, Stream } from "effect"
 import { LLMClient } from "@opencode/ai"
 import { ListAnchor } from "@opencode/schema/session"
 import { and, desc, eq } from "drizzle-orm"
@@ -57,9 +57,7 @@ import { llmClient } from "./effect/app-node-platform.js"
 import { Snapshot } from "./snapshot.js"
 import { Session } from "./session/session.js"
 import { ModelGovernance } from "./session/model-governance.js"
-import { Config } from "./config.js"
-import { Provider } from "./provider.js"
-import type { Entry } from "@opencode/schema/config"
+import { GovernanceConfig } from "./session/governance-config.js"
 import { SessionDiff, TurnRangeError } from "./session/diff.js"
 import { LocationServiceMap } from "./location-service-map.js"
 import { FSUtil } from "@opencode/util/fs-util"
@@ -280,42 +278,8 @@ const layer = Layer.effect(
     const locations = yield* LocationServiceMap.Service
     const sessions = yield* Session.make()
     const isDurableSessionEvent = Schema.is(SessionEvent.Durable)
-    // Governance reads agent definitions from the location's config entries,
-    // but only when the location's services are already initialized: session
-    // operations never initialize a location just to read them. An
-    // uninitialized location has no definition layer; session policies,
-    // which are read from the session store, still apply.
-    // Governance also judges route targets against the location's provider
-    // catalog (#530), read from the same already-initialized context: the
-    // snapshot's per-model enabled flag and offered variants. A location
-    // with no provider service supplies no catalog and route targets are
-    // judged literally, as before.
-    const governanceConfig = (location: Location.Ref) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const context = yield* locations.contextEffectOption(location)
-          if (Option.isNone(context)) return { entries: [] as Entry[], catalog: undefined as ModelGovernance.Catalog | undefined }
-          const config = Context.getOption(context.value, Config.Service)
-          const entries = config._tag === "Some" ? yield* config.value.entries() : ([] as Entry[])
-          const provider = Context.getOption(context.value, Provider.Service)
-          if (provider._tag === "None") return { entries, catalog: undefined }
-          const snapshot = yield* provider.value.snapshot()
-          const catalog: ModelGovernance.Catalog = new Map(
-            Array.from(snapshot.records, ([providerID, record]) => [
-              providerID as string,
-              new Map(
-                Array.from(record.models, ([id, model]) => [
-                  id as string,
-                  { enabled: model.enabled, variants: model.variants },
-                ]),
-              ),
-            ]),
-          )
-          return { entries, catalog }
-        }),
-      ).pipe(
-        Effect.orElseSucceed(() => ({ entries: [] as Entry[], catalog: undefined as ModelGovernance.Catalog | undefined })),
-      )
+    // Governance inputs (config entries + provider catalog) come from the one
+    // shared construction in session/governance-config.ts: GovernanceConfig.load.
     const assertModelAllowed = (input: {
       location: Location.Ref
       parent: SessionSchema.Info
@@ -323,7 +287,7 @@ const layer = Layer.effect(
       model?: Model.Ref
       override?: SessionSchema.AgentOverride
     }) =>
-      governanceConfig(input.location).pipe(
+      GovernanceConfig.load(locations, input.location).pipe(
         Effect.flatMap(({ entries, catalog }) =>
           ModelGovernance.assertAllowed(
             { get: (sessionID) => result.get(sessionID) },
