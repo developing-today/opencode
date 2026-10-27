@@ -76,9 +76,9 @@ const dayOfMonth = (value: unknown): number | undefined => {
 export const isDayOfWeek = (value: unknown): value is number | string => dayOfWeek(value) !== undefined
 export const isDayOfMonth = (value: unknown): value is number | string => dayOfMonth(value) !== undefined
 
-/** "9:30", "09:30", "23:59", "9:5" or "9:30:15" as minutes since local midnight. Seconds round down. */
+/** "9:30", "09:30", "23:59", "9:5", "9:30:15" or "9:30:5" as minutes since local midnight. Seconds round down. */
 export const minutesOf = (value: string): number | undefined => {
-  const match = /^(\d{1,2}):(\d{1,2})(?::(\d{2}))?$/.exec(value.trim())
+  const match = /^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/.exec(value.trim())
   if (!match) return undefined
   const hours = Number(match[1])
   const minutes = Number(match[2])
