@@ -75,6 +75,7 @@ export const Plugin = define({
         const { leaves: expanded, nodes } = expand(id, routes, definitions)
         if (expanded.length === 0) return undefined
         const first = expanded[0].model
+        const leafContext = Math.min(...expanded.map((target) => target.model.limit.context))
         const health = ModelRoute.policy(route.health)
         const info = Model.Info.make({
           ...Model.Info.default(ModelRoute.PROVIDER_ID, Model.ID.make(id)),
@@ -105,7 +106,7 @@ export const Plugin = define({
           cost: first.cost,
           status: "active",
           limit: {
-            context: Math.min(...expanded.map((target) => target.model.limit.context)),
+            context: route.limit?.context !== undefined ? Math.min(route.limit.context, leafContext) : leafContext,
             output: Math.min(...expanded.map((target) => target.model.limit.output)),
             ...(expanded.every((target) => target.model.limit.input !== undefined)
               ? { input: Math.min(...expanded.map((target) => target.model.limit.input!)) }
