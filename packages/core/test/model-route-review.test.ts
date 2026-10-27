@@ -193,4 +193,23 @@ describe("ModelRouteReview.summarize", () => {
     expect(ModelRouteReview.layersOf(null)).toEqual({})
     expect(ModelRouteReview.layersOf({ layers: { "a/x": { base: "heavy" } } })).toEqual({})
   })
+
+  test("weightLayers comes from the newest decision that carries layers, not the oldest (#628)", () => {
+    const newest = { base: 99, scheduled: 99, prefer: 99, adjustment: 99, demotion: 99, gate: null }
+    const oldest = { base: 1, scheduled: 1, prefer: 1, adjustment: 1, demotion: 1, gate: null }
+    const decision = (layers: unknown): ModelRouteReview.Decision => ({
+      routeID: "cheap",
+      sessionID: "s1",
+      candidates: ["a/x"],
+      chosen: "a/x",
+      reason: "adjusted",
+      detail: { weights: { "a/x": 1 }, ...(layers === undefined ? {} : { layers: { "a/x": layers } }), excluded: [] },
+    })
+    const layersOfSummary = (decisions: ModelRouteReview.Decision[]) =>
+      ModelRouteReview.summarize({ attempts: [], decisions, configured: new Map() })[0]?.members[0]?.weightLayers
+    // Production order is newest-first: the oldest decision must not overwrite the newest.
+    expect(layersOfSummary([decision(newest), decision(oldest)])).toEqual(newest)
+    // A newest decision without layers falls through to the next one that carries them.
+    expect(layersOfSummary([decision(undefined), decision(newest), decision(oldest)])).toEqual(newest)
+  })
 })

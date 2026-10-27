@@ -232,7 +232,10 @@ const memberOf = (
   for (const decision of decisions) {
     if (decision.candidates.includes(target)) {
       offered += 1
-      weightLayers = layersOf(decision.detail)[target] ?? weightLayers
+      // First found wins: decisions arrive newest-first (see summarize), so the first
+      // layers recorded for a target are its most recent selection's. A decision without
+      // layers for the target leaves the value untouched rather than clearing it.
+      if (weightLayers === null) weightLayers = layersOf(decision.detail)[target] ?? null
       if (decision.chosen === target) chosen += 1
       if (decision.reason === "drawn") {
         const weights = weightsOf(decision.detail)
@@ -305,7 +308,10 @@ const routeOf = (
   }
 }
 
-/** Every configured pool first, in configuration order, then pools seen only in history, busiest first. */
+/** Every configured pool first, in configuration order, then pools seen only in history, busiest first.
+ * Ordering contract: `decisions` must be newest-first (as ModelRouteLog.decisionRows returns
+ * them). Decision carries no timestamp, so summarize cannot reorder; Member.weightLayers
+ * relies on this order to report the most recent selection's attribution. */
 export const summarize = (input: {
   readonly attempts: readonly Attempt[]
   readonly decisions: readonly Decision[]
