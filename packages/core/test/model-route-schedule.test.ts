@@ -35,6 +35,14 @@ describe("ModelRouteSchedule.parse", () => {
     expect(ModelRouteSchedule.parse({ from: 100, until: 100 })).toBeUndefined()
   })
 
+  test("accepts zero-padded weekday strings like days of month", () => {
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["06"] })).toEqual({ daysOfWeek: [6] })
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["00", "01", 2] })).toEqual({ daysOfWeek: [0, 1, 2] })
+    // Padding does not widen the range, and a mixed list is still rejected whole.
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["07"] })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["06", "frieday"] })).toBeUndefined()
+  })
+
   test("keeps named days from every conventional spelling", () => {
     const parsed = ModelRouteSchedule.parse({ daysOfWeek: ["tues", "thurs", "sun"] })
     expect(parsed?.daysOfWeek).toEqual([0, 2, 4])

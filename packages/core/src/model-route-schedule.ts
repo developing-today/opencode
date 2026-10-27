@@ -61,7 +61,7 @@ const dayOfWeek = (value: unknown): number | undefined => {
   if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 6) return value
   if (typeof value !== "string") return undefined
   const text = value.trim().toLowerCase()
-  if (/^[0-6]$/.test(text)) return Number(text)
+  if (/^0?[0-6]$/.test(text)) return Number(text)
   return DAY_NAMES[text]
 }
 
