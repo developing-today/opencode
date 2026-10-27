@@ -2,7 +2,7 @@ name: Branch cleanup
 
 "on":
   schedule:
-    - cron: "17 14 * * 1"
+    - cron: "17 14 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
