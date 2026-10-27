@@ -167,6 +167,17 @@ describe("ModelRouteTuning.parseQuotaReset", () => {
     expect(ModelRouteTuning.parseQuotaReset("try in 5 minutes", at)).toBeUndefined()
     expect(ModelRouteTuning.parseQuotaReset(undefined, at)).toBeUndefined()
   })
+
+  test("scans past an unparseable first date to a later valid reset", () => {
+    expect(
+      ModelRouteTuning.parseQuotaReset("quota reset at 2026-13-01, back at 2026-01-02T00:00:00Z", at),
+    ).toBe(Date.parse("2026-01-02T00:00:00Z"))
+    expect(ModelRouteTuning.parseQuotaReset("quota reset at not-a-date 2026-01-02T00:00:00Z", at)).toBe(
+      Date.parse("2026-01-02T00:00:00Z"),
+    )
+    // An invalid date alone still states no reset.
+    expect(ModelRouteTuning.parseQuotaReset("quota reset at 2026-13-01", at)).toBeUndefined()
+  })
 })
 
 describe("ModelRouteTuning notes", () => {
