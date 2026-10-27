@@ -235,6 +235,16 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
     description:
       "Time-bound weight changes for this route's targets, e.g. peak hours that make a provider lighter. Weights order every selection mode: inside an active window the targets are ranked by effective weight, and equal weights keep their configured order.",
   }),
+  limit: Schema.Struct({
+    context: PositiveInt.annotate({
+      description:
+        "Caps the context limit the route presents, below every target's own limit — e.g. 100000 keeps sessions on this route inside a pricing tier that ends at 100k context, or compacts them earlier than the targets would. The effective limit is the smaller of this cap and the targets' minimum, so a cap can never raise a route above what its targets support.",
+    }),
+  })
+    .pipe(optional)
+    .annotate({
+      description: "Limits the route presents as its own, regardless of its targets' limits.",
+    }),
 }) {}
 
 /** Periodic, automatic use of the routing history. Off by default. */
