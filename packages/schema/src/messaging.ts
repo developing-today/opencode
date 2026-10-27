@@ -164,7 +164,7 @@ export const Query = Schema.Struct({
   from: Schema.Array(Schema.String).pipe(optional).annotate({ description: "Writer session-set expressions" }),
   types: Schema.Array(Schema.String).pipe(optional),
   kinds: Schema.Array(Schema.String).pipe(optional),
-  since: Schema.String.pipe(optional).annotate({ description: "ISO time or relative age such as 2h or 3d" }),
+  since: Schema.String.pipe(optional).annotate({ description: "ISO time, relative age such as 2h or 3d, or a bare epoch (10 digits = seconds, 13 digits = milliseconds)" }),
   until: Schema.String.pipe(optional),
   after: NonNegativeInt.pipe(optional).annotate({ description: "Only sequence numbers greater than this" }),
   before: PositiveInt.pipe(optional).annotate({ description: "Only sequence numbers less than this" }),
