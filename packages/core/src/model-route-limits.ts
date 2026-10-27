@@ -62,8 +62,10 @@ export const resetMs = (value: string, at: number): number | undefined => {
 
 // The zone designator is part of the capture: dropping it would make Date.parse read a
 // "…T00:00:00Z" timestamp as local time, shifting the instant by the reader's UTC offset.
+// The filler between the keyword and the date also allows hyphens, so a hyphenated non-date
+// word ("reset at not-a-date 2026-01-02…") does not break the match before the real date.
 const ABSOLUTE_TIME =
-  /(?:retry|try again|wait|back|resume|reset|returns?|until|expires?(?: at)?)[a-z ]{0,20}(?:after|at|on|by)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?)/
+  /(?:retry|try again|wait|back|resume|reset|returns?|until|expires?(?: at)?)[-a-z ]{0,20}(?:after|at|on|by)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?)/
 // A relative wait is one amount+unit part or a compound sequence of them ("in 1 hour 30
 // minutes"), and an amount may be decimal ("in 1.5 hours") — providers phrase resets both ways.
 const RELATIVE_PART = String.raw`\d+(?:\.\d+)?\s*(?:second|minute|hour|day|sec|s)s?(?![a-z])`
@@ -91,8 +93,9 @@ const relativeMs = (message: string): number | undefined => {
  */
 export const resetAtFromMessage = (message: string | undefined, now: number): number | undefined => {
   if (!message) return undefined
-  const absolute = ABSOLUTE_TIME.exec(message.toLowerCase())?.[1]
-  if (absolute) {
+  // Scan every absolute candidate: an unparseable first date (e.g. month 13) must not shadow
+  // a later valid reset stated in the same message.
+  for (const [, absolute] of message.toLowerCase().matchAll(new RegExp(ABSOLUTE_TIME.source, "g"))) {
     const date = Date.parse(absolute)
     if (!Number.isNaN(date)) return date
   }
