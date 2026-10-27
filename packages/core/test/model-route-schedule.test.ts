@@ -12,6 +12,9 @@ describe("ModelRouteSchedule.parse", () => {
     ).toEqual({ daysOfWeek: [1, 5, 6], start: "09:05", end: "17:00" })
     expect(ModelRouteSchedule.parse({ daysOfMonth: ["1", 15, -1] })).toEqual({ daysOfMonth: [1, 15, -1] })
     expect(ModelRouteSchedule.parse({ start: "9:30:59" })).toEqual({ start: "09:30" })
+    // Single-digit seconds are accepted like single-digit hours and minutes (#528).
+    expect(ModelRouteSchedule.parse({ start: "9:30:5" })).toEqual({ start: "09:30" })
+    expect(ModelRouteSchedule.parse({ end: "17:00:9" })).toEqual({ end: "17:00" })
     expect(ModelRouteSchedule.parse({})).toEqual({})
   })
 
