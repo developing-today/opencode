@@ -205,8 +205,8 @@ const reasonOf = (failure: unknown) => {
 }
 
 /** The observer's retryable column follows the same canonical classifier the session runner uses
- * (\`@opencode/ai\` isRetryable, re-exported as SessionRunnerRetry.isRetryable), so the two columns
- * cannot disagree. A failure that is not an \`AIError\` carries no provider classification, so it is
+ * (`@opencode/ai` isRetryable, re-exported as SessionRunnerRetry.isRetryable), so the two columns
+ * cannot disagree. A failure that is not an `AIError` carries no provider classification, so it is
  * stored as not retryable instead of being guessed from the presence of a tag. */
 const observerRetryable = (failure: unknown) => (failure instanceof AIError ? isRetryable(failure) : false)
 
