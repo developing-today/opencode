@@ -148,4 +148,23 @@ describe("ModelRouteReview.summarize", () => {
     expect(summaries.map((summary) => summary.id)).toEqual(["cheap", "other", "third"])
     expect(summaries[1]?.configured).toBeNull()
   })
+
+  test("surfaces the per-layer weight attribution of the most recent decision (#589)", () => {
+    const layers = { base: 2, scheduled: 2, prefer: 6, adjustment: 6, demotion: 6, gate: null }
+    const recorded: ModelRouteReview.Decision = {
+      routeID: "cheap",
+      sessionID: "s1",
+      candidates: ["a/x", "b/y"],
+      chosen: "a/x",
+      reason: "adjusted",
+      detail: { weights: { "a/x": 6, "b/y": 1 }, layers: { "a/x": layers }, excluded: [] },
+    }
+    const [summary] = ModelRouteReview.summarize({ attempts: [], decisions: [recorded], configured: new Map() })
+    const members = Object.fromEntries((summary?.members ?? []).map((member) => [member.target, member]))
+    expect(members["a/x"]?.weightLayers).toEqual(layers)
+    expect(members["b/y"]?.weightLayers).toBeNull()
+    expect(ModelRouteReview.layersOf(recorded.detail)).toEqual({ "a/x": layers })
+    expect(ModelRouteReview.layersOf(null)).toEqual({})
+    expect(ModelRouteReview.layersOf({ layers: { "a/x": { base: "heavy" } } })).toEqual({})
+  })
 })

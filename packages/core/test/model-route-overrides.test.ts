@@ -189,7 +189,14 @@ describe("scheduled and absolute priorities", () => {
   test("an override with a recurring window needs no end date and is kept on save", () => {
     ModelRouteOverrides.save(
       [
-        draft({ id: "recurring", action: "prefer", providers: ["anthropic"], factor: 0.8, schedule: today, until: undefined }),
+        draft({
+          id: "recurring",
+          action: "prefer",
+          providers: ["anthropic"],
+          factor: 0.8,
+          schedule: today,
+          until: undefined,
+        }),
         draft({ id: "expired", providers: ["openai"], until: now - 1 }),
       ],
       now,
@@ -218,20 +225,32 @@ describe("scheduled and absolute priorities", () => {
       now,
     )
     expect(ModelRoute.weightFactor(sonnet, now)).toBeCloseTo(0.5)
-    expect(
-      ModelRouteOverrides.applies(ModelRouteOverrides.current()[0], sonnet, now + day),
-    ).toBe(false)
+    expect(ModelRouteOverrides.applies(ModelRouteOverrides.current()[0], sonnet, now + day)).toBe(false)
   })
 
   test("a static weight replaces the configured one, a factor scales it", () => {
     ModelRouteOverrides.add(
-      draft({ id: "factor", action: "prefer", providers: ["anthropic"], factor: 0.8, schedule: today, until: undefined }),
+      draft({
+        id: "factor",
+        action: "prefer",
+        providers: ["anthropic"],
+        factor: 0.8,
+        schedule: today,
+        until: undefined,
+      }),
       now,
     )
     expect(ModelRoute.weightOf(sonnet, 2, now)).toBeCloseTo(1.6)
     ModelRouteOverrides.remove("factor", now)
     ModelRouteOverrides.add(
-      draft({ id: "static", action: "prefer", providers: ["anthropic"], weight: 0.25, schedule: today, until: undefined }),
+      draft({
+        id: "static",
+        action: "prefer",
+        providers: ["anthropic"],
+        weight: 0.25,
+        schedule: today,
+        until: undefined,
+      }),
       now,
     )
     expect(ModelRoute.weightOf(sonnet, 2, now)).toBeCloseTo(0.25)
@@ -253,5 +272,50 @@ describe("scheduled and absolute priorities", () => {
         ],
       }),
     ).toEqual([])
+  })
+})
+
+describe("traced weights (#589)", () => {
+  const sonnet = ModelRoute.ref({ providerID: "anthropic", model: "claude-sonnet-4" })
+  const rulesScope = { routeID: "r", fixed: false }
+
+  test("a scheduled rule in force shows up in the scheduled layer only", () => {
+    const scope = {
+      ...rulesScope,
+      schedules: [{ match: { targets: ["anthropic/claude-sonnet-4"] }, factor: 2 }],
+    } as ModelRoute.WeightScope
+    const trace = ModelRoute.tracedWeightOf(sonnet, 3, now, scope)
+    expect(trace).toEqual({ base: 3, scheduled: 6, prefer: 6, adjustment: 6, demotion: 6, gate: null })
+    expect(trace.demotion).toBe(ModelRoute.weightOf(sonnet, 3, now, scope))
+  })
+
+  test("a prefer override shows up in the prefer layer only", () => {
+    ModelRouteOverrides.add(draft({ action: "prefer", providers: ["anthropic"], factor: 0.5 }), now)
+    const trace = ModelRoute.tracedWeightOf(sonnet, 3, now, rulesScope)
+    expect(trace).toEqual({ base: 3, scheduled: 3, prefer: 1.5, adjustment: 1.5, demotion: 1.5, gate: null })
+    expect(trace.demotion).toBe(ModelRoute.weightOf(sonnet, 3, now, rulesScope))
+  })
+
+  test("an adjustment shows up in the adjustment layer, and not on a fixed route", () => {
+    ModelRoute.setAdjustments([
+      { id: "tuned", match: "anthropic/claude-sonnet-4", action: "weight", factor: 5, until: now + DAY },
+    ])
+    const trace = ModelRoute.tracedWeightOf(sonnet, 2, now, rulesScope)
+    expect(trace).toEqual({ base: 2, scheduled: 2, prefer: 2, adjustment: 10, demotion: 10, gate: null })
+    expect(trace.demotion).toBe(ModelRoute.weightOf(sonnet, 2, now, rulesScope))
+    const fixed = ModelRoute.tracedWeightOf(sonnet, 2, now, { routeID: "r", fixed: true })
+    expect(fixed.adjustment).toBe(2)
+    expect(fixed.demotion).toBe(ModelRoute.weightOf(sonnet, 2, now, { routeID: "r", fixed: true }))
+    ModelRoute.setAdjustments([])
+  })
+
+  test("a demoted target shows the demotion factor in the final layer only", () => {
+    const policy = ModelRoute.policy({ cooldownMs: 60_000, quotaCooldownMs: 900_000 })
+    ModelRoute.failed(sonnet, policy, now, { quota: true })
+    ModelRoute.failed(sonnet, policy, now + 1, { quota: true })
+    ModelRoute.failed(sonnet, policy, now + 2, { quota: true })
+    const trace = ModelRoute.tracedWeightOf(sonnet, 4, now + 3, rulesScope)
+    expect(trace).toEqual({ base: 4, scheduled: 4, prefer: 4, adjustment: 4, demotion: 0.04, gate: null })
+    expect(trace.demotion).toBe(ModelRoute.weightOf(sonnet, 4, now + 3, rulesScope))
   })
 })

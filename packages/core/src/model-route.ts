@@ -716,7 +716,9 @@ const appliesOn = (item: Adjustment, scope: ModelRouteOverrides.Scope) =>
 
 /** A target the route's learned adjustments skip. Only routes that let the tuner decide see these. */
 export const skipped = (target: Model.Ref, now = Date.now(), scope: ModelRouteOverrides.Scope = {}) =>
-  activeAdjustments(now).some((item) => item.action === "skip" && adjustmentOn(item, now) && matches(item, target) && appliesOn(item, scope))
+  activeAdjustments(now).some(
+    (item) => item.action === "skip" && adjustmentOn(item, now) && matches(item, target) && appliesOn(item, scope),
+  )
 
 /** Weight multiplier for a target demoted by quota errors. */
 const DEMOTED_FACTOR = 0.01
@@ -763,21 +765,57 @@ const scheduled = (target: Model.Ref, weight: number, now: number, scope: Weight
  * apply first (global, then the route's own), the user's own preferences next, then learned
  * adjustments and quota demotion. Learned weights apply only where the tuner may decide, so a
  * `fixed` route keeps its order; explicit schedules and user overrides apply on every route. */
-export const weightOf = (target: Model.Ref, base: number, now = Date.now(), scope: WeightScope = {}) => {
-  let weight = scheduled(target, base, now, scope)
+/** The weight a target carries after each layer of the computation, in the order the layers apply:
+ * the configured pool weight (`base`), scheduled rules (`scheduled`), the user's preferences
+ * (`prefer`), learned adjustments (`adjustment`), and quota demotion (`demotion` — the final
+ * effective weight). `gate` is the slot for eligibility-gate verdicts (#566): no gates exist yet,
+ * so it is always null; the slot ships now so the decision log's shape need not change when gates
+ * land. */
+export interface WeightTrace {
+  readonly base: number
+  readonly scheduled: number
+  readonly prefer: number
+  readonly adjustment: number
+  readonly demotion: number
+  readonly gate: string | null
+}
+
+/** The traced form of the weight computation: the real computation, recording the weight after
+ * each layer so a selection can be explained after the fact (#589). `weightOf` below is this
+ * trace's final layer, so traced weights can never drift from the weights selection used. */
+export const tracedWeightOf = (
+  target: Model.Ref,
+  base: number,
+  now = Date.now(),
+  scope: WeightScope = {},
+): WeightTrace => {
+  const afterScheduled = scheduled(target, base, now, scope)
+  let weight = afterScheduled
   for (const item of userOverrides("prefer", target, now, scope)) {
     if (item.weight !== undefined) weight = item.weight
     else weight *= item.factor ?? PREFERRED_FACTOR
   }
+  const afterPrefer = weight
   if (scope.fixed !== true) {
     for (const item of activeAdjustments(now)) {
-      if (item.action !== "weight" || !adjustmentOn(item, now) || !matches(item, target) || !appliesOn(item, scope)) continue
+      if (item.action !== "weight" || !adjustmentOn(item, now) || !matches(item, target) || !appliesOn(item, scope))
+        continue
       if (item.weight !== undefined) weight = item.weight
       else weight *= item.factor ?? 1
     }
   }
-  return weight * (demoted(target, now) ? DEMOTED_FACTOR : 1)
+  return {
+    base,
+    scheduled: afterScheduled,
+    prefer: afterPrefer,
+    adjustment: weight,
+    demotion: weight * (demoted(target, now) ? DEMOTED_FACTOR : 1),
+    gate: null,
+  }
 }
+
+export const weightOf = (target: Model.Ref, base: number, now = Date.now(), scope: WeightScope = {}) =>
+  tracedWeightOf(target, base, now, scope).demotion
 
 /** A target's pure weight multiplier, with its configured pool weight taken as 1. */
 export const weightFactor = (target: Model.Ref, now = Date.now(), scope: WeightScope = {}) =>
@@ -855,7 +893,11 @@ export const nextTarget = (
       : child.node !== undefined
         ? `opencode-route/${definition.nodes[child.node]?.routeID ?? child.node}`
         : "unknown"
-  const walk = (nodeIndex: number, inherited: readonly WeightRule[] = [], path: readonly string[] = []): number | undefined => {
+  const walk = (
+    nodeIndex: number,
+    inherited: readonly WeightRule[] = [],
+    path: readonly string[] = [],
+  ): number | undefined => {
     const node = definition.nodes[nodeIndex]
     if (!node) return undefined
     const nodePath = node.routeID && !path.includes(node.routeID) ? [...path, node.routeID] : path
@@ -885,9 +927,14 @@ export const nextTarget = (
     }
     // Every child's effective weight: its configured pool weight scaled or replaced by the schedules
     // in force. Equal weights keep their configured relative order when the list is sorted.
+    const traces = node.children.map((child, position) =>
+      child.leaf !== undefined
+        ? tracedWeightOf(definition.targets[child.leaf], node.weights[position] ?? 1, now, scope)
+        : undefined,
+    )
     const effective = node.children.map((child, position) => {
       const base = node.weights[position] ?? 1
-      if (child.leaf !== undefined) return weightOf(definition.targets[child.leaf], base, now, scope)
+      if (child.leaf !== undefined) return traces[position]?.demotion ?? base
       if (child.node !== undefined) return base * factor(child.node, rules, nodePath)
       return base
     })
@@ -951,7 +998,17 @@ export const nextTarget = (
         chosen: chosen === undefined ? undefined : label(node.children[chosen]),
         reason: decisionReason,
         detail: {
-          weights: Object.fromEntries(positions.map((position) => [label(node.children[position]), effective[position]])),
+          weights: Object.fromEntries(
+            positions.map((position) => [label(node.children[position]), effective[position]]),
+          ),
+          // Per-layer attribution for leaf candidates (#589); group candidates carry no
+          // weightOf layers — their weight is their leaves' average, in `weights` above.
+          layers: Object.fromEntries(
+            positions.flatMap((position) => {
+              const trace = traces[position]
+              return trace ? [[label(node.children[position]), trace] as const] : []
+            }),
+          ),
           excluded,
         },
       },
