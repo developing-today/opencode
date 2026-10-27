@@ -22,18 +22,46 @@ type SubstituteInput = ParseSource & {
   env?: Record<string, string>
 }
 
+// The env-substituted text plus the [start, end) ranges of it that were copied from the
+// config text itself. Anything outside those ranges arrived through an env value (or a
+// :- fallback), so references found there were not authored in the config.
+type Substituted = {
+  text: string
+  authored: Array<readonly [number, number]>
+}
+
 /** Apply {env:VAR}, {env:VAR:-fallback} and {file:path} substitutions to config text. */
 export const substitute = Effect.fn("ConfigVariable.substitute")(function* (input: SubstituteInput) {
-  const env = (escape: boolean) =>
-    input.text.replace(/\{env:([^}]+)\}/g, (_, token: string) => {
+  const env = (escape: boolean): Substituted => {
+    const parts: string[] = []
+    const authored: Array<readonly [number, number]> = []
+    let length = 0
+    let cursor = 0
+    const push = (segment: string, isAuthored: boolean) => {
+      if (!segment) return
+      if (isAuthored) {
+        const last = authored[authored.length - 1]
+        if (last && last[1] === length) authored[authored.length - 1] = [last[0], length + segment.length]
+        else authored.push([length, length + segment.length] as const)
+      }
+      parts.push(segment)
+      length += segment.length
+    }
+    for (const match of input.text.matchAll(/\{env:([^}]+)\}/g)) {
+      const token = match[1]
+      push(input.text.slice(cursor, match.index), true)
       // Shell-style default: {env:VAR:-fallback} resolves to the fallback when VAR is unset
       // or empty, so a config can name a working default instead of silently substituting "".
       const separator = token.indexOf(":-")
       const name = separator === -1 ? token : token.slice(0, separator)
       const fallback = separator === -1 ? "" : token.slice(separator + 2)
       const value = (input.env?.[name] ?? process.env[name]) || fallback
-      return escape ? JSON.stringify(value).slice(1, -1) : value
-    })
+      push(escape ? JSON.stringify(value).slice(1, -1) : value, false)
+      cursor = match.index + match[0].length
+    }
+    push(input.text.slice(cursor), true)
+    return { text: parts.join(""), authored }
+  }
   // Escape only when raw values break the JSON (e.g. Windows paths), so configs that parse today keep their meaning.
   const raw = yield* substituteFiles(input, env(false))
   const errors: ParseError[] = []
@@ -42,8 +70,9 @@ export const substitute = Effect.fn("ConfigVariable.substitute")(function* (inpu
   return yield* substituteFiles(input, env(true))
 })
 
-const substituteFiles = Effect.fnUntraced(function* (input: SubstituteInput, text: string) {
+const substituteFiles = Effect.fnUntraced(function* (input: SubstituteInput, substituted: Substituted) {
   const fs = yield* FSUtil.Service
+  const text = substituted.text
   const configDir = input.type === "path" ? path.dirname(input.path) : input.dir
   const configSource = input.type === "path" ? input.path : input.source
   let out = ""
@@ -54,9 +83,13 @@ const substituteFiles = Effect.fnUntraced(function* (input: SubstituteInput, tex
     const index = match.index
     out += text.slice(cursor, index)
 
+    // Only expand references the config itself authored: a {file:...} that arrived inside
+    // an env value or fallback stays literal, so env contents cannot read local files
+    // into the config.
+    const authored = substituted.authored.some(([start, end]) => index >= start && index + token.length <= end)
     const lineStart = text.lastIndexOf("\n", index - 1) + 1
     const prefix = text.slice(lineStart, index).trimStart()
-    if (prefix.startsWith("//")) {
+    if (!authored || prefix.startsWith("//")) {
       out += token
       cursor = index + token.length
       continue

@@ -1508,6 +1508,48 @@ describe("Config", () => {
     }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
   )
 
+  it.live("does not expand file references introduced by env values or fallbacks", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() => fs.writeFile(path.join(tmp.path, "secret.txt"), "TOPSECRET"))
+          const substitute = (text: string, env: Record<string, string>) =>
+            ConfigVariable.substitute({ type: "virtual", source: "test", dir: tmp.path, text, env })
+
+          const leaked = yield* substitute('{ "v": "{env:LEAK}" }', { LEAK: "{file:secret.txt}" })
+          expect(JSON.parse(leaked)).toEqual({ v: "{file:secret.txt}" })
+
+          const fallback = yield* substitute('{ "v": "{env:OPENCODE_TEST_MISSING:-{file:secret.txt}}" }', {})
+          expect(JSON.parse(fallback)).toEqual({ v: "{file:secret.txt}" })
+
+          const authored = yield* substitute('{ "v": "{file:secret.txt}", "w": "{env:LEAK}" }', {
+            LEAK: "{file:secret.txt}",
+          })
+          expect(JSON.parse(authored)).toEqual({ v: "TOPSECRET", w: "{file:secret.txt}" })
+        }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
+      ),
+    ),
+  )
+
+  it.live("does not expand file references from env values in the escaped repair pass", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() => fs.writeFile(path.join(tmp.path, "secret.txt"), "TOPSECRET"))
+          const value = String.raw`C:\secrets{file:secret.txt}`
+          const text = yield* ConfigVariable.substitute({
+            type: "virtual",
+            source: "test",
+            dir: tmp.path,
+            text: '{ "v": "{env:PATHLIKE}" }',
+            env: { PATHLIKE: value },
+          })
+          expect(JSON.parse(text)).toEqual({ v: value })
+        }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
+      ),
+    ),
+  )
+
   it.live("does not load legacy config.json files", () =>
     Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
       Effect.flatMap((tmp) =>
