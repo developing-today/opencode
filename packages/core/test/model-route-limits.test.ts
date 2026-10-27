@@ -104,6 +104,15 @@ describe("ModelRouteLimits.retryHintFromMessage", () => {
     expect(ModelRouteLimits.retryHintFromMessage("wait in 2 hours", at)).toBe(7_200_000)
   })
 
+  test("reads decimal and compound relative waits as the total", () => {
+    expect(ModelRouteLimits.retryHintFromMessage("try again in 1.5 hours", at)).toBe(5_400_000)
+    expect(ModelRouteLimits.resetAtFromMessage("try again in 1.5 hours", at)).toBe(at + 5_400_000)
+    expect(ModelRouteLimits.retryHintFromMessage("try again in 1 hour 30 minutes", at)).toBe(5_400_000)
+    expect(ModelRouteLimits.resetAtFromMessage("try again in 1 hour 30 minutes", at)).toBe(at + 5_400_000)
+    expect(ModelRouteLimits.retryHintFromMessage("try again in 1 hour and 30 minutes", at)).toBe(5_400_000)
+    expect(ModelRouteLimits.retryHintFromMessage("try again in 2.5 minutes", at)).toBe(150_000)
+  })
+
   test("does not guess at anything else", () => {
     expect(ModelRouteLimits.retryHintFromMessage("server exploded", at)).toBeUndefined()
     expect(ModelRouteLimits.retryHintFromMessage(undefined, at)).toBeUndefined()
