@@ -78,10 +78,18 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
     const read = yield* ModelRouteLog.withDb((db) =>
       Effect.gen(function* () {
         const sessions = yield* ModelRouteLog.sessionUsage(db, since, input.limit ?? 20, input.session)
-        const sessionTargets = yield* ModelRouteLog.sessionTargetUsage(
-          db,
-          sessions.flatMap((row) => (row.sessionID === null ? [] : [row.sessionID])),
-        )
+        const sessionIDs = sessions.flatMap((row) => (row.sessionID === null ? [] : [row.sessionID]))
+        const sessionTargets = yield* ModelRouteLog.sessionTargetUsage(db, since, sessionIDs)
+        const windowSessionTargets: (readonly ModelUsage.SessionTargetRow[])[] = []
+        for (const { window } of windows) {
+          windowSessionTargets.push(
+            (yield* ModelRouteLog.sessionTargetUsage(
+              db,
+              now - (window.windowHours ?? 0) * 3_600_000,
+              sessionIDs,
+            )) as ModelUsage.SessionTargetRow[],
+          )
+        }
         const targets = yield* ModelRouteLog.targetUsage(db, since)
         const days = yield* ModelRouteLog.dailyUsage(db, since)
         const offers = (yield* ModelRouteLog.offerUsage(db, since, input.route)) as ModelUsage.OfferRow[]
@@ -94,7 +102,7 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
             totals: ModelUsage.sum(rows.filter((row) => row.providerID === plan.providerID)),
           })
         }
-        return { sessions, sessionTargets, targets, days, offers, windowTotals }
+        return { sessions, sessionTargets, targets, days, offers, windowTotals, windowSessionTargets }
       }).pipe(Effect.orDie),
     )
     const history = Option.getOrUndefined(read)
@@ -114,7 +122,13 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
       (history?.sessionTargets ?? []).flatMap((row) =>
         row.sessionID === null ? [] : [{ ...row, sessionID: row.sessionID }],
       ),
-      windows,
+      windows.map(({ plan, window }, index) => ({
+        plan,
+        window,
+        rows: (history?.windowSessionTargets[index] ?? []).flatMap((row) =>
+          row.sessionID === null ? [] : [{ ...row, sessionID: row.sessionID }],
+        ),
+      })),
     ).filter(
       (session) =>
         (input.provider === undefined && input.model === undefined) ||

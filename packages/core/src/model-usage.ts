@@ -182,7 +182,13 @@ export interface SessionReport extends SessionRow {
 export const sessionReports = (
   sessions: readonly SessionRow[],
   rows: readonly SessionTargetRow[],
-  windows: readonly { readonly plan: ModelPlan.Plan; readonly window: ModelPlan.QuotaWindow }[] = [],
+  windows: readonly {
+    readonly plan: ModelPlan.Plan
+    readonly window: ModelPlan.QuotaWindow
+    /** This session's per-target rows inside the plan window's own lookback, when the caller read them
+     * separately; the share is computed from these, not from the report window's rows. */
+    readonly rows?: readonly SessionTargetRow[]
+  }[] = [],
 ): SessionReport[] =>
   sessions.map((session) => {
     const own = rows.filter((row) => row.sessionID === session.sessionID)
@@ -196,8 +202,9 @@ export const sessionReports = (
         metered: metered(row),
         costUsd: row.costUsd,
       })),
-      windows: windows.map(({ plan, window }) => {
-        const used = usedOf(window.unit, sum(own.filter((row) => row.providerID === plan.providerID)))
+      windows: windows.map(({ plan, window, rows: windowRows }) => {
+        const scoped = (windowRows ?? own).filter((row) => row.sessionID === session.sessionID)
+        const used = usedOf(window.unit, sum(scoped.filter((row) => row.providerID === plan.providerID)))
         return {
           plan: plan.id,
           window: window.name,
