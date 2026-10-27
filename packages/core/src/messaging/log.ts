@@ -164,7 +164,17 @@ export function unescapeBody(value: string) {
 /** Shortens long entries to a head and tail around an omission marker. */
 export function clip(text: string, chars: number) {
   if (text.length <= chars) return text
-  const head = Math.ceil(chars * 0.7)
+  let head = Math.ceil(chars * 0.7)
   const tail = Math.max(0, chars - head - 20)
-  return `${text.slice(0, head)} …[${text.length - head - tail} chars]… ${tail > 0 ? text.slice(-tail) : ""}`
+  // The 20-char reserve above only shrinks the tail: when the tail has
+  // already clamped to 0 the marker itself can push the result past
+  // `chars`, so shrink the head by the overflow instead. If the marker
+  // alone exceeds the budget, fall back to a plain truncation.
+  let marker = ` …[${text.length - head - tail} chars]… `
+  while (head > 0 && head + marker.length + tail > chars) {
+    head -= 1
+    marker = ` …[${text.length - head - tail} chars]… `
+  }
+  if (head + marker.length + tail > chars) return text.slice(0, chars)
+  return `${text.slice(0, head)}${marker}${tail > 0 ? text.slice(-tail) : ""}`
 }
