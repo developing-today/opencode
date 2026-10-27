@@ -33,6 +33,10 @@ describe("ModelRouteSchedule.parse", () => {
     expect(ModelRouteSchedule.parse({ daysOfMonth: [1, 32] })).toBeUndefined()
     expect(ModelRouteSchedule.parse({ daysOfMonth: [15, 0] })).toBeUndefined()
     expect(ModelRouteSchedule.parse({ from: 100, until: 100 })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ start: "09:00", end: "09:00" })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ start: "9:00", end: "09:00:00" })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ start: "09:00" })).toEqual({ start: "09:00" })
+    expect(ModelRouteSchedule.parse({ end: "09:00" })).toEqual({ end: "09:00" })
   })
 
   test("accepts zero-padded weekday strings like days of month", () => {
@@ -155,7 +159,9 @@ describe("ModelRouteSchedule.active", () => {
   })
 
   test("an equal start and end is an empty window, not a full day", () => {
-    const window = ModelRouteSchedule.parse({ start: "09:00", end: "09:00" })!
+    // parse rejects this shape (see the parse tests), so construct it directly:
+    // active must still treat a hand-built equal window as empty, never a full day.
+    const window = { start: "09:00", end: "09:00" }
     expect(ModelRouteSchedule.active(window, monday)).toBe(false)
   })
 })
