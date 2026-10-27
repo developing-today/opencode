@@ -8,6 +8,7 @@ import { Effect } from "effect"
 import { Config } from "../../config.js"
 import { Model } from "../../model.js"
 import { ModelRoute } from "../../model-route.js"
+import { ModelRouteExpansion } from "../../model-route-expansion.js"
 import { ModelRouteSchedule } from "../../model-route-schedule.js"
 import { Provider } from "../../provider.js"
 import { ConfigEntryObserver } from "./entry-observer.js"
@@ -260,7 +261,7 @@ export function expand(
         continue
       }
       if (spec.until !== undefined && Date.now() >= spec.until) continue
-      for (const [id, model] of matchingModels(ref.id, definitions.get(ref.providerID))) {
+      for (const [id, model] of ModelRouteExpansion.matchingModels(ref.id, definitions.get(ref.providerID))) {
         if (!model.enabled) continue
         const requested = ref.variant ?? inheritedVariant
         // A pinned variant is producible natively or through the target's remap table, matching
@@ -278,7 +279,7 @@ export function expand(
         if (requested && !variant) continue
         const resolved = Model.Ref.make({
           providerID: ref.providerID,
-          id,
+          id: Model.ID.make(id),
           ...(variant ? { variant } : {}),
         })
         const key = `${resolved.providerID}/${resolved.id}${resolved.variant ? `#${resolved.variant}` : ""}`
@@ -318,22 +319,6 @@ export function expand(
 
   visit(id, undefined, new Set())
   return { leaves: result, nodes }
-}
-
-/** A model id, or every model of the provider whose id matches a `*` pattern, in the provider's order. */
-function matchingModels(pattern: string, models: ReadonlyMap<string, Model.Info> | undefined) {
-  if (!models) return []
-  if (!pattern.includes("*")) {
-    const model = models.get(pattern)
-    return model ? [[Model.ID.make(pattern), model] as const] : []
-  }
-  const matcher = new RegExp(
-    `^${pattern
-      .split("*")
-      .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-      .join(".*")}$`,
-  )
-  return [...models].filter(([id]) => matcher.test(id)).map(([id, model]) => [Model.ID.make(id), model] as const)
 }
 
 /** Settings are stored as JSON, which has no undefined: keep only the allowances actually set. */

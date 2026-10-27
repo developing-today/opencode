@@ -50,24 +50,41 @@ const sessions = (list: SessionSchema.Info[]) => {
 type Input = Parameters<typeof ModelGovernance.assertAllowed>[2] & {
   all: SessionSchema.Info[]
   configInput?: Record<string, unknown>
+  catalogInput?: Record<string, Record<string, { enabled?: boolean; variants?: readonly string[] }>>
 }
 
-const entriesConfig = (input: Record<string, unknown> = {}) => ({
+const entriesConfig = (input: Input) => ({
   entries: () =>
     Effect.succeed([
       {
         type: "document" as const,
-        info: decodeInfo(input),
+        info: decodeInfo(input.configInput ?? {}),
       } as never,
     ]),
+  catalog: () =>
+    Effect.succeed(
+      input.catalogInput === undefined
+        ? undefined
+        : new Map(
+            Object.entries(input.catalogInput).map(([providerID, models]) => [
+              providerID,
+              new Map(
+                Object.entries(models).map(([id, model]) => [
+                  id,
+                  { enabled: model.enabled ?? true, variants: (model.variants ?? []).map((id) => ({ id })) },
+                ]),
+              ),
+            ]),
+          ),
+    ),
 })
 
 const run = (input: Input) =>
-  Effect.runPromise(ModelGovernance.assertAllowed(sessions(input.all), entriesConfig(input.configInput ?? {}), input))
+  Effect.runPromise(ModelGovernance.assertAllowed(sessions(input.all), entriesConfig(input), input))
 
 const runDenied = async (input: Input) => {
   const error = await Effect.runPromise(
-    ModelGovernance.assertAllowed(sessions(input.all), entriesConfig(input.configInput ?? {}), input).pipe(Effect.flip),
+    ModelGovernance.assertAllowed(sessions(input.all), entriesConfig(input), input).pipe(Effect.flip),
   )
   expect(error).toBeInstanceOf(ModelGovernance.DeniedError)
   return (error as ModelGovernance.DeniedError).message
@@ -417,6 +434,79 @@ describe("ModelGovernance.assertAllowed", () => {
     })
     expect(message).toContain("test/a#low")
     await run({ all: [excluding], parent: excluding, configInput, model: ref("opencode-route/main#high") })
+  })
+
+  test("a wildcard route target expanding to an excluded model denies (#530a)", async () => {
+    const parent = info("ses_parent", { subagentPolicy: { excludedModels: ["test/b"] } })
+    const configInput = { experimental: { model_routes: { main: { targets: [{ model: "test/*" }] } } } }
+    const catalogInput = { test: { a: {}, b: {} } }
+    const message = await runDenied({
+      all: [parent],
+      parent,
+      configInput,
+      catalogInput,
+      model: ref("opencode-route/main"),
+    })
+    expect(message).toContain("test/b")
+    expect(message).toContain("route")
+  })
+
+  test("a wildcard route target expanding only to allowed models passes (#530b)", async () => {
+    const parent = info("ses_parent", { subagentPolicy: { models: ["test/a", "test/b"] } })
+    const configInput = { experimental: { model_routes: { main: { targets: [{ model: "test/*" }] } } } }
+    const catalogInput = { test: { a: {}, b: {} } }
+    await run({ all: [parent], parent, configInput, catalogInput, model: ref("opencode-route/main") })
+  })
+
+  test("an expired route target is not judged (#530c)", async () => {
+    const parent = info("ses_parent", { subagentPolicy: { excludedModels: ["test/b"] } })
+    const configInput = {
+      experimental: { model_routes: { main: { targets: [{ model: "test/b", until: 1 }, "test/a"] } } },
+    }
+    const catalogInput = { test: { a: {}, b: {} } }
+    await run({ all: [parent], parent, configInput, catalogInput, model: ref("opencode-route/main") })
+  })
+
+  test("a disabled route target is not judged (#530d)", async () => {
+    const parent = info("ses_parent", { subagentPolicy: { excludedModels: ["test/b"] } })
+    const configInput = { experimental: { model_routes: { main: { targets: ["test/a", "test/b"] } } } }
+    const catalogInput = { test: { a: {}, b: { enabled: false } } }
+    await run({ all: [parent], parent, configInput, catalogInput, model: ref("opencode-route/main") })
+  })
+
+  test("a wildcard route target expanding outside the allowed list denies (#530e)", async () => {
+    const parent = info("ses_parent", { subagentPolicy: { models: ["test/a"] } })
+    const configInput = { experimental: { model_routes: { main: { targets: [{ model: "test/*" }] } } } }
+    const catalogInput = { test: { a: {}, c: {} } }
+    const message = await runDenied({
+      all: [parent],
+      parent,
+      configInput,
+      catalogInput,
+      model: ref("opencode-route/main"),
+    })
+    expect(message).toContain("test/c")
+  })
+
+  test("an expanded leaf is judged at a defaultVariant only when it offers it (#530)", async () => {
+    const configInput = {
+      experimental: { model_routes: { main: { targets: [{ model: "test/*", defaultVariant: "high" }] } } },
+    }
+    const catalogInput = { test: { a: {}, b: { variants: ["high"] } } }
+    // test/a does not offer #high, so it runs bare and excluding #high must not deny it via test/a;
+    // test/b does offer #high, so excluding test/a#high alone passes the route.
+    const other = info("ses_other", { subagentPolicy: { excludedModels: ["test/a#high"] } })
+    await run({ all: [other], parent: other, configInput, catalogInput, model: ref("opencode-route/main") })
+    // Excluding the variant test/b actually runs at denies the route, naming test/b.
+    const excluding = info("ses_excluding", { subagentPolicy: { excludedModels: ["test/b#high"] } })
+    const message = await runDenied({
+      all: [excluding],
+      parent: excluding,
+      configInput,
+      catalogInput,
+      model: ref("opencode-route/main"),
+    })
+    expect(message).toContain("test/b#high")
   })
 
   test("with no explicit choice the inherited parent model is what gets checked", async () => {

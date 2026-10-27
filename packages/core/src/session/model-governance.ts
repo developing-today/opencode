@@ -6,6 +6,7 @@ import { Model } from "@opencode/schema/model"
 import { Provider } from "@opencode/schema/provider"
 import type { Agent } from "@opencode/schema/agent"
 import { Config } from "../config.js"
+import { ModelRouteExpansion } from "../model-route-expansion.js"
 import type { Session } from "../session.js"
 import { SessionSchema } from "./schema.js"
 
@@ -149,6 +150,18 @@ function applySubagentOverride(
   })
 }
 
+/**
+ * The provider catalog governance judges route targets against: the slice of
+ * each catalog model the target set depends on. Call sites supply it from the
+ * location's provider snapshot when one is initialized; without a catalog,
+ * route targets are judged literally as before (see `routeTargets`).
+ */
+export type CatalogModel = {
+  enabled: boolean
+  variants: readonly { id: string }[]
+}
+export type Catalog = ReadonlyMap<string, ReadonlyMap<string, CatalogModel>>
+
 /** Route targets from config entries, following nested route references.
  * Each target is judged at the variant it will actually run, mirroring the
  * runtime resolution in model-resolver.ts: the target selection's own variant
@@ -157,12 +170,29 @@ function applySubagentOverride(
  * `defaultVariant`. A nested route inherits its referencing selection's
  * variant, else the outer requested variant — the intermediate target object's
  * own `defaultVariant`/`variants` never reach the inner route's leaves, exactly
- * as in the model-routes plugin's expansion. */
+ * as in the model-routes plugin's expansion.
+ *
+ * The target SET mirrors the runtime too (#530): a target whose `until` has
+ * passed is dropped, a target naming a `*` pattern expands to every matching
+ * catalog model via the shared `ModelRouteExpansion.matchingModels` the
+ * plugin runs, and catalog models that are disabled are dropped. Per leaf,
+ * the effective variant is filtered the way the plugin expansion filters it
+ * before the resolver runs: a fixed (selection/inherited) variant the leaf
+ * does not offer drops the leaf; a requested variant runs at its remap only
+ * when the leaf offers the remapped variant, else at the requested variant
+ * when the leaf offers it, else bare; a `defaultVariant` applies only when
+ * the leaf offers it. Expansion needs the catalog: when none is supplied
+ * (or the provider is absent from it), a pattern target is judged as its
+ * literal ref and a concrete target is judged as named, exactly as
+ * governance behaved before it had a catalog. A concrete target the catalog
+ * does not hold is still judged as named (fail-closed: an allowed list can
+ * reject it), where the plugin would drop it. */
 function routeTargets(
   entries: readonly Entry[],
   routeID: string,
   seen: Set<string>,
   requestedVariant?: Model.VariantID,
+  catalog?: Catalog,
 ): Model.Ref[] {
   if (seen.has(routeID)) return []
   seen.add(routeID)
@@ -178,21 +208,62 @@ function routeTargets(
         ? undefined
         : Model.VariantID.make(selection.variant)
     if (selection.providerID === "opencode-route")
-      return routeTargets(entries, selection.model, seen, selectionVariant ?? requested)
-    const variant =
+      return routeTargets(entries, selection.model, seen, selectionVariant ?? requested, catalog)
+    if (object?.until !== undefined && Date.now() >= object.until) return []
+    const rawVariant =
       selectionVariant ??
       (requested === undefined
         ? object?.defaultVariant === undefined
           ? undefined
           : Model.VariantID.make(object.defaultVariant)
         : Model.VariantID.make(object?.variants?.[requested] ?? requested))
-    return [
-      {
-        id: Model.ID.make(selection.model),
-        providerID: Provider.ID.make(selection.providerID),
-        ...(variant === undefined ? {} : { variant }),
-      } satisfies Model.Ref,
-    ]
+    const literal = {
+      id: Model.ID.make(selection.model),
+      providerID: Provider.ID.make(selection.providerID),
+      ...(rawVariant === undefined ? {} : { variant: rawVariant }),
+    } satisfies Model.Ref
+    const models = catalog?.get(selection.providerID)
+    // The variant a known catalog leaf actually runs, or undefined when the
+    // leaf is dropped (disabled, or its fixed variant is not offered).
+    const leaf = (id: string, model: CatalogModel): Model.Ref[] => {
+      if (!model.enabled) return []
+      const offers = (variant: string) => model.variants.some((item) => item.id === variant)
+      if (selectionVariant !== undefined)
+        return offers(selectionVariant) ? [{ ...literal, id: Model.ID.make(id), variant: selectionVariant }] : []
+      if (requested !== undefined) {
+        const remapped = object?.variants?.[requested]
+        const variant =
+          remapped !== undefined && offers(remapped)
+            ? Model.VariantID.make(remapped)
+            : offers(requested)
+              ? requested
+              : undefined
+        return [
+          {
+            id: Model.ID.make(id),
+            providerID: Provider.ID.make(selection.providerID),
+            ...(variant === undefined ? {} : { variant }),
+          },
+        ]
+      }
+      const variant =
+        object?.defaultVariant !== undefined && offers(object.defaultVariant)
+          ? Model.VariantID.make(object.defaultVariant)
+          : undefined
+      return [
+        {
+          id: Model.ID.make(id),
+          providerID: Provider.ID.make(selection.providerID),
+          ...(variant === undefined ? {} : { variant }),
+        },
+      ]
+    }
+    if (!selection.model.includes("*")) {
+      const known = models?.get(selection.model)
+      return known === undefined ? [literal] : leaf(selection.model, known)
+    }
+    if (models === undefined) return [literal]
+    return ModelRouteExpansion.matchingModels(selection.model, models).flatMap(([id, model]) => leaf(id, model))
   })
 }
 
@@ -221,10 +292,11 @@ export type Input = {
  */
 export const assertAllowed = Effect.fn("ModelGovernance.assertAllowed")(function* (
   sessions: Pick<Session.Interface, "get">,
-  config: Pick<Config.Interface, "entries">,
+  config: Pick<Config.Interface, "entries"> & { catalog?: () => Effect.Effect<Catalog | undefined> },
   input: Input,
 ) {
   const entries = yield* config.entries()
+  const catalog = config.catalog ? yield* config.catalog() : undefined
   const definitions = agentDefinitions(entries)
 
   const chain: SessionSchema.Info[] = [input.parent]
@@ -301,7 +373,9 @@ export const assertAllowed = Effect.fn("ModelGovernance.assertAllowed")(function
   if (model === undefined) return
 
   const targets =
-    model.providerID === "opencode-route" ? routeTargets(entries, model.id, new Set(), model.variant) : undefined
+    model.providerID === "opencode-route"
+      ? routeTargets(entries, model.id, new Set(), model.variant, catalog)
+      : undefined
   const checked = targets !== undefined && targets.length > 0 ? targets : [model]
   for (const target of checked) {
     const deniedBy = excluded.find((item) => Model.Selector.matches(item.selector, target))
