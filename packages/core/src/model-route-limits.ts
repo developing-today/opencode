@@ -64,11 +64,25 @@ export const resetMs = (value: string, at: number): number | undefined => {
 // "…T00:00:00Z" timestamp as local time, shifting the instant by the reader's UTC offset.
 const ABSOLUTE_TIME =
   /(?:retry|try again|wait|back|resume|reset|returns?|until|expires?(?: at)?)[a-z ]{0,20}(?:after|at|on|by)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?)/
-const RELATIVE_TIME = /in\s+(\d+)\s*(second|minute|hour|day|sec|s)s?(?![a-z])/
+// A relative wait is one amount+unit part or a compound sequence of them ("in 1 hour 30
+// minutes"), and an amount may be decimal ("in 1.5 hours") — providers phrase resets both ways.
+const RELATIVE_PART = String.raw`\d+(?:\.\d+)?\s*(?:second|minute|hour|day|sec|s)s?(?![a-z])`
+const RELATIVE_TIME = new RegExp(String.raw`in\s+(${RELATIVE_PART}(?:[\s,]+(?:and\s+)?${RELATIVE_PART})*)`)
+const RELATIVE_PARTS = /(\d+(?:\.\d+)?)\s*(second|minute|hour|day|sec|s)s?(?![a-z])/g
 const RELATIVE_UNITS = { second: 1_000, sec: 1_000, s: 1_000, minute: 60_000, hour: 3_600_000, day: 86_400_000 } as Record<
   string,
   number
 >
+
+/** The total wait a relative phrase states, summed over its parts; undefined when it states none. */
+const relativeMs = (message: string): number | undefined => {
+  const sequence = RELATIVE_TIME.exec(message)?.[1]
+  if (!sequence) return undefined
+  let total = 0
+  for (const [, amount, unit] of sequence.matchAll(RELATIVE_PARTS))
+    total += Number(amount) * (RELATIVE_UNITS[unit] ?? 1_000)
+  return total
+}
 
 /**
  * The instant a provider said a limit returns, from the text of its error or a user's note: an
@@ -82,8 +96,8 @@ export const resetAtFromMessage = (message: string | undefined, now: number): nu
     const date = Date.parse(absolute)
     if (!Number.isNaN(date)) return date
   }
-  const relative = RELATIVE_TIME.exec(message.toLowerCase())
-  return relative ? now + Number(relative[1]) * (RELATIVE_UNITS[relative[2]] ?? 1_000) : undefined
+  const relative = relativeMs(message.toLowerCase())
+  return relative === undefined ? undefined : now + relative
 }
 
 /**

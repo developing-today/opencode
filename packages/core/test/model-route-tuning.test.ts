@@ -148,6 +148,9 @@ describe("ModelRouteTuning.parseQuotaReset", () => {
     expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 45s", at)).toBe(at + 45_000)
     expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 45 sec", at)).toBe(at + 45_000)
     expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 45 seconds", at)).toBe(at + 45_000)
+    // Decimal and compound relative forms read as the total wait, like in ModelRouteLimits.
+    expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 1.5 hours", at)).toBe(at + 5_400_000)
+    expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 1 hour 30 minutes", at)).toBe(at + 5_400_000)
     expect(ModelRouteTuning.parseQuotaReset("try in 5 minutes", at)).toBeUndefined()
     expect(ModelRouteTuning.parseQuotaReset(undefined, at)).toBeUndefined()
   })
