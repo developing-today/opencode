@@ -263,12 +263,12 @@ export function expand(
     for (const target of current.targets) {
       const spec = targetSpec(target)
       const ref = targetRef(spec.model)
+      if (spec.until !== undefined && Date.now() >= spec.until) continue
       if (ref.providerID === ModelRoute.PROVIDER_ID) {
         const child = visit(ref.id, ref.variant ?? inheritedVariant, nextTrail)
         if (child !== undefined) attach({ node: child }, `${ModelRoute.PROVIDER_ID}/${ref.id}`)
         continue
       }
-      if (spec.until !== undefined && Date.now() >= spec.until) continue
       for (const [id, model] of ModelRouteExpansion.matchingModels(ref.id, definitions.get(ref.providerID))) {
         if (!model.enabled) continue
         const requested = ref.variant ?? inheritedVariant
