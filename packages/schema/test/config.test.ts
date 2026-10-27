@@ -150,10 +150,14 @@ describe("ConfigModelRoutes field descriptions", () => {
   const described = (schema: Schema.Top) => {
     const { definitions } = Schema.toJsonSchemaDocument(schema, { onExcessProperty: "error" })
     const fields: Record<string, string | undefined> = {}
-    for (const definition of Object.values(
-      definitions as Record<string, { properties?: Record<string, { description?: string }> }>,
-    ))
-      for (const [name, property] of Object.entries(definition.properties ?? {})) fields[name] ??= property.description
+    const walk = (node: unknown) => {
+      if (Array.isArray(node)) return node.forEach(walk)
+      if (typeof node !== "object" || node === null) return
+      const { properties, ...rest } = node as { properties?: Record<string, { description?: string }> }
+      for (const [name, property] of Object.entries(properties ?? {})) fields[name] ??= property.description
+      Object.values(rest).forEach(walk)
+    }
+    Object.values(definitions as Record<string, unknown>).forEach(walk)
     return fields
   }
 
@@ -175,7 +179,8 @@ describe("ConfigModelRoutes field descriptions", () => {
       [ConfigModelRoutes.Window, ["daysOfWeek", "daysOfMonth", "start", "end", "timezone", "from", "until"]],
       [ConfigModelRoutes.Schedule, ["id", "targets", "factor", "weight", "note"]],
       [ConfigModelRoutes.GlobalSchedule, ["providers", "models", "targets", "routes", "factor", "weight"]],
-      [ConfigModelRoutes.Route, ["budgets", "hedgeAfterMs", "attempts"]],
+      [ConfigModelRoutes.Route, ["budgets", "hedgeAfterMs", "attempts", "autonomy", "selection", "weights", "schedules", "limit"]],
+      [ConfigModelRoutes.Target, ["defaultVariant", "variants", "until"]],
       [ConfigModelRoutes.Tuning, ["enabled", "intervalMinutes", "windowHours", "notes"]],
       [ConfigModelRoutes.Log, ["captureErrorBodies"]],
     ]
@@ -184,6 +189,8 @@ describe("ConfigModelRoutes field descriptions", () => {
       for (const name of names) expect(fields[name], name).toBeString()
     }
     expect(described(ConfigModelRoutes.Budget).softLimit).toContain("Fraction of an allowance")
+    expect(described(ConfigModelRoutes.Route).autonomy).toContain("How much the route may decide")
+    expect(described(ConfigModelRoutes.Target).defaultVariant).toContain("Variant used when the route is selected")
   })
 })
 
