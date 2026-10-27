@@ -254,4 +254,40 @@ describe("scheduled and absolute priorities", () => {
       }),
     ).toEqual([])
   })
+
+  test("a malformed schedule drops the entry even when it has a valid until (#570)", () => {
+    const parsed = ModelRouteOverrides.parse({
+      overrides: [
+        {
+          id: "bad-window",
+          action: "avoid",
+          providers: ["openai"],
+          until: now + DAY,
+          schedule: { start: "25:00", end: "17:00" },
+        },
+        {
+          id: "bad-zone-until",
+          action: "avoid",
+          providers: ["openai"],
+          until: now + DAY,
+          schedule: { timezone: "Not/AZone" },
+        },
+        { id: "unwindowed", action: "avoid", providers: ["openai"], until: now + DAY },
+        {
+          id: "windowed",
+          action: "avoid",
+          providers: ["openai"],
+          until: now + DAY,
+          schedule: { from: now + DAY, until: now + 2 * DAY },
+        },
+      ],
+    })
+    expect(parsed.map((item) => item.id)).toEqual(["unwindowed", "windowed"])
+    const windowed = parsed.find((item) => item.id === "windowed")!
+    expect(windowed.schedule).toEqual({ from: now + DAY, until: now + 2 * DAY })
+    // The kept windowed entry does not apply outside its window.
+    expect(ModelRouteOverrides.applies(windowed, ModelRoute.ref({ providerID: "openai", model: "gpt-5" }), now)).toBe(
+      false,
+    )
+  })
 })

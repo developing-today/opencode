@@ -55,7 +55,12 @@ export const parse = (value: unknown): Override[] => {
     const id = field(item, "id")
     const until = field(item, "until")
     if (typeof id !== "string" || !ACTIONS.includes(action as Action)) return []
-    const schedule = ModelRouteSchedule.parse(field(item, "schedule"))
+    const rawSchedule = field(item, "schedule")
+    const schedule = ModelRouteSchedule.parse(rawSchedule)
+    // A schedule that is present but unreadable is malformed, not absent: keeping the
+    // entry would drop its time restriction and make a time-boxed override always-on
+    // until it expires (the widening shape of #536, one dimension over).
+    if (rawSchedule !== undefined && schedule === undefined) return []
     const hasUntil = typeof until === "number" && Number.isFinite(until)
     if (!hasUntil && schedule === undefined) return []
     if (
