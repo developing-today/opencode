@@ -5,7 +5,7 @@ import { ModelRoute } from "@opencode/core/model-route"
 import { Permission } from "@opencode/core/permission"
 import { ModelRouteLog } from "@opencode/core/model-route-log"
 import { ModelRouteReview } from "@opencode/core/model-route-review"
-import { AIError, QuotaExceededError } from "@opencode/ai"
+import { AIError, AuthenticationError, QuotaExceededError, RateLimitError } from "@opencode/ai"
 import { RouteStatsTool } from "@opencode/core/tool/plugin/route-stats"
 import { RouteAttemptTable, RouteDecisionTable, RouteHealthTable } from "@opencode/core/model-route-log/sql"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -695,6 +695,29 @@ describe("ModelRouteLog.observer", () => {
         error_message: "out of quota",
         error_body: '{"detail":"try again later"}',
       })
+    }),
+  )
+
+  it.live("stores the canonical retryable verdict for observer failures", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      const attemptFor = (routeID: string, failure: unknown) =>
+        ModelRouteLog.observer({ routeID, providerID: "openai", modelID: "m", startedAt: Date.now() }).done(
+          "failure",
+          { failure, outputStarted: false },
+        )
+      attemptFor("auth", new AIError({ reason: new AuthenticationError({ message: "bad key" }) }))
+      attemptFor("quota", new AIError({ reason: new QuotaExceededError({ message: "out of quota" }) }))
+      attemptFor("rate", new AIError({ reason: new RateLimitError({ message: "slow down" }) }))
+      attemptFor("plain", new Error("boom"))
+      yield* Effect.sleep("100 millis")
+      const rows = yield* db.select().from(RouteAttemptTable).all()
+      expect(rows.map((row) => [row.route_id, row.retryable]).toSorted()).toEqual([
+        ["auth", false],
+        ["plain", false],
+        ["quota", false],
+        ["rate", true],
+      ])
     }),
   )
 

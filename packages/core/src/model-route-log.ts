@@ -2,7 +2,7 @@ export * as ModelRouteLog from "./model-route-log.js"
 
 import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm" 
 import { Effect, Layer, Queue } from "effect"
-import type { AIError, HttpContext } from "@opencode/ai"
+import { AIError, isRetryable, type HttpContext } from "@opencode/ai"
 import { RequestExecutor, type StreamOptions } from "@opencode/ai/route"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { snapshot as takeSnapshot, type Snapshot } from "./model-route-limits.js"
@@ -119,7 +119,7 @@ export const observer = (
           ...fields,
           // A failed request's own details win; a successful one keeps what its response said.
           quota: fields.quota ?? (seen.snapshot && { ...seen.snapshot }),
-          retryable: result.failure ? isRetryableHint(result.failure) : undefined,
+          retryable: result.failure ? observerRetryable(result.failure) : undefined,
           output_started: result.outputStarted,
           hedged: request.hedged,
           first_token_ms: result.firstOutputAt === undefined ? undefined : result.firstOutputAt - request.startedAt,
@@ -204,10 +204,11 @@ const reasonOf = (failure: unknown) => {
   return value.reason ?? failure
 }
 
-const isRetryableHint = (failure: unknown) => {
-  const reason = (failure ?? {}) as { reason?: { _tag?: string } }
-  return reason.reason?._tag !== undefined
-}
+/** The observer's retryable column follows the same canonical classifier the session runner uses
+ * (\`@opencode/ai\` isRetryable, re-exported as SessionRunnerRetry.isRetryable), so the two columns
+ * cannot disagree. A failure that is not an \`AIError\` carries no provider classification, so it is
+ * stored as not retryable instead of being guessed from the presence of a tag. */
+const observerRetryable = (failure: unknown) => (failure instanceof AIError ? isRetryable(failure) : false)
 
 /** Whether failed requests keep their provider error body: `experimental.model_route_log`, read live. */
 let captureErrorBodies: () => boolean = () => false
