@@ -311,7 +311,9 @@ export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: N
     .filter((note) => filter.kind === undefined || note.kind === filter.kind)
     .filter((note) => since === undefined || Date.parse(note.at) >= since)
     .sort((left, right) => left.at.localeCompare(right.at))
-  return { notes: filter.limit === undefined ? matching : matching.slice(-filter.limit), skipped }
+  // slice(-0) is slice(0): a limit of 0 (or less) must keep no notes, not every note.
+  const limited = filter.limit === undefined ? matching : filter.limit <= 0 ? [] : matching.slice(-filter.limit)
+  return { notes: limited, skipped }
 }
 
 /** Whole days since a date the user or the model recorded, or null when there is no usable date. */

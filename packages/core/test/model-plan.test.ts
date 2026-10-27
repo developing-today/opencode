@@ -148,6 +148,9 @@ describe("ModelPlan store", () => {
       "expectation",
     ])
     expect(ModelPlan.readNotes({ limit: 1 }, root).notes[0]?.kind).toBe("expectation")
+    expect(ModelPlan.readNotes({ limit: 0 }, root).notes).toEqual([])
+    expect(ModelPlan.readNotes({ limit: -1 }, root).notes).toEqual([])
+    expect(ModelPlan.readNotes({ limit: 0 }, root).skipped).toBe(1)
   })
 
   test("staleness counts whole days, and a blank note is refused", () => {
