@@ -209,7 +209,11 @@ const memberOf = (
     }
   }
   const firstTokens = present(attempts.map((row) => row.firstTokenMs))
-  const speeds = present(attempts.map((row) => row.tokensPerSecond))
+  // Speed counts completed attempts only, per the Member doc: failed, timed-out and interrupted
+  // attempts can carry a recorded speed for the output they produced, but they never completed.
+  const speeds = present(
+    attempts.filter((row) => row.outcome === "success").map((row) => row.tokensPerSecond),
+  )
   const inputs = present(attempts.map((row) => row.tokensInput))
   return {
     target,

@@ -44,6 +44,32 @@ const pool = (
 ): ModelRouteReview.Configured => ({ selection, targets, weights })
 
 describe("ModelRouteReview.summarize", () => {
+  test("member speed median counts completed attempts only, as its doc states", () => {
+    const [summary] = ModelRouteReview.summarize({
+      attempts: [
+        attempt("cheap", "a/x", { outcome: "success", tokensPerSecond: 10 }),
+        attempt("cheap", "a/x", { outcome: "failure", tokensPerSecond: 1000 }),
+        attempt("cheap", "a/x", { outcome: "timeout", tokensPerSecond: 2000 }),
+        attempt("cheap", "a/x", { outcome: "interrupted", tokensPerSecond: 3000 }),
+      ],
+      decisions: [],
+      configured: new Map([["cheap", pool("weighted", ["a/x"])]]),
+    })
+    // The failed, timed-out and interrupted attempts did produce output, so the writers record a
+    // speed for them — but the median is documented as completed attempts only: the lone success.
+    expect(summary?.members[0]?.tokensPerSecond).toBe(10)
+    expect(summary?.members[0]?.attempts).toBe(4)
+  })
+
+  test("member speed is null when no attempt completed", () => {
+    const [summary] = ModelRouteReview.summarize({
+      attempts: [attempt("cheap", "a/x", { outcome: "failure", tokensPerSecond: 1000 })],
+      decisions: [],
+      configured: new Map([["cheap", pool("weighted", ["a/x"])]]),
+    })
+    expect(summary?.members[0]?.tokensPerSecond).toBeNull()
+  })
+
   test("judges a weighted pool by its new-session draws, not by sticky turns", () => {
     const weights = { "a/x": 2, "b/y": 1 }
     const decisions = [
