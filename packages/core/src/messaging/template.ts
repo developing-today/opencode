@@ -306,8 +306,14 @@ export const render = Effect.fnUntraced(function* <E, R>(
           output.push(resolved.value)
           continue
         }
-        if (stack.includes(name) || stack.length >= MAX_DEPTH)
-          return yield* new TemplateError({ message: `Variable {${name}} refers to itself` })
+        if (stack.includes(name))
+          return yield* new TemplateError({
+            message: `Variable reference cycle: ${[...stack, name].join(" -> ")} (variable {${name}} is reached again)`,
+          })
+        if (stack.length >= MAX_DEPTH)
+          return yield* new TemplateError({
+            message: `Variable {${name}} exceeds the maximum expansion depth of ${MAX_DEPTH} (chain: ${[...stack, name].join(" -> ")})`,
+          })
         output.push(yield* expand(resolved.value, [...stack, name]))
       }
       return output.join("")
