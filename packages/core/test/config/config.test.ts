@@ -1514,16 +1514,21 @@ describe("Config", () => {
         ConfigVariable.substitute({ type: "virtual", source: "test", dir: "/", text, env })
 
       const commented = yield* substitute(
-        ["{", "  // example: {env:SECRET} and {env:OPENCODE_TEST_MISSING:-fallback}", '  "v": "{env:SECRET}"', "}"].join(
-          "\n",
-        ),
+        [
+          "{",
+          "  // example: {env:SECRET} and {env:OPENCODE_TEST_MISSING:-fallback}",
+          '  "v": "{env:SECRET}"',
+          "}",
+        ].join("\n"),
         { SECRET: "injected" },
       )
       expect(commented).toBe(
-        ["{", "  // example: {env:SECRET} and {env:OPENCODE_TEST_MISSING:-fallback}", '  "v": "injected"', "}"].join("\n"),
+        ["{", "  // example: {env:SECRET} and {env:OPENCODE_TEST_MISSING:-fallback}", '  "v": "injected"', "}"].join(
+          "\n",
+        ),
       )
 
-      const multiline = ['{', "  // note: {env:MULTILINE}", '  "v": "ok"', "}"].join("\n")
+      const multiline = ["{", "  // note: {env:MULTILINE}", '  "v": "ok"', "}"].join("\n")
       const result = yield* substitute(multiline, { MULTILINE: 'evil"\n, "injected": "yes' })
       expect(result).toBe(multiline)
     }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
@@ -1546,6 +1551,38 @@ describe("Config", () => {
         .join("\n")
       expect(JSON.parse(stripped)).toEqual({ v: value })
     }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
+  )
+
+  it.live("does not expand references in trailing // comments, but expands live ones after strings (#556)", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() => fs.writeFile(path.join(tmp.path, "secret.txt"), "TOPSECRET"))
+          const substitute = (text: string, env: Record<string, string> = {}) =>
+            ConfigVariable.substitute({ type: "virtual", source: "test", dir: tmp.path, text, env })
+
+          // A token in a trailing comment after code on the same line is comment text.
+          const trailing = yield* substitute('{ "v": "x" } // example: {file:secret.txt}')
+          expect(trailing).toContain("{file:secret.txt}")
+          expect(trailing).not.toContain("TOPSECRET")
+
+          // A full-line comment behaves as before.
+          const fullLine = yield* substitute('// example: {file:secret.txt}\n{ "v": "x" }')
+          expect(fullLine).toContain("{file:secret.txt}")
+          expect(fullLine).not.toContain("TOPSECRET")
+
+          // A // inside a quoted string (a URL) before a live token is not a comment.
+          const url = yield* substitute('{ "u": "https://example.com", "v": "{file:secret.txt}" }')
+          expect(JSON.parse(url)).toEqual({ u: "https://example.com", v: "TOPSECRET" })
+
+          // The env pass shares the guard: a trailing-comment token stays literal, a live one expands.
+          const envTrailing = yield* substitute('{ "v": "x" } // example: {env:TOKEN}', { TOKEN: "abc" })
+          expect(envTrailing).toContain("{env:TOKEN}")
+          const envUrl = yield* substitute('{ "u": "https://example.com", "v": "{env:TOKEN}" }', { TOKEN: "abc" })
+          expect(JSON.parse(envUrl)).toEqual({ u: "https://example.com", v: "abc" })
+        }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
+      ),
+    ),
   )
 
   it.live("does not expand file references introduced by env values or fallbacks", () =>
