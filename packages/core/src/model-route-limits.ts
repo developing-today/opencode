@@ -62,8 +62,11 @@ export const resetMs = (value: string, at: number): number | undefined => {
 
 // The zone designator is part of the capture: dropping it would make Date.parse read a
 // "…T00:00:00Z" timestamp as local time, shifting the instant by the reader's UTC offset.
-const ABSOLUTE_TIME =
-  /(?:retry|try again|wait|back|resume|reset|returns?|until|expires?(?: at)?)[a-z ]{0,20}(?:after|at|on|by)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?)/
+// The one absolute-time keyword set both quota-reset parsers accept (this parser and
+// ModelRouteTuning.parseQuotaReset, which shares this pattern): a message honoured by one
+// door must be honoured by the other.
+export const ABSOLUTE_TIME =
+  /(?:retry|try again|wait|back|resume|reset|returns?|available|until|expires?(?: at)?)[a-z ]{0,20}(?:after|at|on|by)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?)/
 // A relative wait is one amount+unit part or a compound sequence of them ("in 1 hour 30
 // minutes"), and an amount may be decimal ("in 1.5 hours") — providers phrase resets both ways.
 const RELATIVE_PART = String.raw`\d+(?:\.\d+)?\s*(?:second|minute|hour|day|sec|s)s?(?![a-z])`
