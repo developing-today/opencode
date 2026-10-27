@@ -128,6 +128,19 @@ export interface TargetReport extends Totals {
   readonly pools: readonly PoolState[]
 }
 
+/** A target string is "provider/model", split at the first slash (model ids may contain
+ * further slashes). A slash-less target — a bare or typo'd pool entry, exactly what the
+ * configured-not-reached report exists to surface — has no provider: the whole string is
+ * the model id and the provider is empty, instead of slice(0, -1) silently dropping the
+ * string's last character into a provider that does not exist. Shared with the route_usage
+ * tool's filtering so the two splits cannot drift. */
+export const splitTarget = (target: string): { providerID: string; modelID: string } => {
+  const slash = target.indexOf("/")
+  return slash === -1
+    ? { providerID: "", modelID: target }
+    : { providerID: target.slice(0, slash), modelID: target.slice(slash + 1) }
+}
+
 /** Every target that was used in the window, plus every configured target that was not, so an idle one shows. */
 export const targetReports = (
   rows: readonly TargetRow[],
@@ -139,11 +152,11 @@ export const targetReports = (
   const targets = [...new Set([...used.keys(), ...configuredTargets])]
   return targets.map((target) => {
     const row = used.get(target)
-    const slash = target.indexOf("/")
+    const { providerID, modelID } = splitTarget(target)
     return {
       target,
-      providerID: target.slice(0, slash),
-      modelID: target.slice(slash + 1),
+      providerID,
+      modelID,
       requests: row?.requests ?? 0,
       failures: row?.failures ?? 0,
       input: row?.input ?? 0,

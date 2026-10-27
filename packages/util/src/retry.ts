@@ -32,7 +32,7 @@ function isTransientError(error: unknown, depth = 0): boolean {
 }
 
 export async function retry<T>(operation: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
-  const attempts = options.attempts ?? 3
+  const attempts = Math.max(options.attempts ?? 3, 1)
   const delay = options.delay ?? 500
   const factor = options.factor ?? 2
   const maxDelay = options.maxDelay ?? 10_000

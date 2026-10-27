@@ -171,6 +171,8 @@ export const slug = (value: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 64)
+    // The slice can cut right after a separator, leaving a trailing dash the trim above missed.
+    .replace(/-+$/, "")
 
 /** Fields to change on a plan. A field left out is kept; a field set to null is removed. */
 export interface PlanPatch {
@@ -310,7 +312,13 @@ export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: N
     .filter((note) => filter.poolID === undefined || note.poolID === filter.poolID)
     .filter((note) => filter.kind === undefined || note.kind === filter.kind)
     .filter((note) => since === undefined || Date.parse(note.at) >= since)
-    .sort((left, right) => left.at.localeCompare(right.at))
+    .sort((left, right) => {
+      const leftAt = Date.parse(left.at)
+      const rightAt = Date.parse(right.at)
+      if (Number.isNaN(leftAt)) return Number.isNaN(rightAt) ? 0 : -1
+      if (Number.isNaN(rightAt)) return 1
+      return leftAt - rightAt
+    })
   return { notes: filter.limit === undefined ? matching : matching.slice(-filter.limit), skipped }
 }
 

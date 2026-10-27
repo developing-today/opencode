@@ -178,6 +178,14 @@ describe("ModelRouteTuning.parseQuotaReset", () => {
     // An invalid date alone still states no reset.
     expect(ModelRouteTuning.parseQuotaReset("quota reset at 2026-13-01", at)).toBeUndefined()
   })
+
+  test("treats calendar-invalid dates as unparseable, like ModelRouteLimits", () => {
+    expect(ModelRouteTuning.parseQuotaReset("quota reset at 2026-02-30", at)).toBeUndefined()
+    expect(
+      ModelRouteTuning.parseQuotaReset("quota reset at 2026-02-30, back at 2026-03-05T00:00:00Z", at),
+    ).toBe(Date.parse("2026-03-05T00:00:00Z"))
+    expect(ModelRouteTuning.parseQuotaReset("quota reset at 2024-02-29", at)).toBe(Date.parse("2024-02-29"))
+  })
 })
 
 describe("ModelRouteTuning notes", () => {

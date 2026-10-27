@@ -18,6 +18,13 @@ describe("ModelRouteSchedule.parse", () => {
     expect(ModelRouteSchedule.parse({})).toEqual({})
   })
 
+  test("sorts daysOfMonth to the same canonical order regardless of input order", () => {
+    expect(ModelRouteSchedule.parse({ daysOfMonth: [15, 1, 15] })).toEqual({ daysOfMonth: [1, 15] })
+    expect(ModelRouteSchedule.parse({ daysOfMonth: [1, 15] })).toEqual({ daysOfMonth: [1, 15] })
+    // The -1 "last day" sentinel stays last, not first as a numeric sort would put it.
+    expect(ModelRouteSchedule.parse({ daysOfMonth: [-1, 15, 1] })).toEqual({ daysOfMonth: [1, 15, -1] })
+  })
+
   test("refuses a window it cannot read instead of guessing", () => {
     expect(ModelRouteSchedule.parse("weekdays")).toBeUndefined()
     expect(ModelRouteSchedule.parse({ timezone: "Mars/Olympus" })).toBeUndefined()

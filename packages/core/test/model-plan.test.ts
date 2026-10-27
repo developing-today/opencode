@@ -124,6 +124,13 @@ describe("ModelPlan store", () => {
     expect(pooled.pools.hard).toMatchObject({ tier: "frontier", purpose: "debugging with an unknown cause" })
   })
 
+  test("slug never ends in a dash, including when the 64-char slice cuts after a separator", () => {
+    expect(ModelPlan.slug("a".repeat(63) + " b c")).toBe("a".repeat(63))
+    expect(ModelPlan.slug("a".repeat(64))).toBe("a".repeat(64))
+    expect(ModelPlan.slug("Claude Max 20x")).toBe("claude-max-20x")
+    expect(ModelPlan.slug("--weird--name--")).toBe("weird-name")
+  })
+
   test("notes are appended, filtered and kept in order, and a damaged line is skipped and counted", () => {
     const root = dir()
     ModelPlan.addNote(
@@ -161,6 +168,41 @@ describe("ModelPlan store", () => {
     expect(ModelPlan.daysSince("not a date", now)).toBeNull()
     expect(() => ModelPlan.addNote({ text: "   " }, NOW, dir())).toThrow("some text")
   })
+
+  test("notes sort chronologically across timestamp formats and limits keep the newest", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "half second later" }, "2026-10-27T09:00:00.500Z", root)
+    ModelPlan.addNote({ text: "same time without milliseconds" }, "2026-10-27T09:00:00Z", root)
+    ModelPlan.addNote({ text: "offset, but earliest" }, "2026-10-27T10:30:00+02:00", root)
+
+    expect(ModelPlan.readNotes({}, root).notes.map((note) => note.text)).toEqual([
+      "offset, but earliest",
+      "same time without milliseconds",
+      "half second later",
+    ])
+    expect(ModelPlan.readNotes({ limit: 1 }, root).notes.map((note) => note.text)).toEqual(["half second later"])
+    expect(ModelPlan.readNotes({ limit: 2 }, root).notes.map((note) => note.text)).toEqual([
+      "same time without milliseconds",
+      "half second later",
+    ])
+  })
+
+  test("unparseable timestamps sort before parsed dates and equal instants stay stable", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "unparseable" }, "not-a-date", root)
+    ModelPlan.addNote({ text: "equal instant first" }, "2026-10-27T09:00:00Z", root)
+    ModelPlan.addNote({ text: "equal instant second" }, "2026-10-27T11:00:00+02:00", root)
+    ModelPlan.addNote({ text: "later" }, "2026-10-27T09:00:01Z", root)
+
+    expect(ModelPlan.readNotes({}, root).notes.map((note) => note.text)).toEqual([
+      "unparseable",
+      "equal instant first",
+      "equal instant second",
+      "later",
+    ])
+    expect(ModelPlan.readNotes({ limit: 1 }, root).notes.map((note) => note.text)).toEqual(["later"])
+  })
+
 
   test("guidance points OpenCode's own plans at the console and leaves other providers without it", () => {
     expect(ModelPlan.guidance("opencode-go").join(" ")).toContain("opencode.ai/console")
