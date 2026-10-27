@@ -194,10 +194,24 @@ describe("usage history", () => {
       expect(session).toMatchObject({ requests: 2, failures: 1, input: 1_500, output: 200 })
       expect(session?.costUsd).toBeCloseTo(0.35)
 
-      const sessionTargets = yield* ModelRouteLog.sessionTargetUsage(db, ["ses_usage"])
+      const sessionTargets = yield* ModelRouteLog.sessionTargetUsage(db, 0, ["ses_usage"])
       expect(sessionTargets).toEqual([
         expect.objectContaining({ routeID: "usage-pool", providerID: "openai", modelID: "gpt-6-luna", requests: 2 }),
       ])
+
+      // Bounded by `since`: only the attempt at 3_000 counts, so the per-target rows sum to the
+      // since-filtered session totals instead of mixing in the older attempt at 1_000.
+      const bounded = yield* ModelRouteLog.sessionTargetUsage(db, 3_000, ["ses_usage"])
+      expect(bounded).toEqual([
+        expect.objectContaining({
+          routeID: "usage-pool",
+          providerID: "openai",
+          modelID: "gpt-6-luna",
+          requests: 1,
+          input: 500,
+        }),
+      ])
+      expect(yield* ModelRouteLog.sessionTargetUsage(db, 4_000, ["ses_usage"])).toEqual([])
 
       const target = (yield* ModelRouteLog.targetUsage(db, 0)).find(
         (row) => row.providerID === "openai" && row.modelID === "gpt-6-luna" && row.sessions === 1,

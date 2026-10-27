@@ -678,8 +678,8 @@ export const sessionUsage = (db: Database.Interface["db"], since: number, limit:
     .limit(limit)
     .all()
 
-/** Totals per session, pool and target, for the sessions named. */
-export const sessionTargetUsage = (db: Database.Interface["db"], sessionIDs: readonly string[]) =>
+/** Totals per session, pool and target, for the sessions named, counting only attempts started at or after `since`. */
+export const sessionTargetUsage = (db: Database.Interface["db"], since: number, sessionIDs: readonly string[]) =>
   sessionIDs.length === 0
     ? Effect.succeed([])
     : db
@@ -691,7 +691,9 @@ export const sessionTargetUsage = (db: Database.Interface["db"], sessionIDs: rea
           ...usageColumns,
         })
         .from(RouteAttemptTable)
-        .where(inArray(RouteAttemptTable.session_id, [...sessionIDs]))
+        .where(
+          and(gte(RouteAttemptTable.time_started, since), inArray(RouteAttemptTable.session_id, [...sessionIDs])),
+        )
         .groupBy(
           RouteAttemptTable.session_id,
           RouteAttemptTable.route_id,

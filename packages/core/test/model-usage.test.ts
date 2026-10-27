@@ -121,6 +121,56 @@ describe("ModelUsage", () => {
     ])
   })
 
+  test("a session's plan-window share counts only the rows inside the window's own lookback when given them", () => {
+    const plan = {
+      id: "anthropic-max",
+      providerID: "anthropic",
+      label: "Personal",
+      coverage: "subscription",
+      quotas: [],
+      status: "active",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    } as ModelPlan.Plan
+    const window = { name: "5-hour", unit: "messages", limit: 200, windowHours: 5 } as ModelPlan.QuotaWindow
+    const reportRows = [
+      {
+        sessionID: "s1",
+        routeID: "hard",
+        providerID: "anthropic",
+        modelID: "claude-opus-5",
+        ...totals({ requests: 50 }),
+      },
+    ]
+    const windowRows = [
+      {
+        sessionID: "s1",
+        routeID: "hard",
+        providerID: "anthropic",
+        modelID: "claude-opus-5",
+        ...totals({ requests: 20 }),
+      },
+      {
+        sessionID: "s2",
+        routeID: "hard",
+        providerID: "anthropic",
+        modelID: "claude-opus-5",
+        ...totals({ requests: 99 }),
+      },
+    ]
+    const [report] = ModelUsage.sessionReports(
+      [{ sessionID: "s1", first: 1, last: 2, ...totals({ requests: 60 }) }],
+      reportRows,
+      [{ plan, window, rows: windowRows }],
+    )
+    // 20 of the session's 50 anthropic requests fall inside the 5-hour lookback; s2's rows never count.
+    expect(report?.windows).toEqual([
+      { plan: "anthropic-max", window: "5-hour", unit: "messages", used: 20, percent: 10 },
+    ])
+    // The report-window targets still come from the report rows.
+    expect(report?.targets.map((item) => [item.target, item.requests])).toEqual([["anthropic/claude-opus-5", 50]])
+  })
+
   test("days group by date and keep each provider's share", () => {
     const days = ModelUsage.dayReports([
       { day: "2026-10-13", providerID: "openai", modelID: "a", ...totals({ requests: 2, costUsd: 0.5 }) },
