@@ -1,8 +1,9 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Stream } from "effect"
 import { Base64 } from "effect/encoding"
 import { Speech, SpeechClient, SpeechEvent } from "../src/index.js"
 import { Cartesia, Deepgram, ElevenLabs, Google, OpenAI } from "../src/providers.js"
+import { SpeechStream } from "../src/protocols/utils/speech-stream.js"
 import { it } from "./lib/effect.js"
 import { dynamicResponse } from "./lib/http.js"
 import { sseEvents } from "./lib/sse.js"
@@ -282,4 +283,34 @@ describe("Speech", () => {
       expect(yield* finish!.audio.bytes()).toEqual(Uint8Array.from([1, 2, 3]))
     }),
   )
+})
+
+describe("SpeechStream.headerUsage", () => {
+  test("returns undefined for blank or whitespace-only header values", () => {
+    expect(SpeechStream.headerUsage("characters", "")).toBeUndefined()
+    expect(SpeechStream.headerUsage("characters", "   ")).toBeUndefined()
+    expect(SpeechStream.headerUsage("credits", "")).toBeUndefined()
+    expect(SpeechStream.headerUsage("credits", "   ")).toBeUndefined()
+    expect(SpeechStream.headerUsage("characters", undefined)).toBeUndefined()
+  })
+
+  test("returns undefined for negative amounts", () => {
+    expect(SpeechStream.headerUsage("characters", "-5")).toBeUndefined()
+    expect(SpeechStream.headerUsage("credits", "-5")).toBeUndefined()
+  })
+
+  test("returns undefined for non-plain spellings instead of reinterpreting them", () => {
+    expect(SpeechStream.headerUsage("characters", "0x10")).toBeUndefined()
+    expect(SpeechStream.headerUsage("characters", "1e3")).toBeUndefined()
+    expect(SpeechStream.headerUsage("credits", "0x10")).toBeUndefined()
+    expect(SpeechStream.headerUsage("credits", "1e3")).toBeUndefined()
+    expect(SpeechStream.headerUsage("characters", "abc")).toBeUndefined()
+  })
+
+  test("keeps plain values unchanged, including an authored zero", () => {
+    expect(SpeechStream.headerUsage("characters", "42")).toEqual({ type: "characters", characters: 42 })
+    expect(SpeechStream.headerUsage("characters", "0")).toEqual({ type: "characters", characters: 0 })
+    expect(SpeechStream.headerUsage("credits", "42")).toEqual({ type: "credits", credits: 42 })
+    expect(SpeechStream.headerUsage("credits", "0")).toEqual({ type: "credits", credits: 0 })
+  })
 })

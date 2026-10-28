@@ -105,7 +105,13 @@ export const finish = (
 }
 
 export const headerUsage = (type: "characters" | "credits", value: string | undefined): MediaUsage | undefined => {
-  const amount = Number(value)
+  // A usage header is a plain non-negative decimal count. Number() alone is
+  // too wide: it reads a blank header as an authored 0, keeps negatives, and
+  // reinterprets hex/exponent spellings ("0x10" -> 16, "1e3" -> 1000) — all of
+  // which would be reported as the call's billed usage.
+  const trimmed = value?.trim()
+  if (!trimmed || !/^\d+(?:\.\d+)?$/.test(trimmed)) return undefined
+  const amount = Number(trimmed)
   if (!Number.isFinite(amount)) return undefined
   return type === "credits" ? { type, credits: amount } : { type, characters: amount }
 }
