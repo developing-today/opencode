@@ -269,7 +269,8 @@ function matches(when: Form.When, value: Form.Value | undefined) {
   return when.op === "eq" ? hit : !hit
 }
 
-// Create-time validation of `when` references: each condition must point at an earlier field,
+// Create-time validation of field definitions and `when` references: a field's own bounds must
+// be satisfiable (min <= max) and a string pattern must compile, and each `when` condition must point at an earlier field,
 // carry a value matching that field's type, and use a declared option when the field's options
 // are closed. Rejecting these at creation surfaces authoring mistakes to the caller instead of
 // silently never matching.
@@ -285,6 +286,25 @@ export function validateFields(fields: ReadonlyArray<Form.Field>) {
     if (field.type === "external") {
       earlier.set(field.key, field)
       continue
+    }
+    if (field.type === "string") {
+      if (field.minLength !== undefined && field.maxLength !== undefined && field.minLength > field.maxLength)
+        return `Form field has minLength greater than maxLength: ${field.key}`
+      if (field.pattern !== undefined) {
+        try {
+          new RegExp(field.pattern)
+        } catch {
+          return `Form field has invalid pattern: ${field.key}`
+        }
+      }
+    }
+    if (field.type === "number" || field.type === "integer") {
+      if (field.minimum !== undefined && field.maximum !== undefined && field.minimum > field.maximum)
+        return `Form field has minimum greater than maximum: ${field.key}`
+    }
+    if (field.type === "multiselect") {
+      if (field.minItems !== undefined && field.maxItems !== undefined && field.minItems > field.maxItems)
+        return `Form field has minItems greater than maxItems: ${field.key}`
     }
     for (const when of field.when ?? []) {
       const target = earlier.get(when.key)
