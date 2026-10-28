@@ -362,9 +362,31 @@ function validateWhen(when: Form.When, target: Form.Field) {
   // string and multiselect targets both compare against string values
   if (typeof when.value !== "string") return "Form field condition value must be a string"
   const closed = target.type === "multiselect" ? !target.custom : target.options !== undefined && !target.custom
-  if (closed && !target.options?.some((option) => option.value === when.value)) {
-    return "Form field condition value must be one of the field's options"
+  if (closed) {
+    if (!target.options?.some((option) => option.value === when.value)) {
+      return "Form field condition value must be one of the field's options"
+    }
+    return
   }
+  if (target.type !== "string") return
+  // A non-closed string target's answers must still satisfy its own length,
+  // pattern, and format constraints (the checks validateField makes), so a
+  // condition value violating them can never be answered and the gate would
+  // silently never match (eq) or always match (neq) — #708. The predicates
+  // are validateField's own: the email regex, URL.canParse, isDate, and
+  // isDateTime.
+  if (target.minLength !== undefined && when.value.length < target.minLength)
+    return `Form field condition value must be at least ${target.minLength} characters`
+  if (target.maxLength !== undefined && when.value.length > target.maxLength)
+    return `Form field condition value must be at most ${target.maxLength} characters`
+  if (target.pattern !== undefined && !new RegExp(target.pattern).test(when.value))
+    return "Form field condition value must match the field's pattern"
+  if (target.format === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(when.value))
+    return "Form field condition value must be an email"
+  if (target.format === "uri" && !URL.canParse(when.value)) return "Form field condition value must be a URI"
+  if (target.format === "date" && !isDate(when.value)) return "Form field condition value must be a date"
+  if (target.format === "date-time" && !isDateTime(when.value))
+    return "Form field condition value must be a date-time"
 }
 
 function validateField(field: InputField, value: Form.Value): string | undefined {
