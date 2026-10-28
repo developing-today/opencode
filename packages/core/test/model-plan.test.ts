@@ -157,6 +157,8 @@ describe("ModelPlan store", () => {
     expect(ModelPlan.readNotes({ limit: 1 }, root).notes[0]?.kind).toBe("expectation")
     expect(ModelPlan.readNotes({ limit: 0 }, root).notes).toEqual([])
     expect(ModelPlan.readNotes({ limit: -1 }, root).notes).toEqual([])
+    expect(ModelPlan.readNotes({ limit: Number.NaN }, root).notes).toEqual([])
+    expect(ModelPlan.readNotes({ limit: Number.POSITIVE_INFINITY }, root).notes).toEqual([])
     expect(ModelPlan.readNotes({ limit: 0 }, root).skipped).toBe(1)
   })
 
