@@ -400,4 +400,15 @@ describe("WebSearch cooldownMillis retry-after grammar", () => {
     expect(WebSearch.cooldownMillis(new Date(now + 90_000).toUTCString(), now)).toBe(90_000)
     expect(WebSearch.cooldownMillis(new Date(now - 90_000).toUTCString(), now)).toBe(0)
   })
+
+  test("rejects calendar-invalid ISO dates to the 60-second fallback (#713)", () => {
+    expect(WebSearch.cooldownMillis("2026-02-30T00:00:00Z", now)).toBe(60_000)
+    expect(WebSearch.cooldownMillis("2026-13-01T00:00:00Z", now)).toBe(60_000)
+    expect(WebSearch.cooldownMillis("2026-01-01T24:00:00Z", now)).toBe(60_000)
+  })
+
+  test("keeps valid ISO retry-after dates (#713)", () => {
+    expect(WebSearch.cooldownMillis(new Date(now + 90_000).toISOString(), now)).toBe(90_000)
+    expect(WebSearch.cooldownMillis(new Date(now - 90_000).toISOString(), now)).toBe(0)
+  })
 })

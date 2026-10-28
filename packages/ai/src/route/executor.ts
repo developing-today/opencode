@@ -28,6 +28,31 @@ const normalizedHeaders = (headers: Headers.Headers) =>
 const DELAY_SECONDS = /^\d+$/
 const MILLISECONDS = /^\d+(?:\.\d+)?$/
 
+// Date.parse with a calendar check, the local equivalent of core's
+// ModelRouteLimits.parseAbsoluteTime (#713; ai does not depend on core, and
+// this file already keeps local guards for its sibling parsers): Date.parse
+// silently rolls overflow days such as Feb 30 into the next month instead of
+// returning NaN, so an ISO date's components must round-trip through a real
+// calendar date before the parsed instant is trusted.
+const parseHttpDate = (text: string): number | undefined => {
+  const date = Date.parse(text)
+  if (Number.isNaN(date)) return undefined
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text)
+  if (!iso) return date
+  const year = Number(iso[1])
+  const month = Number(iso[2])
+  const day = Number(iso[3])
+  const probe = new Date(0)
+  probe.setUTCFullYear(year, month - 1, day)
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day)
+    return undefined
+  // V8 rolls hour 24 into the next day instead of returning NaN (minutes/seconds 60+ are
+  // Invalid), so an ISO time part must not carry hour > 23 (RFC 3339 time-hour is 00-23).
+  const time = /[T ](\d{2}):\d{2}/i.exec(text)
+  if (time && Number(time[1]) > 23) return undefined
+  return date
+}
+
 const retryAfterMs = (headers: Record<string, string>) => {
   // A blank header value is absent, not an authored 0: Number("") === 0 would
   // otherwise discard a valid retry-after carried by the same response.
@@ -45,8 +70,8 @@ const retryAfterMs = (headers: Record<string, string>) => {
     if (Number.isFinite(seconds)) return seconds * 1000
   }
 
-  const date = Date.parse(value)
-  if (!Number.isNaN(date)) return Math.max(0, date - Date.now())
+  const date = parseHttpDate(value)
+  if (date !== undefined) return Math.max(0, date - Date.now())
   return undefined
 }
 
