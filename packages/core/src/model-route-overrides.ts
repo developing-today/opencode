@@ -62,6 +62,10 @@ export const parse = (value: unknown): Override[] => {
     // until it expires (the widening shape of #536, one dimension over).
     if (rawSchedule !== undefined && schedule === undefined) return []
     const hasUntil = typeof until === "number" && Number.isFinite(until)
+    // An until that is present but not a finite number is malformed, not absent: keeping
+    // the entry would drop its expiry and make a time-limited override permanent on
+    // its schedule (the widening shape of #536/#570, one dimension over).
+    if (until !== undefined && !hasUntil) return []
     if (!hasUntil && schedule === undefined) return []
     if (
       malformedList(field(item, "providers")) ||
