@@ -209,6 +209,10 @@ const layer = Layer.effect(
     const runStep = Effect.fn("SessionRunner.runStep")(function* (first: SessionContext.Loaded, step: number) {
       const sessionID = first.session.id
       let assistantMessageID = SessionMessage.ID.create()
+      // Set once this step's response has been continued after an output token limit. Every later chunk names the
+      // attempt that started the response, so a turn's tokens and cost can be read as one figure.
+      let continuationOf: SessionMessage.ID | undefined
+      let continuationIndex = 0
       const retry = yield* SessionRunnerRetry.make(bus, sessionID)
       let initial: SessionContext.Loaded | undefined = first
       let recoverOverflow = true
@@ -221,6 +225,8 @@ const layer = Layer.effect(
         if (compacted.status === "failed") return yield* new StepFailedError({ error: compacted.error })
         if (compacted.status === "completed") {
           assistantMessageID = SessionMessage.ID.create()
+          continuationOf = undefined
+          continuationIndex = 0
           continue
         }
         const stepLimitReached = loaded.agent.info.steps !== undefined && step >= loaded.agent.info.steps
@@ -254,6 +260,7 @@ const layer = Layer.effect(
           isLocationClosed: lifecycle.isClosed,
           sessionID,
           assistantMessageID,
+          ...(continuationOf === undefined ? {} : { continuation: { of: continuationOf, index: continuationIndex } }),
           agent: loaded.agent.id,
           model: loaded.model,
           prepared,
@@ -297,6 +304,8 @@ const layer = Layer.effect(
             })
             yield* bus.publish(SessionEvent.Synthetic, { sessionID, text: CONTINUE_AFTER_INCOMPLETE_STREAM })
             assistantMessageID = SessionMessage.ID.create()
+            continuationOf = undefined
+            continuationIndex = 0
           }),
           OutputLimit: Effect.fn("SessionRunner.continueOutputLimit")(function* (outcome) {
             // The current response is included. User input or any other finish breaks the streak.
@@ -326,11 +335,15 @@ const layer = Layer.effect(
               })
             if (outcome.needsContinuation) return true
             yield* bus.publish(SessionEvent.Synthetic, { sessionID, text: CONTINUE_AFTER_OUTPUT_LIMIT })
+            continuationOf ??= assistantMessageID
+            continuationIndex++
             assistantMessageID = SessionMessage.ID.create()
           }),
           Compacted: Effect.fnUntraced(function* () {
             recoverOverflow = false
             assistantMessageID = SessionMessage.ID.create()
+            continuationOf = undefined
+            continuationIndex = 0
           }),
           RecoverFull: Effect.fnUntraced(function* () {
             recoverContinuation = false

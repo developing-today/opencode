@@ -16,7 +16,13 @@ export type Note = typeof RouteNoteTable.$inferInsert
 
 export type Event =
   | { readonly kind: "decision"; readonly row: Decision }
-  | { readonly kind: "attempt"; readonly row: Attempt }
+  | {
+      readonly kind: "attempt"
+      readonly row: Attempt
+      /** The assistant message of the attempt this request continues. The writer resolves it to that attempt's row id
+       * when it persists the row, because the id only exists after the root was inserted. */
+      readonly continuationOfMessageID?: string
+    }
   | { readonly kind: "health"; readonly row: Health }
   | { readonly kind: "note"; readonly row: Note }
 
@@ -272,13 +278,35 @@ export const failureFields = (reason: unknown, options?: { readonly captureBody?
 const persist = (db: Database.Interface["db"], events: readonly Event[]) =>
   Effect.gen(function* () {
     const decisions = events.flatMap((event) => (event.kind === "decision" ? [event.row] : []))
-    const attempts = events.flatMap((event) => (event.kind === "attempt" ? [event.row] : []))
+    const attempts = events.flatMap((event) => (event.kind === "attempt" ? [event] : []))
     const health = events.flatMap((event) => (event.kind === "health" ? [event.row] : []))
     if (decisions.length) yield* db.insert(RouteDecisionTable).values(decisions).run()
-    if (attempts.length) yield* db.insert(RouteAttemptTable).values(attempts).run()
+    // One statement per attempt: a continuation resolves its root from the row inserted just before it.
+    for (const attempt of attempts) yield* persistAttempt(db, attempt)
     if (health.length) yield* db.insert(RouteHealthTable).values(health).run()
     const notes = events.flatMap((event) => (event.kind === "note" ? [event.row] : []))
     if (notes.length) yield* db.insert(RouteNoteTable).values(notes).run()
+  })
+
+/** Inserts one attempt and, for a continuation, points `continuation_of` at the attempt that started the response.
+ * The root is read back by its assistant message, so the link survives the root having been persisted in an earlier
+ * batch and stays correct across a restart. Retries and hedge losers share that message, so the newest standalone row
+ * is the attempt that actually answered — the one whose response hit the output token limit. */
+const persistAttempt = (db: Database.Interface["db"], event: Extract<Event, { kind: "attempt" }>) =>
+  Effect.gen(function* () {
+    const inserted = yield* db
+      .insert(RouteAttemptTable)
+      .values(event.row)
+      .returning({ id: RouteAttemptTable.id })
+      .get()
+    if (event.continuationOfMessageID === undefined) return
+    yield* db
+      .update(RouteAttemptTable)
+      .set({
+        continuation_of: sql`(select root.id from route_attempt root where root.session_id = ${event.row.session_id} and root.assistant_message_id = ${event.continuationOfMessageID} and root.continuation_index = 0 order by root.id desc limit 1)`,
+      })
+      .where(eq(RouteAttemptTable.id, inserted.id))
+      .run()
   })
 
 /** Receives the still-active adjustments stored by earlier runs. Set by the routing module, which
@@ -622,6 +650,37 @@ export const attemptRows = (db: Database.Interface["db"], since: number, routeID
     .from(RouteAttemptTable)
     .where(
       and(gte(RouteAttemptTable.time_started, since), routeID ? eq(RouteAttemptTable.route_id, routeID) : undefined),
+    )
+    .orderBy(desc(RouteAttemptTable.time_started))
+    .limit(ROW_LIMIT)
+    .all()
+
+/** Attempt rows in the window with their continuation link, so a response split by output-token-limit
+ * continuations can be rolled up as one turn. Newest first; `ModelUsage.turns` does the arithmetic. */
+export const turnAttempts = (db: Database.Interface["db"], since: number, sessionID?: string) =>
+  db
+    .select({
+      id: RouteAttemptTable.id,
+      continuationOf: RouteAttemptTable.continuation_of,
+      continuationIndex: RouteAttemptTable.continuation_index,
+      assistantMessageID: RouteAttemptTable.assistant_message_id,
+      sessionID: RouteAttemptTable.session_id,
+      timeStarted: RouteAttemptTable.time_started,
+      timeEnded: RouteAttemptTable.time_ended,
+      outcome: RouteAttemptTable.outcome,
+      input: RouteAttemptTable.tokens_input,
+      output: RouteAttemptTable.tokens_output,
+      reasoning: RouteAttemptTable.tokens_reasoning,
+      cacheRead: RouteAttemptTable.tokens_cache_read,
+      cacheWrite: RouteAttemptTable.tokens_cache_write,
+      costUsd: RouteAttemptTable.cost_usd,
+    })
+    .from(RouteAttemptTable)
+    .where(
+      and(
+        gte(RouteAttemptTable.time_started, since),
+        sessionID === undefined ? undefined : eq(RouteAttemptTable.session_id, sessionID),
+      ),
     )
     .orderBy(desc(RouteAttemptTable.time_started))
     .limit(ROW_LIMIT)

@@ -14,6 +14,24 @@ const totals = (overrides: Partial<ModelUsage.Totals> = {}): ModelUsage.Totals =
   ...overrides,
 })
 
+const attemptRow = (overrides: Partial<ModelUsage.TurnAttemptRow>): ModelUsage.TurnAttemptRow => ({
+  id: 1,
+  continuationOf: null,
+  continuationIndex: 0,
+  assistantMessageID: "msg_root",
+  sessionID: "ses_turn",
+  timeStarted: 1_000,
+  timeEnded: 2_000,
+  outcome: "success",
+  input: 100,
+  output: 50,
+  reasoning: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  costUsd: 0.01,
+  ...overrides,
+})
+
 describe("ModelUsage", () => {
   test("metered tokens are input, output and reasoning, with cache kept apart", () => {
     const row = totals({ input: 100, output: 50, reasoning: 10, cacheRead: 999, cacheWrite: 5 })
@@ -214,6 +232,127 @@ describe("ModelUsage", () => {
     expect(Object.keys(serialised)).toEqual(["__proto__", "constructor", "toString", "anthropic"])
     expect(serialised["__proto__"]).toEqual({ requests: 8, metered: 300, costUsd: 1.5 })
     expect(serialised["constructor"]).toEqual({ requests: 5, metered: 150, costUsd: 2 })
+  })
+
+  test("turns stitch a response split by output token limit continuations into one cost", () => {
+    const turns = ModelUsage.turns([
+      attemptRow({ id: 1, timeStarted: 1_000, timeEnded: 2_000, input: 1_000, output: 100, costUsd: 0.1 }),
+      attemptRow({
+        id: 2,
+        continuationOf: 1,
+        continuationIndex: 1,
+        assistantMessageID: "msg_chunk_1",
+        timeStarted: 3_000,
+        timeEnded: 4_000,
+        input: 1_100,
+        output: 80,
+        costUsd: 0.08,
+      }),
+      // A failed chunk is still part of the turn: its own failure stays on its row, and its cost counts.
+      attemptRow({
+        id: 3,
+        continuationOf: 1,
+        continuationIndex: 2,
+        assistantMessageID: "msg_chunk_2",
+        outcome: "failure",
+        timeStarted: 5_000,
+        timeEnded: 6_000,
+        input: 1_200,
+        output: 0,
+        costUsd: 0.02,
+      }),
+      attemptRow({
+        id: 4,
+        assistantMessageID: "msg_other",
+        sessionID: "ses_other",
+        timeStarted: 7_000,
+        timeEnded: 8_000,
+      }),
+    ])
+
+    expect(turns).toHaveLength(2)
+    const continued = turns.find((turn) => turn.rootID === 1)
+    expect(continued).toMatchObject({
+      rootID: 1,
+      sessionID: "ses_turn",
+      chunks: 3,
+      requests: 3,
+      failures: 1,
+      input: 3_300,
+      output: 180,
+      first: 1_000,
+      last: 6_000,
+      durationMs: 5_000,
+    })
+    expect(continued?.costUsd).toBeCloseTo(0.2)
+    expect(turns.find((turn) => turn.rootID === 4)).toMatchObject({ chunks: 1, requests: 1, failures: 0 })
+  })
+
+  test("a continuation whose root fell outside the window is still grouped by the id it names", () => {
+    const [turn] = ModelUsage.turns([
+      {
+        id: 5,
+        continuationOf: 9,
+        continuationIndex: 1,
+        assistantMessageID: "msg_partial",
+        sessionID: "ses_turn",
+        timeStarted: 1_000,
+        timeEnded: 2_000,
+        outcome: "success",
+        input: 100,
+        output: 50,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        costUsd: 0.01,
+      },
+    ])
+    expect(turn).toMatchObject({ rootID: 9, chunks: 2, requests: 1, costUsd: 0.01 })
+  })
+
+  test("retries and hedge legs of the first chunk join its turn instead of splitting it", () => {
+    const turns = ModelUsage.turns([
+      attemptRow({
+        id: 1,
+        assistantMessageID: "msg_retried",
+        outcome: "failure",
+        timeStarted: 1_000,
+        timeEnded: 1_500,
+        input: 400,
+        output: 0,
+        costUsd: 0,
+      }),
+      attemptRow({
+        id: 2,
+        assistantMessageID: "msg_retried",
+        timeStarted: 2_000,
+        timeEnded: 3_000,
+        input: 500,
+        output: 40,
+        costUsd: 0.05,
+      }),
+      attemptRow({
+        id: 3,
+        assistantMessageID: "msg_retried_chunk",
+        continuationOf: 2,
+        continuationIndex: 1,
+        timeStarted: 4_000,
+        timeEnded: 5_000,
+        input: 600,
+        output: 30,
+        costUsd: 0.03,
+      }),
+    ])
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({
+      rootID: 2,
+      chunks: 2,
+      requests: 3,
+      failures: 1,
+      input: 1_500,
+      output: 70,
+      durationMs: 4_000,
+    })
   })
 
   test("a plan window reports what it has used, its percent and what remains", () => {

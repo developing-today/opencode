@@ -76,6 +76,7 @@ import { McpInstructions } from "@opencode/core/mcp/instructions"
 import { SessionSystemPrompt } from "@opencode/core/session/system-prompt"
 import { ID, Model } from "@opencode/core/model"
 import { ModelRoute } from "@opencode/core/model-route"
+import { ModelRouteLog } from "@opencode/core/model-route-log"
 import { Location } from "@opencode/core/location"
 import { Provider } from "@opencode/core/provider"
 import { Cause, Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Queue, Schema, Scope, Stream } from "effect"
@@ -5772,6 +5773,41 @@ describe("SessionRunnerLLM", () => {
       expect(yield* recordedEventTypes(sessionID)).not.toContain("session.retry.scheduled.1")
     })
   }
+
+  scenario("links output token limit continuations to the attempt that started the response", function* (s) {
+    const recorded: ModelRouteLog.Event[] = []
+    ModelRouteLog.setSink((event) => recorded.push(event))
+    yield* Effect.addFinalizer(() => Effect.sync(() => ModelRouteLog.setSink(undefined)))
+    const truncated = (id: string, text: string) =>
+      TestLLM.complete(
+        { reason: { normalized: "length" } },
+        LLMEvent.textStart({ id }),
+        LLMEvent.textDelta({ id, text }),
+        LLMEvent.textEnd({ id }),
+      )
+    yield* s.llm.push(
+      truncated("partial", "Partial"),
+      truncated("more", "More"),
+      TestLLM.text("Finished", "finished"),
+    )
+
+    yield* s.runPrompt("Complete the response")
+
+    const attempts = recorded.flatMap((event) => (event.kind === "attempt" ? [event] : []))
+    expect(attempts).toHaveLength(3)
+    const [root, first, second] = attempts
+    const rootMessageID = root?.row.assistant_message_id ?? undefined
+    expect(root?.continuationOfMessageID).toBeUndefined()
+    expect(root?.row.continuation_index).toBeUndefined()
+    expect(rootMessageID).toBeDefined()
+    expect(first?.continuationOfMessageID).toBe(rootMessageID)
+    expect(first?.row.continuation_index).toBe(1)
+    expect(first?.row.assistant_message_id).not.toBe(rootMessageID)
+    // The second chunk names the response's first attempt, not the chunk before it.
+    expect(second?.continuationOfMessageID).toBe(rootMessageID)
+    expect(second?.row.continuation_index).toBe(2)
+    expect(second?.row.assistant_message_id).not.toBe(first?.row.assistant_message_id)
+  })
 
   for (const tools of ["hosted", "unfinished"] as const) {
     scenario(`caps output token limit continuations and resets for new input (${tools})`, function* (s) {

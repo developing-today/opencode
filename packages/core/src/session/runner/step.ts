@@ -54,6 +54,9 @@ interface Input {
   readonly isLocationClosed: () => boolean
   readonly sessionID: SessionSchema.ID
   readonly assistantMessageID: SessionMessage.ID
+  /** Set when this request continues a response that hit the output token limit: the assistant message of the
+   * attempt that started the response, and this chunk's index (1 for the first continuation). */
+  readonly continuation?: { readonly of: SessionMessage.ID; readonly index: number }
   readonly agent: Agent.ID
   readonly model: SessionRunnerModel.Resolved
   /** Prompt-size estimate for budget accounting when a hedge is cancelled before provider usage arrives. */
@@ -345,7 +348,9 @@ export const make = Effect.gen(function* () {
               retryable: false,
               output_started: false,
               response_ms: streamedAt - requestStarted,
+              continuation_index: input.continuation?.index,
             },
+            continuationOfMessageID: input.continuation?.of,
           })
           return Outcome.Compacted()
         }
@@ -417,7 +422,9 @@ export const make = Effect.gen(function* () {
               tokens_cache_read: tokens?.cache.read,
               tokens_cache_write: tokens?.cache.write,
               cost_usd: tokens ? SessionUsage.calculateCost(input.model.cost, tokens) : undefined,
+              continuation_index: input.continuation?.index,
             },
+            continuationOfMessageID: input.continuation?.of,
           })
         }
         if (
@@ -664,7 +671,9 @@ export const make = Effect.gen(function* () {
           response_ms: raced.loserElapsedMs,
           tokens_input: input.estimatedInputTokens,
           tokens_estimated: true,
+          continuation_index: input.continuation?.index,
         },
+        continuationOfMessageID: input.continuation?.of,
       })
     }
     const winner = raced.winner === "hedge" ? raced.value : undefined

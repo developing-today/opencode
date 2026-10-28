@@ -67,6 +67,12 @@ export const RouteAttemptTable = sqliteTable(
     /** What the request cost in USD, from the model's catalog prices and the tokens it used. Null when the request
      * did not finish with usage. Stored with the attempt so the cost outlives the session it belongs to. */
     cost_usd: real(),
+    /** The attempt that started the response this request continued, when a response hit the output token limit and
+     * the session runner asked for the rest. Null for a request that stands on its own. A turn is a root attempt plus
+     * every attempt that names it here, so its tokens and cost can be read as one figure. */
+    continuation_of: integer(),
+    /** 0 for a standalone request, then 1, 2, … for each chunk that continues the root attempt. */
+    continuation_index: integer().default(0),
     /** Provider rate-limit and quota headers or fields, when the error carried them. */
     quota: text({ mode: "json" }).$type<Record<string, unknown>>(),
   },
@@ -74,6 +80,7 @@ export const RouteAttemptTable = sqliteTable(
     index("route_attempt_target_time_idx").on(table.provider_id, table.model_id, table.time_started),
     index("route_attempt_route_time_idx").on(table.route_id, table.time_started),
     index("route_attempt_session_idx").on(table.session_id, table.time_started),
+    index("route_attempt_continuation_idx").on(table.continuation_of),
   ],
 )
 
