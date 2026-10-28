@@ -309,6 +309,33 @@ describe("scheduled and absolute priorities", () => {
       false,
     )
   })
+
+  test("a present-but-invalid factor or weight drops the entry, never the default lift (#662)", () => {
+    const base = { action: "prefer", providers: ["anthropic"], until: now + DAY }
+    const parsed = ModelRouteOverrides.parse({
+      overrides: [
+        { ...base, id: "factor-zero", factor: 0 },
+        { ...base, id: "factor-negative", factor: -1 },
+        { ...base, id: "factor-infinite", factor: Infinity },
+        { ...base, id: "weight-zero", weight: 0 },
+        { ...base, id: "weight-negative", weight: -0.5 },
+        { ...base, id: "factor-valid", factor: 0.5 },
+        { ...base, id: "weight-valid", weight: 0.25 },
+        { ...base, id: "absent" },
+      ],
+    })
+    expect(parsed.map((item) => item.id)).toEqual(["factor-valid", "weight-valid", "absent"])
+    expect(parsed.find((item) => item.id === "factor-valid")?.factor).toBe(0.5)
+    expect(parsed.find((item) => item.id === "weight-valid")?.weight).toBe(0.25)
+  })
+
+  test("a prefer override with factor: 0 or weight: 0 does not lift the target (#662)", () => {
+    ModelRouteOverrides.add(draft({ id: "zero-factor", action: "prefer", providers: ["anthropic"], factor: 0 }), now)
+    expect(ModelRoute.weightFactor(anthropic, now)).toBe(1)
+    ModelRouteOverrides.remove("zero-factor", now)
+    ModelRouteOverrides.add(draft({ id: "zero-weight", action: "prefer", providers: ["anthropic"], weight: 0 }), now)
+    expect(ModelRoute.weightFactor(anthropic, now)).toBe(1)
+  })
 })
 
 describe("traced weights (#589)", () => {

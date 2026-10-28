@@ -75,11 +75,21 @@ export const parse = (value: unknown): Override[] => {
     const routes = strings(field(item, "routes"))
     const fixed = field(item, "fixed") !== false
     const factorValue = field(item, "factor")
-    const factor =
-      typeof factorValue === "number" && Number.isFinite(factorValue) && factorValue > 0 ? factorValue : undefined
     const weightValue = field(item, "weight")
-    const weight =
-      typeof weightValue === "number" && Number.isFinite(weightValue) && weightValue > 0 ? weightValue : undefined
+    // A factor/weight that is present but not positive-finite is malformed, not absent:
+    // absent means the default PREFERRED_FACTOR lift in routing, so keeping the entry
+    // would silently turn a written factor: 0 into that lift — the widening shape of
+    // #536/#570, one field over. The schema surface defines these fields as
+    // PositiveFinite, so the entry is dropped instead (#662).
+    const positiveFinite = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined
+    if (
+      (factorValue !== undefined && positiveFinite(factorValue) === undefined) ||
+      (weightValue !== undefined && positiveFinite(weightValue) === undefined)
+    )
+      return []
+    const factor = positiveFinite(factorValue)
+    const weight = positiveFinite(weightValue)
     const text = field(item, "text")
     const source = field(item, "source")
     const createdAt = field(item, "createdAt")
