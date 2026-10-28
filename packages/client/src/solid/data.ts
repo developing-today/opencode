@@ -21,7 +21,7 @@ import type {
   PermissionRequest,
   PermissionReplyInput,
   Project,
-  ProviderInfo,
+  ProviderInfoWithModels,
   ReferenceInfo,
   SessionMessageInfo,
   SessionMessageAssistant,
@@ -101,7 +101,7 @@ type LocationData = {
   mcpServer?: McpServer[]
   mcpResource?: McpResource[]
   model?: ModelInfo[]
-  provider?: ProviderInfo[]
+  provider?: ProviderInfoWithModels[]
   reference?: ReferenceInfo[]
   websearch?: WebSearchProvider[]
   // Currently running shell commands for this location, keyed by shell id. Entries are removed
