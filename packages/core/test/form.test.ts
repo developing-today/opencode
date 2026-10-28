@@ -387,6 +387,69 @@ describe("Form", () => {
     }),
   )
 
+  it.effect("rejects when values a numeric target can never answer (#705)", () =>
+    Effect.sync(() => {
+      // Fractional value on an integer target: no valid answer can equal it, for either op.
+      expect(
+        Form.validateFields([
+          { key: "count", type: "integer", minimum: 1, maximum: 10 },
+          { key: "b", type: "string", when: [{ key: "count", op: "eq", value: 1.5 }] },
+        ]),
+      ).toBe("Form field condition value must be an integer: b -> count")
+      expect(
+        Form.validateFields([
+          { key: "count", type: "integer" },
+          { key: "b", type: "string", when: [{ key: "count", op: "neq", value: 1.5 }] },
+        ]),
+      ).toBe("Form field condition value must be an integer: b -> count")
+      // Value outside the target's declared bounds, for either op.
+      expect(
+        Form.validateFields([
+          { key: "age", type: "number", minimum: 10, maximum: 20 },
+          { key: "b", type: "string", when: [{ key: "age", op: "eq", value: 5 }] },
+        ]),
+      ).toBe("Form field condition value must be within the field's declared bounds: b -> age")
+      expect(
+        Form.validateFields([
+          { key: "age", type: "number", maximum: 20 },
+          { key: "b", type: "string", when: [{ key: "age", op: "neq", value: 21 }] },
+        ]),
+      ).toBe("Form field condition value must be within the field's declared bounds: b -> age")
+      expect(
+        Form.validateFields([
+          { key: "count", type: "integer", minimum: 1, maximum: 10 },
+          { key: "b", type: "string", when: [{ key: "count", op: "eq", value: 11 }] },
+        ]),
+      ).toBe("Form field condition value must be within the field's declared bounds: b -> count")
+      // Matchable controls still create: in-bounds integers on integer targets, in-bounds
+      // numbers on number targets, bound-equal values, and one-sided bounds.
+      expect(
+        Form.validateFields([
+          { key: "count", type: "integer", minimum: 1, maximum: 10 },
+          { key: "b", type: "string", when: [{ key: "count", op: "eq", value: 3 }] },
+        ]),
+      ).toBeUndefined()
+      expect(
+        Form.validateFields([
+          { key: "age", type: "number", minimum: 0, maximum: 20 },
+          { key: "b", type: "string", when: [{ key: "age", op: "eq", value: 5 }] },
+        ]),
+      ).toBeUndefined()
+      expect(
+        Form.validateFields([
+          { key: "age", type: "number", minimum: 10, maximum: 20 },
+          { key: "b", type: "string", when: [{ key: "age", op: "neq", value: 20 }] },
+        ]),
+      ).toBeUndefined()
+      expect(
+        Form.validateFields([
+          { key: "age", type: "number", minimum: 10 },
+          { key: "b", type: "string", when: [{ key: "age", op: "eq", value: 15.5 }] },
+        ]),
+      ).toBeUndefined()
+    }),
+  )
+
   it.effect("gates fields on an external acknowledgement via when", () =>
     Effect.gen(function* () {
       const service = yield* Form.Service

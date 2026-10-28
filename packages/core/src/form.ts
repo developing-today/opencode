@@ -324,6 +324,13 @@ function validateWhen(when: Form.When, target: Form.Field) {
   }
   if (target.type === "number" || target.type === "integer") {
     if (typeof when.value !== "number") return "Form field condition value must be a number"
+    if (target.type === "integer" && !Number.isInteger(when.value))
+      return "Form field condition value must be an integer"
+    if (
+      (target.minimum !== undefined && when.value < target.minimum) ||
+      (target.maximum !== undefined && when.value > target.maximum)
+    )
+      return "Form field condition value must be within the field's declared bounds"
     return
   }
   // string and multiselect targets both compare against string values
