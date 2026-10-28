@@ -20,20 +20,30 @@ const headerDetails = (headers: Headers.Headers) =>
 const normalizedHeaders = (headers: Headers.Headers) =>
   Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]))
 
+// retry-after is RFC 9110 delay-seconds, `1*DIGIT`. retry-after-ms is the
+// de-facto millisecond variant and takes an unsigned decimal: digits with an
+// optional fraction. Both reject the other spellings Number() accepts (hex,
+// exponent, signs), so a malformed header falls through instead of becoming an
+// invented wait.
+const DELAY_SECONDS = /^\d+$/
+const MILLISECONDS = /^\d+(?:\.\d+)?$/
+
 const retryAfterMs = (headers: Record<string, string>) => {
   // A blank header value is absent, not an authored 0: Number("") === 0 would
   // otherwise discard a valid retry-after carried by the same response.
   const millisHeader = headers["retry-after-ms"]?.trim()
-  if (millisHeader) {
+  if (millisHeader && MILLISECONDS.test(millisHeader)) {
     const millis = Number(millisHeader)
-    if (Number.isFinite(millis)) return Math.max(0, millis)
+    if (Number.isFinite(millis)) return millis
   }
 
   const value = headers["retry-after"]?.trim()
   if (!value) return undefined
 
-  const seconds = Number(value)
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
+  if (DELAY_SECONDS.test(value)) {
+    const seconds = Number(value)
+    if (Number.isFinite(seconds)) return seconds * 1000
+  }
 
   const date = Date.parse(value)
   if (!Number.isNaN(date)) return Math.max(0, date - Date.now())
