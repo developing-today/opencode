@@ -150,6 +150,55 @@ it.live("provider list and get embed each provider's resolved models", () =>
   30_000,
 )
 
+it.live(
+  "provider get serves only the providers provider list serves",
+  () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped("opencode-provider-get-available-")
+      const server = yield* startServer(tmp.path)
+      const get = (route: string) =>
+        Effect.promise(() => {
+          const url = new URL(route, server.base)
+          url.searchParams.set("location[directory]", tmp.path)
+          return fetch(url, { headers: server.headers })
+        })
+
+      // The catalog records providers such as openai even with no connection
+      // for them; snapshot().available withholds those from list, so get must
+      // withhold them too instead of embedding their recorded models (#661).
+      // Poll until the available opencode provider appears, which shows the
+      // catalog has registered.
+      const listed = yield* Effect.gen(function* () {
+        for (let attempt = 0; attempt < 50; attempt++) {
+          const list = yield* get("/api/provider")
+          expect(list.status).toBe(200)
+          const listBody: unknown = yield* Effect.promise(() => list.json())
+          if (!isRecord(listBody) || !Array.isArray(listBody["data"]))
+            throw new Error("Expected a provider list response")
+          if (listBody["data"].some((entry) => isRecord(entry) && entry["id"] === "opencode")) return listBody["data"]
+          yield* Effect.sleep("100 millis")
+        }
+        throw new Error("Expected the opencode provider to appear in the provider list")
+      })
+      expect(listed.some((entry) => isRecord(entry) && entry["id"] === "openai")).toBeFalse()
+
+      const unavailable = yield* get("/api/provider/openai")
+      expect(unavailable.status).toBe(404)
+      expect(yield* Effect.promise(() => unavailable.json())).toMatchObject({
+        _tag: "ProviderNotFoundError",
+        providerID: "openai",
+      })
+
+      const available = yield* get("/api/provider/opencode")
+      expect(available.status).toBe(200)
+      const availableBody: unknown = yield* Effect.promise(() => available.json())
+      if (!isRecord(availableBody) || !isRecord(availableBody["data"]))
+        throw new Error("Expected a provider response for an available provider")
+      expect(availableBody["data"]["id"]).toBe("opencode")
+    }),
+  30_000,
+)
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }

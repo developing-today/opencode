@@ -28,9 +28,13 @@ export const ProviderHandler = HttpApiBuilder.group(Api, "server.provider", (han
         "provider.get",
         Effect.fn(function* (ctx) {
           const providers = yield* Provider.Service
-          // definition() reads current state without waiting on integration
-          // discovery, matching the previous get() read's nonblocking contract.
-          const definition = yield* providers.definition(ctx.params.providerID)
+          // get serves exactly the set list serves (#661): snapshot().available
+          // excludes disabled providers and records whose models belong to a
+          // previous account's connection, so neither can leak its catalog
+          // through get while being absent from list. Like list, this read
+          // returns the current snapshot without waiting on plugin settlement.
+          const snapshot = yield* providers.snapshot()
+          const definition = snapshot.available.find((item) => item.provider.id === ctx.params.providerID)
           if (!definition)
             return yield* new ProviderNotFoundError({
               providerID: ctx.params.providerID,
