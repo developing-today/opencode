@@ -1054,6 +1054,7 @@ export type ConfigModelRoutes = {
       weight?: number
       note?: string
     }>
+    limit?: { context: number }
   }
 }
 
