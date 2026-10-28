@@ -375,6 +375,33 @@ describe("Session.prompt", () => {
     }),
   )
 
+  it.effect("ignores non-decimal file URL line ranges instead of reinterpreting them", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* Session.Service
+      const directory = yield* tmpdirScoped("opencode-session-prompt-")
+      const source = path.join(directory.path, "lines.txt")
+      const content = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n")
+      yield* Effect.promise(() => Bun.write(source, content))
+
+      const promptWith = (query: string) =>
+        session.prompt({
+          sessionID,
+          text: "Inspect this",
+          files: [{ uri: `${pathToFileURL(source).href}?${query}`, name: "lines.txt" }],
+          resume: false,
+        })
+      const textOf = (data: string | undefined) => Buffer.from(data ?? "", "base64").toString("utf8")
+
+      // A valid plain-decimal range slices exactly as before.
+      expect(textOf((yield* promptWith("start=2&end=3")).payload.files?.[0]?.data)).toBe("line 2\nline 3")
+      // Hex spellings Number() would reinterpret (0x10 -> line 16) are treated as absent: the whole file.
+      expect(textOf((yield* promptWith("start=0x10&end=0x12")).payload.files?.[0]?.data)).toBe(content)
+      // Exponent and fractional-with-zero spellings are likewise absent, not reinterpreted.
+      expect(textOf((yield* promptWith("start=1e1&end=5.0")).payload.files?.[0]?.data)).toBe(content)
+    }),
+  )
+
   it.effect("materializes directories as directory attachments", () =>
     Effect.gen(function* () {
       yield* setup
