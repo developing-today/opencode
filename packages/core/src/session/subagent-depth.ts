@@ -41,16 +41,21 @@ export const assertWithinLimit = Effect.fn("SubagentDepth.assertWithinLimit")(fu
   let depth = 0
   const seen = new Set([parent.id])
   if (depth >= limit) return yield* new LimitError({ message: globalMessage })
-  while (current.parentID) {
-    if (seen.has(current.parentID))
-      return yield* new LimitError({ message: `Session parent cycle: ${current.parentID}` })
-    seen.add(current.parentID)
+  // A fork counts as a child of its source (#505): follow the fork link when
+  // there is no parent link, so depth caps above the source bind the fork.
+  let governanceParentID = current.parentID ?? current.fork?.sessionID
+  while (governanceParentID) {
+    if (seen.has(governanceParentID))
+      return yield* new LimitError({ message: `Session parent cycle: ${governanceParentID}` })
+    seen.add(governanceParentID)
     depth++
+    const parentID = governanceParentID
     current = yield* sessions
-      .get(current.parentID)
-      .pipe(Effect.mapError(() => new LimitError({ message: `Parent session not found: ${current.parentID}` })))
+      .get(parentID)
+      .pipe(Effect.mapError(() => new LimitError({ message: `Parent session not found: ${parentID}` })))
     chain.push(current)
     if (depth >= limit) return yield* new LimitError({ message: globalMessage })
+    governanceParentID = current.parentID ?? current.fork?.sessionID
   }
   // chain[0] is the launching session at `depth`; each step up is one shallower.
   let binding: { agent: string; maxDepth: number; cap: number } | undefined
