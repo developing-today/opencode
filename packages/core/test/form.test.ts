@@ -343,6 +343,65 @@ describe("Form", () => {
     }),
   )
 
+  it.effect("rejects when values a string target can never answer (#708)", () =>
+    Effect.sync(() => {
+      const gated = (target: Form.Field, value: string, op: "eq" | "neq" = "eq") =>
+        Form.validateFields([target, { key: "b", type: "string", when: [{ key: "a", op, value }] }])
+
+      // A date-format target can never answer "not-a-date", for either op.
+      expect(gated({ key: "a", type: "string", format: "date" }, "not-a-date")).toBe(
+        "Form field condition value must be a date: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", format: "date" }, "2026-02-30", "neq")).toBe(
+        "Form field condition value must be a date: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", format: "date" }, "2026-01-15")).toBeUndefined()
+      expect(gated({ key: "a", type: "string", format: "date-time" }, "2026-02-30T00:00:00Z")).toBe(
+        "Form field condition value must be a date-time: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", format: "date-time" }, "2026-01-15T00:00:00Z")).toBeUndefined()
+      expect(gated({ key: "a", type: "string", format: "email" }, "not-an-email")).toBe(
+        "Form field condition value must be an email: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", format: "email" }, "a@example.com")).toBeUndefined()
+      expect(gated({ key: "a", type: "string", format: "uri" }, "not a uri")).toBe(
+        "Form field condition value must be a URI: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", format: "uri" }, "https://example.com")).toBeUndefined()
+
+      // A patterned target can never answer a non-matching value.
+      expect(gated({ key: "a", type: "string", pattern: "^\\d+$" }, "abc")).toBe(
+        "Form field condition value must match the field's pattern: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", pattern: "^\\d+$" }, "123")).toBeUndefined()
+
+      // Length bounds bind condition values too.
+      expect(gated({ key: "a", type: "string", minLength: 5 }, "abc")).toBe(
+        "Form field condition value must be at least 5 characters: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", minLength: 5 }, "abcde")).toBeUndefined()
+      expect(gated({ key: "a", type: "string", maxLength: 3 }, "abcdef")).toBe(
+        "Form field condition value must be at most 3 characters: b -> a",
+      )
+
+      // Closed-options targets stay decided by membership alone, even when an
+      // option value would fail the target's other constraints.
+      expect(
+        gated(
+          { key: "a", type: "string", minLength: 5, options: [{ value: "abc", label: "ABC" }] },
+          "abc",
+        ),
+      ).toBeUndefined()
+      // Custom string targets still get the checks: options do not bind answers.
+      expect(
+        gated(
+          { key: "a", type: "string", custom: true, minLength: 5, options: [{ value: "abc", label: "ABC" }] },
+          "abc",
+        ),
+      ).toBe("Form field condition value must be at least 5 characters: b -> a")
+    }),
+  )
+
   it.effect("rejects unsatisfiable field bounds and uncompilable patterns at creation (#681)", () =>
     Effect.sync(() => {
       expect(Form.validateFields([{ key: "name", type: "string", minLength: 10, maxLength: 5 }])).toBe(
@@ -448,6 +507,59 @@ describe("Form", () => {
       expect(Form.validateFields([{ key: "count", type: "integer", minimum: 1.2 }])).toBeUndefined()
       expect(Form.validateFields([{ key: "count", type: "integer", maximum: 1.8 }])).toBeUndefined()
       expect(Form.validateFields([{ key: "age", type: "number", minimum: 1.2, maximum: 1.8 }])).toBeUndefined()
+    }),
+  )
+
+  it.effect("rejects required fields no answer can satisfy: zero caps, closed empty options (#712)", () =>
+    Effect.sync(() => {
+      // A required answer needs at least one character / selection, so a zero
+      // cap makes every answer fail: empty is missing-required, non-empty is
+      // too long / too many.
+      expect(Form.validateFields([{ key: "name", type: "string", required: true, maxLength: 0 }])).toBe(
+        "Form field has maxLength 0 but is required: name",
+      )
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            required: true,
+            options: [{ value: "a", label: "A" }],
+            maxItems: 0,
+          },
+        ]),
+      ).toBe("Form field has maxItems 0 but is required: tags")
+      // A required field with a closed empty options list has no valid
+      // answer: empty is missing-required, any value is an invalid option.
+      expect(Form.validateFields([{ key: "name", type: "string", required: true, options: [] }])).toBe(
+        "Form field has no options but is required: name",
+      )
+      expect(
+        Form.validateFields([{ key: "tags", type: "multiselect", required: true, options: [] }]),
+      ).toBe("Form field has no options but is required: tags")
+      // Satisfiable controls still create: the same shapes without required
+      // (0 stays a legal cap for optional fields), a cap of 1, and custom
+      // fields whose answers are not limited to the declared options.
+      expect(Form.validateFields([{ key: "name", type: "string", maxLength: 0 }])).toBeUndefined()
+      expect(
+        Form.validateFields([
+          { key: "tags", type: "multiselect", options: [{ value: "a", label: "A" }], maxItems: 0 },
+        ]),
+      ).toBeUndefined()
+      expect(Form.validateFields([{ key: "name", type: "string", options: [] }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "tags", type: "multiselect", options: [] }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "name", type: "string", required: true, maxLength: 1 }])).toBeUndefined()
+      expect(
+        Form.validateFields([
+          { key: "tags", type: "multiselect", required: true, options: [{ value: "a", label: "A" }], maxItems: 1 },
+        ]),
+      ).toBeUndefined()
+      expect(
+        Form.validateFields([{ key: "name", type: "string", required: true, options: [], custom: true }]),
+      ).toBeUndefined()
+      expect(
+        Form.validateFields([{ key: "tags", type: "multiselect", required: true, options: [], custom: true }]),
+      ).toBeUndefined()
     }),
   )
 

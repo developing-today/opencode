@@ -64,6 +64,22 @@ const WeightRule = Schema.Struct({
 export type WeightRule = typeof WeightRule.Type
 export type ScheduleWindow = typeof ScheduleWindow.Type
 
+/** An eligibility gate on a child position, resolved at config load from a named window in
+ * experimental.model_route_windows. The child is a candidate only while the window is active, or
+ * only while it is not when `invert` is set. A gate only ever removes a candidate: quota demotion,
+ * budgets and health still apply to a gated-in child exactly as before. */
+const Gate = Schema.Struct({
+  name: Schema.String,
+  window: ScheduleWindow,
+  invert: Schema.Boolean.pipe(optional),
+})
+
+export type Gate = typeof Gate.Type
+
+/** Whether a gate lets its child be a candidate at `now`. No gate is always open. */
+export const gateOpen = (gate: Gate | undefined, now = Date.now()): boolean =>
+  gate === undefined || ModelRouteSchedule.active(gate.window, now) !== (gate.invert === true)
+
 /** A group of targets with its own selection mode. Children are leaf target indexes or nested
  * groups; `weights` is parallel to `children`. Group 0 is the route itself. */
 const Node = Schema.Struct({
@@ -73,7 +89,14 @@ const Node = Schema.Struct({
   weights: Schema.Array(Schema.Finite.check(Schema.isGreaterThan(0))),
   /** Weight changes declared on this route, in force while a target under this node is judged. */
   schedules: Schema.Array(WeightRule).pipe(optional),
-  children: Schema.Array(Schema.Struct({ leaf: Schema.Finite.pipe(optional), node: Schema.Finite.pipe(optional) })),
+  children: Schema.Array(
+    Schema.Struct({
+      leaf: Schema.Finite.pipe(optional),
+      node: Schema.Finite.pipe(optional),
+      /** Eligibility gate on this position, from the target's `window` in config. */
+      gate: Gate.pipe(optional),
+    }),
+  ),
 })
 
 const Budget = Schema.Struct({
@@ -768,9 +791,9 @@ const scheduled = (target: Model.Ref, weight: number, now: number, scope: Weight
 /** The weight a target carries after each layer of the computation, in the order the layers apply:
  * the configured pool weight (`base`), scheduled rules (`scheduled`), the user's preferences
  * (`prefer`), learned adjustments (`adjustment`), and quota demotion (`demotion` — the final
- * effective weight). `gate` is the slot for eligibility-gate verdicts (#566): no gates exist yet,
- * so it is always null; the slot ships now so the decision log's shape need not change when gates
- * land. */
+ * effective weight). `gate` carries the eligibility-gate verdict (#566) for a leaf whose position
+ * is gated on a named window: "<name>:open" or "<name>:closed"; null when the position has no
+ * gate. A closed gate removes the candidate before weights are compared; it never lifts demotion. */
 export interface WeightTrace {
   readonly base: number
   readonly scheduled: number
@@ -905,9 +928,10 @@ export const nextTarget = (
     const scope = scopeAt(rules, nodePath)
     const positions = node.children.flatMap((child, position) => {
       const available =
-        child.leaf !== undefined
+        gateOpen(child.gate, now) &&
+        (child.leaf !== undefined
           ? ready.has(child.leaf) && !tried.has(child.leaf)
-          : child.node !== undefined && hasReady(child.node)
+          : child.node !== undefined && hasReady(child.node))
       return available ? [position] : []
     })
     if (positions.length === 0) {
@@ -927,11 +951,13 @@ export const nextTarget = (
     }
     // Every child's effective weight: its configured pool weight scaled or replaced by the schedules
     // in force. Equal weights keep their configured relative order when the list is sorted.
-    const traces = node.children.map((child, position) =>
-      child.leaf !== undefined
-        ? tracedWeightOf(definition.targets[child.leaf], node.weights[position] ?? 1, now, scope)
-        : undefined,
-    )
+    const traces = node.children.map((child, position) => {
+      if (child.leaf === undefined) return undefined
+      const trace = tracedWeightOf(definition.targets[child.leaf], node.weights[position] ?? 1, now, scope)
+      return child.gate
+        ? { ...trace, gate: `${child.gate.name}:${gateOpen(child.gate, now) ? "open" : "closed"}` }
+        : trace
+    })
     const effective = node.children.map((child, position) => {
       const base = node.weights[position] ?? 1
       if (child.leaf !== undefined) return traces[position]?.demotion ?? base
@@ -982,7 +1008,13 @@ export const nextTarget = (
     const excluded = node.children.flatMap((child, position) => {
       const childLeaves = child.leaf !== undefined ? [child.leaf] : child.node !== undefined ? leaves(child.node) : []
       return childLeaves.flatMap((index) => {
-        const unavailableReason = unavailable?.get(index) ?? (tried.has(index) ? "already-tried" : undefined)
+        const unavailableReason =
+          unavailable?.get(index) ??
+          (tried.has(index)
+            ? "already-tried"
+            : child.gate && !gateOpen(child.gate, now)
+              ? "window-gate-closed"
+              : undefined)
         return unavailableReason ? [{ candidate: label(node.children[position]), reason: unavailableReason }] : []
       })
     })

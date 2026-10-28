@@ -291,6 +291,15 @@ export function validateFields(fields: ReadonlyArray<Form.Field>) {
     if (field.type === "string") {
       if (field.minLength !== undefined && field.maxLength !== undefined && field.minLength > field.maxLength)
         return `Form field has minLength greater than maxLength: ${field.key}`
+      // A required string needs at least one character: with maxLength 0 the
+      // empty answer is missing-required and any non-empty answer is too long.
+      if (field.required && field.maxLength === 0)
+        return `Form field has maxLength 0 but is required: ${field.key}`
+      // A required string with a closed empty options list has no valid
+      // answer: the empty answer is missing-required and any other value is
+      // not one of the (zero) declared options.
+      if (field.required && field.options !== undefined && !field.custom && field.options.length === 0)
+        return `Form field has no options but is required: ${field.key}`
       if (field.pattern !== undefined) {
         try {
           new RegExp(field.pattern)
@@ -320,6 +329,15 @@ export function validateFields(fields: ReadonlyArray<Form.Field>) {
       // for more selections than there are options can never be satisfied.
       if (!field.custom && field.minItems !== undefined && field.minItems > field.options.length)
         return `Form field has minItems greater than its number of options: ${field.key}`
+      // A required multiselect needs at least one selection: with maxItems 0
+      // the empty answer is missing-required and any selection is too many.
+      if (field.required && field.maxItems === 0)
+        return `Form field has maxItems 0 but is required: ${field.key}`
+      // A required closed multiselect with no options has no valid answer:
+      // the empty answer is missing-required and any selection is not one of
+      // the (zero) declared options.
+      if (field.required && !field.custom && field.options.length === 0)
+        return `Form field has no options but is required: ${field.key}`
     }
     for (const when of field.when ?? []) {
       const target = earlier.get(when.key)
@@ -344,9 +362,31 @@ function validateWhen(when: Form.When, target: Form.Field) {
   // string and multiselect targets both compare against string values
   if (typeof when.value !== "string") return "Form field condition value must be a string"
   const closed = target.type === "multiselect" ? !target.custom : target.options !== undefined && !target.custom
-  if (closed && !target.options?.some((option) => option.value === when.value)) {
-    return "Form field condition value must be one of the field's options"
+  if (closed) {
+    if (!target.options?.some((option) => option.value === when.value)) {
+      return "Form field condition value must be one of the field's options"
+    }
+    return
   }
+  if (target.type !== "string") return
+  // A non-closed string target's answers must still satisfy its own length,
+  // pattern, and format constraints (the checks validateField makes), so a
+  // condition value violating them can never be answered and the gate would
+  // silently never match (eq) or always match (neq) — #708. The predicates
+  // are validateField's own: the email regex, URL.canParse, isDate, and
+  // isDateTime.
+  if (target.minLength !== undefined && when.value.length < target.minLength)
+    return `Form field condition value must be at least ${target.minLength} characters`
+  if (target.maxLength !== undefined && when.value.length > target.maxLength)
+    return `Form field condition value must be at most ${target.maxLength} characters`
+  if (target.pattern !== undefined && !new RegExp(target.pattern).test(when.value))
+    return "Form field condition value must match the field's pattern"
+  if (target.format === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(when.value))
+    return "Form field condition value must be an email"
+  if (target.format === "uri" && !URL.canParse(when.value)) return "Form field condition value must be a URI"
+  if (target.format === "date" && !isDate(when.value)) return "Form field condition value must be a date"
+  if (target.format === "date-time" && !isDateTime(when.value))
+    return "Form field condition value must be a date-time"
 }
 
 function validateField(field: InputField, value: Form.Value): string | undefined {

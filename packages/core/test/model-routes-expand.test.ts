@@ -20,7 +20,18 @@ const selection = (reference: string) => {
   const [providerID, model] = reference.split("/")
   return { providerID, model }
 }
-const route = (targets: (string | { model: string; until?: number; variants?: Record<string, string> })[], extra: object = {}) =>
+const route = (
+  targets: (
+    | string
+    | {
+        model: string
+        until?: number
+        variants?: Record<string, string>
+        window?: string | { name: string; invert?: boolean }
+      }
+  )[],
+  extra: object = {},
+) =>
   new Map<string, ConfigModelRoutes.Route>([
     [
       "r",
@@ -265,5 +276,126 @@ describe("pool weight schedules", () => {
       { when: { daysOfWeek: [0], start: "09:00" }, factor: 0.5 },
     ] as unknown as ConfigModelRoutes.GlobalSchedule[])
     expect(rule.window).toEqual({ daysOfWeek: [0], start: "09:00" })
+  })
+})
+
+describe("named windows", () => {
+  const windows = new Map([["peak", { daysOfWeek: [1, 5], start: "09:00", end: "17:00" }]])
+
+  test("routeWeightRules resolves a schedule's window by name and drops an unknown name", () => {
+    expect(
+      routeWeightRules(
+        {
+          targets: [],
+          schedules: [
+            { targets: ["*"], when: "peak", factor: 2 },
+            { targets: ["*"], when: "nope", factor: 3 },
+          ],
+        } as unknown as ConfigModelRoutes.Route,
+        windows,
+      ),
+    ).toEqual([{ match: { targets: ["*"] }, window: { daysOfWeek: [1, 5], start: "09:00", end: "17:00" }, factor: 2 }])
+  })
+
+  test("weightRulesAcross resolves a schedule's window by name and drops an unknown name", () => {
+    expect(
+      weightRulesAcross(
+        [
+          { when: "peak", factor: 2 },
+          { when: "nope", factor: 3 },
+        ] as unknown as ConfigModelRoutes.GlobalSchedule[],
+        windows,
+      ),
+    ).toEqual([{ window: { daysOfWeek: [1, 5], start: "09:00", end: "17:00" }, factor: 2 }])
+  })
+
+  test("expand attaches a resolved gate to a target, including the inverted form", () => {
+    const { nodes } = expand(
+      "r",
+      route([
+        { model: "anthropic/claude-opus-4-1", window: "peak" },
+        { model: "openai/gpt-6-luna", window: { name: "peak", invert: true } },
+        "anthropic/claude-sonnet-4-5",
+      ]),
+      definitions,
+      windows,
+    )
+    expect(nodes[0].children[0].gate).toEqual({
+      name: "peak",
+      window: { daysOfWeek: [1, 5], start: "09:00", end: "17:00" },
+    })
+    expect(nodes[0].children[1].gate).toEqual({
+      name: "peak",
+      window: { daysOfWeek: [1, 5], start: "09:00", end: "17:00" },
+      invert: true,
+    })
+    expect(nodes[0].children[2].gate).toBeUndefined()
+  })
+
+  test("expand attaches a resolved gate to a nested-route target", () => {
+    const routes = new Map<string, ConfigModelRoutes.Route>([
+      [
+        "pool",
+        {
+          targets: [{ model: { providerID: "anthropic", model: "claude-opus-4-1" } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+      [
+        "r",
+        {
+          targets: [{ model: { providerID: "opencode-route", model: "pool" }, window: "peak" }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+    ])
+    const { nodes } = expand("r", routes, definitions, windows)
+    expect(nodes[0].children[0].gate).toEqual({
+      name: "peak",
+      window: { daysOfWeek: [1, 5], start: "09:00", end: "17:00" },
+    })
+  })
+
+  test("expand with an unknown window name leaves the target ungated", () => {
+    const { nodes, leaves } = expand(
+      "r",
+      route([{ model: "anthropic/claude-opus-4-1", window: "nope" }]),
+      definitions,
+      windows,
+    )
+    expect(leaves).toHaveLength(1)
+    expect(nodes[0].children[0].gate).toBeUndefined()
+  })
+
+  test("a route referenced twice by one parent keeps both group nodes, sharing leaf indexes", () => {
+    const routes = new Map<string, ConfigModelRoutes.Route>([
+      [
+        "flash-plan",
+        {
+          targets: [{ model: { providerID: "anthropic", model: "claude-sonnet-4-5" } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+      [
+        "mimo-plan",
+        {
+          targets: [{ model: { providerID: "openai", model: "gpt-6-luna" } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+      [
+        "background",
+        {
+          targets: [
+            { model: { providerID: "opencode-route", model: "flash-plan" } },
+            { model: { providerID: "opencode-route", model: "mimo-plan" } },
+            { model: { providerID: "opencode-route", model: "flash-plan" } },
+          ],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+    ])
+    const { leaves, nodes } = expand("background", routes, definitions)
+    expect(leaves).toHaveLength(2)
+    expect(nodes).toHaveLength(4)
+    expect(nodes[0].children).toEqual([{ node: 1 }, { node: 2 }, { node: 3 }])
+    expect(nodes[1].children).toEqual([{ leaf: 0 }])
+    expect(nodes[2].children).toEqual([{ leaf: 1 }])
+    expect(nodes[3].children).toEqual([{ leaf: 0 }])
   })
 })
