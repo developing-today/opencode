@@ -35,6 +35,18 @@ describe("ErrorSummary", () => {
     ])
   })
 
+  test("summarizes a thrown symbol instead of dropping it", () => {
+    expect(ErrorSummary.from(Symbol("boom"))).toEqual([{ type: "unknown", message: "Symbol(boom)" }])
+  })
+
+  test("keeps a cause chain that bottoms out in a symbol", () => {
+    const error = new Error("credential refresh failed", { cause: Symbol("token rejected") })
+    expect(ErrorSummary.from(error)).toEqual([
+      { type: "Error", message: "credential refresh failed" },
+      { type: "unknown", message: "Symbol(token rejected)" },
+    ])
+  })
+
   test("still returns no entries for null and undefined", () => {
     expect(ErrorSummary.from(null)).toEqual([])
     expect(ErrorSummary.from(undefined)).toEqual([])
