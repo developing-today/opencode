@@ -85,6 +85,16 @@ describe("ModelRouteLimits.holdUntil", () => {
   test("skips values that are not numbers", () => {
     expect(ModelRouteLimits.holdUntil(snap({ remaining: { requests: "lots" }, reset: { requests: "1s" } }), at)).toBe(0)
   })
+
+  test("skips blank remaining values instead of reading them as zero", () => {
+    const blank = snap({ limit: { requests: "100" }, remaining: { requests: "" }, reset: { requests: "60s" } })
+    expect(ModelRouteLimits.windows(blank)).toEqual([])
+    expect(ModelRouteLimits.holdUntil(blank, at)).toBe(0)
+    const whitespace = snap({ remaining: { requests: "  " } })
+    expect(ModelRouteLimits.windows(whitespace)).toEqual([])
+    expect(ModelRouteLimits.holdUntil(whitespace, at)).toBe(0)
+    expect(ModelRouteLimits.holdUntil(snap({ remaining: { requests: "0" } }), at)).toBe(at + 60_000)
+  })
 })
 
 describe("ModelRouteLimits.retryHintFromMessage", () => {
