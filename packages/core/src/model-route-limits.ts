@@ -157,6 +157,7 @@ export interface Window {
 /** The windows a snapshot describes, with numbers parsed. */
 export const windows = (value: Snapshot): Window[] =>
   Object.entries(value.remaining ?? {}).flatMap(([name, raw]) => {
+    if (raw.trim() === "") return []
     const remaining = Number(raw)
     if (!Number.isFinite(remaining)) return []
     const limit = Number(value.limit?.[name])
