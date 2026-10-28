@@ -79,6 +79,21 @@ const invalidAnswers: { fields: FormFields | undefined; supplied: string[]; erro
   { fields: [{ type: "integer", key: "count" }], supplied: ["count=1.5"], error: "Expected an integer" },
   { fields: [{ type: "boolean", key: "enabled" }], supplied: ["enabled=yes"], error: "Expected a JSON value" },
   {
+    fields: [{ type: "string", key: "when", format: "date-time" }],
+    supplied: ["when=2026-02-30T10:00:00Z"],
+    error: "Expected a date and time",
+  },
+  {
+    fields: [{ type: "string", key: "when", format: "date-time" }],
+    supplied: ["when=2025-02-29T10:00:00Z"],
+    error: "Expected a date and time",
+  },
+  {
+    fields: [{ type: "string", key: "when", format: "date-time" }],
+    supplied: ["when=2026-01-01T24:00:00Z"],
+    error: "Expected a date and time",
+  },
+  {
     fields: [{ type: "string", key: "server", format: "uri", hidden: true }],
     supplied: ["server=not a URL"],
     error: "Expected a URL",
@@ -102,4 +117,14 @@ const invalidAnswers: { fields: FormFields | undefined; supplied: string[]; erro
 
 test.each(invalidAnswers)("rejects invalid form answers: $error", async (input) => {
   await expect(Effect.runPromise(answerForm(input.fields, input.supplied))).rejects.toThrow(input.error)
+})
+
+test("accepts valid date-time form answers", async () => {
+  const fields = [{ type: "string", key: "when", format: "date-time" }] satisfies FormFields
+  expect(await Effect.runPromise(answerForm(fields, ["when=2024-02-29T10:00:00Z"]))).toEqual({
+    when: "2024-02-29T10:00:00Z",
+  })
+  expect(await Effect.runPromise(answerForm(fields, ["when=2026-01-01T10:00:00+05:00"]))).toEqual({
+    when: "2026-01-01T10:00:00+05:00",
+  })
 })
