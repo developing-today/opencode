@@ -28,7 +28,8 @@ export function from(error: unknown) {
         typeof error === "string" ||
         typeof error === "number" ||
         typeof error === "boolean" ||
-        typeof error === "bigint"
+        typeof error === "bigint" ||
+        typeof error === "symbol"
       ) {
         errors.push({ type: "unknown", message: String(error) || undefined })
       }
