@@ -4,6 +4,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { Global } from "@opencode/util/global"
 import { Schema } from "effect"
+import { ModelRouteLimits } from "./model-route-limits.js"
 
 /**
  * The plan store: subscriptions and their quota windows, the cost tier of each model, what each pool is for,
@@ -263,8 +264,12 @@ const noteFile = (dataDir?: string) => path.join(directory(dataDir), "plan-notes
 export const addNote = (input: NoteInput, now: string, dataDir?: string): Note => {
   const text = input.text.trim()
   if (!text) throw new Error("A note needs some text.")
+  // Calendar check via ModelRouteLimits.parseAbsoluteTime (#609): a bare Date.parse silently
+  // rolls calendar-invalid dates such as 2026-02-30 into the next month, so the id must not
+  // embed the rolled instant; a date with no usable instant embeds NaN, as an unparseable
+  // date always has.
   const note = Schema.decodeUnknownSync(Note)({
-    id: `note_${Date.parse(now).toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    id: `note_${(ModelRouteLimits.parseAbsoluteTime(now) ?? Number.NaN).toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     at: now,
     kind: input.kind ?? "other",
     text,
@@ -294,8 +299,12 @@ export interface NoteFilter {
  * throws, rather than silently matching nothing; a note whose own timestamp does not parse cannot be
  * shown to be at or after `since`, so under a `since` filter it is skipped and counted too. */
 export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: Note[]; skipped: number } => {
-  const since = filter.since === undefined ? undefined : Date.parse(filter.since)
-  if (since !== undefined && Number.isNaN(since))
+  // Calendar check via ModelRouteLimits.parseAbsoluteTime (#609): a bare Date.parse silently
+  // rolls a calendar-invalid since such as 2026-02-30 into Mar 2, so it would filter from
+  // the rolled instant instead of throwing the caller error below. Non-ISO parseable forms
+  // keep their current behaviour (parseAbsoluteTime only calendar-checks ISO-shaped dates).
+  const since = filter.since === undefined ? undefined : ModelRouteLimits.parseAbsoluteTime(filter.since)
+  if (filter.since !== undefined && since === undefined)
     throw new Error(`The since filter "${filter.since}" is not a parseable date. Use an ISO timestamp, or omit it.`)
   const file = noteFile(dataDir)
   if (!fs.existsSync(file)) return { notes: [], skipped: 0 }
@@ -321,8 +330,8 @@ export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: N
       matching.push(note)
       continue
     }
-    const at = Date.parse(note.at)
-    if (Number.isNaN(at)) {
+    const at = ModelRouteLimits.parseAbsoluteTime(note.at)
+    if (at === undefined) {
       skipped += 1
       continue
     }
@@ -330,10 +339,10 @@ export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: N
   }
   matching
     .sort((left, right) => {
-      const leftAt = Date.parse(left.at)
-      const rightAt = Date.parse(right.at)
-      if (Number.isNaN(leftAt)) return Number.isNaN(rightAt) ? 0 : -1
-      if (Number.isNaN(rightAt)) return 1
+      const leftAt = ModelRouteLimits.parseAbsoluteTime(left.at)
+      const rightAt = ModelRouteLimits.parseAbsoluteTime(right.at)
+      if (leftAt === undefined) return rightAt === undefined ? 0 : -1
+      if (rightAt === undefined) return 1
       return leftAt - rightAt
     })
   // slice(-0) is slice(0): a limit of 0 (or less) must keep no notes, not every note.
@@ -344,8 +353,10 @@ export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: N
 /** Whole days since a date the user or the model recorded, or null when there is no usable date. */
 export const daysSince = (date: string | undefined, now: number) => {
   if (date === undefined) return null
-  const at = Date.parse(date)
-  return Number.isNaN(at) ? null : Math.max(0, Math.floor((now - at) / 86_400_000))
+  // Calendar-invalid dates (2026-02-30) have no usable instant either: a bare Date.parse
+  // would count from the rolled instant (Mar 2) instead.
+  const at = ModelRouteLimits.parseAbsoluteTime(date)
+  return at === undefined ? null : Math.max(0, Math.floor((now - at) / 86_400_000))
 }
 
 const GENERAL_GUIDANCE = [

@@ -226,6 +226,35 @@ describe("ModelPlan store", () => {
   })
 
 
+  test("calendar-invalid dates are not silently rolled into the next month (#717)", () => {
+    const root = dir()
+    const now = Date.parse(NOW)
+    // A bare Date.parse rolls 2026-02-30 to Mar 2; every ModelPlan date site must
+    // treat it like an unparseable date instead of trusting the rolled instant.
+    expect(() => ModelPlan.readNotes({ since: "2026-02-30" }, root)).toThrow("2026-02-30")
+    expect(ModelPlan.daysSince("2026-02-30", now)).toBeNull()
+    expect(ModelPlan.daysSince("2026-02-30T00:00:00.000Z", now)).toBeNull()
+    // A note timestamped with a calendar-invalid date behaves like an unparseable
+    // one: counted skipped under a since filter, sorted first without one.
+    ModelPlan.addNote({ text: "rolled timestamp" }, "2026-02-30T00:00:00.000Z", root)
+    ModelPlan.addNote({ text: "good timestamp" }, "2026-10-27T09:00:00Z", root)
+    const filtered = ModelPlan.readNotes({ since: "2026-01-01T00:00:00.000Z" }, root)
+    expect(filtered.notes.map((note) => note.text)).toEqual(["good timestamp"])
+    expect(filtered.skipped).toBe(1)
+    expect(ModelPlan.readNotes({}, root).notes.map((note) => note.text)).toEqual([
+      "rolled timestamp",
+      "good timestamp",
+    ])
+    // addNote must not embed the rolled instant (Mar 2) in the note id.
+    const rolled = ModelPlan.addNote({ text: "bad date note" }, "2026-02-30T00:00:00.000Z", root)
+    expect(rolled.id).not.toContain(Date.parse("2026-02-30T00:00:00.000Z").toString(36))
+    // Valid dates keep working through the same paths.
+    expect(ModelPlan.daysSince("2026-02-28", now)).not.toBeNull()
+    expect(ModelPlan.readNotes({ since: "2026-02-28T00:00:00.000Z" }, root).notes.map((note) => note.text)).toEqual([
+      "good timestamp",
+    ])
+  })
+
   test("guidance points OpenCode's own plans at the console and leaves other providers without it", () => {
     expect(ModelPlan.guidance("opencode-go").join(" ")).toContain("opencode.ai/console")
     expect(ModelPlan.guidance("anthropic").join(" ")).not.toContain("opencode.ai/console")
