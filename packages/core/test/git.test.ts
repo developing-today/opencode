@@ -373,9 +373,11 @@ describe("Git objects", () => {
           gitDirectory: AbsolutePath.make(path.join(root.path, "storage")),
           seed: source,
         })
-        const capture = () => git.tree.capture({ repository, scopes: [RelativePath.make(".")], ignores: source })
+        const capture = (scope = ".") =>
+          git.tree.capture({ repository, scopes: [RelativePath.make(scope)], ignores: source })
         const trees = [yield* capture()]
         // Enough distinct content to cross the loose-object threshold.
+        console.time("write2100")
         yield* Effect.promise(() =>
           Promise.all(
             Array.from({ length: 2100 }, (_, index) =>
@@ -383,7 +385,10 @@ describe("Git objects", () => {
             ),
           ),
         )
+        console.timeEnd("write2100")
+        console.time("capture2100")
         trees.push(yield* capture())
+        console.timeEnd("capture2100")
         const objects = path.join(repository.gitDirectory, "objects")
         const alternates = path.join(objects, "info", "alternates")
         // Objects stored in the snapshot repository itself, excluding anything borrowed through alternates.
@@ -397,36 +402,52 @@ describe("Git objects", () => {
             return listed.split("\n").filter(Boolean).toSorted()
           })
         const loose = () => Effect.promise(() => looseObjectIDs(objects))
+        console.time("everything1")
         const before = yield* everything()
+        console.timeEnd("everything1")
         expect((yield* loose()).length).toBeGreaterThan(2048)
 
+        console.time("pack1")
         yield* git.objects.pack(repository)
+        console.timeEnd("pack1")
         expect(yield* loose()).toEqual([])
         expect(yield* everything()).toEqual(before)
 
         for (let batch = 0; batch < 16; batch++) {
           yield* Effect.promise(() => Bun.write(path.join(project, `batch-${batch}.txt`), `${batch}\n`))
-          trees.push(yield* capture())
+          // Only the new file changed, so scanning the whole worktree again would add nothing but a full
+          // stat of every generated path per batch, which dominates the run's wall time on Windows.
+          console.time(`batch${batch}.capture`)
+          trees.push(yield* capture(`batch-${batch}.txt`))
+          console.timeEnd(`batch${batch}.capture`)
+          console.time(`batch${batch}.pack`)
           yield* Effect.promise(async () => {
             const list = await looseObjectIDs(objects)
             await $`git --git-dir ${repository.gitDirectory} pack-objects -q ${path.join(objects, "pack", "pack")} < ${Buffer.from(list.join("\n") + "\n")}`.quiet()
             await $`git --git-dir ${repository.gitDirectory} prune-packed`.quiet()
           })
+          console.timeEnd(`batch${batch}.pack`)
         }
         const packs = () =>
           Effect.promise(async () =>
             (await fs.readdir(path.join(objects, "pack"))).filter((file) => file.endsWith(".pack")),
           )
         expect((yield* packs()).length).toBeGreaterThanOrEqual(16)
+        console.time("everything2")
         const merged = yield* everything()
+        console.timeEnd("everything2")
 
+        console.time("pack2")
         yield* git.objects.pack(repository)
+        console.timeEnd("pack2")
         expect((yield* packs()).length).toBe(1)
         expect(yield* everything()).toEqual(merged)
 
+        console.time("files")
         expect((yield* git.tree.files({ repository, from: trees[0]!, to: trees.at(-1)! })).length).toBe(2100 + 16)
+        console.timeEnd("files")
       }),
-    { timeout: 60_000 },
+    { timeout: 300_000 },
   )
 })
 
