@@ -386,6 +386,11 @@ function validateField(field: InputField, value: Form.Value): string | undefined
   if (field.type === "multiselect") {
     if (!isStringArray(value)) return `Expected string array for form field: ${field.key}`
     if (field.required && value.length === 0) return `Missing required form field: ${field.key}`
+    // Selections are distinct by definition — the create-time check for a closed
+    // multiselect counts declared options, not answer entries — so a repeated
+    // entry is rejected outright instead of being counted again toward
+    // minItems/maxItems or checked again against the declared options.
+    if (new Set(value).size !== value.length) return `Duplicate selection for form field: ${field.key}`
     if (field.minItems !== undefined && value.length < field.minItems)
       return `Too few selections for form field: ${field.key}`
     if (field.maxItems !== undefined && value.length > field.maxItems)
