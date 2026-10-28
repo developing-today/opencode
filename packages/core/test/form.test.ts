@@ -30,6 +30,39 @@ describe("Form", () => {
     }),
   )
 
+  it.effect("rejects calendar-invalid date-time formats while keeping valid and non-ISO values", () =>
+    Effect.sync(() => {
+      const fields = [{ key: "at", type: "string", format: "date-time" }] satisfies ReadonlyArray<Form.Field>
+
+      for (const value of ["2026-02-30T10:00:00Z", "2026-02-29T10:00:00Z", "2026-04-31T10:00:00Z"]) {
+        expect(Form.validateAnswer(fields, { at: value })).toBe("Expected date-time for form field: at")
+      }
+      expect(Form.validateAnswer(fields, { at: "2024-02-29T10:00:00Z" })).toBeUndefined()
+      expect(Form.validateAnswer(fields, { at: "2026-01-15T10:30:00Z" })).toBeUndefined()
+      expect(Form.validateAnswer(fields, { at: "2026-01-15T10:30:00+02:00" })).toBeUndefined()
+      expect(Form.validateAnswer(fields, { at: "2026-01-01T25:00:00Z" })).toBe(
+        "Expected date-time for form field: at",
+      )
+      expect(Form.validateAnswer(fields, { at: "2026-01-01T10:60:00Z" })).toBe(
+        "Expected date-time for form field: at",
+      )
+      expect(Form.validateAnswer(fields, { at: "not-a-date" })).toBe("Expected date-time for form field: at")
+      // Non-ISO forms carry no YYYY-MM-DD part, so their existing leniency is unchanged.
+      expect(Form.validateAnswer(fields, { at: "Jan 5 2026" })).toBeUndefined()
+    }),
+  )
+
+  it.effect("pins date format behaviour alongside date-time", () =>
+    Effect.sync(() => {
+      const fields = [{ key: "day", type: "string", format: "date" }] satisfies ReadonlyArray<Form.Field>
+
+      expect(Form.validateAnswer(fields, { day: "2026-02-30" })).toBe("Expected date for form field: day")
+      expect(Form.validateAnswer(fields, { day: "2026-02-29" })).toBe("Expected date for form field: day")
+      expect(Form.validateAnswer(fields, { day: "2024-02-29" })).toBeUndefined()
+      expect(Form.validateAnswer(fields, { day: "2026-01-15" })).toBeUndefined()
+    }),
+  )
+
   it.effect("returns a terminal cancelled state from ask", () =>
     Effect.gen(function* () {
       const service = yield* Form.Service
