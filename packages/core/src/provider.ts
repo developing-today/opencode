@@ -314,8 +314,6 @@ export interface Snapshot {
 
 export interface Interface extends State.Transformable<Editor> {
   readonly get: (providerID: ID) => Effect.Effect<Info | undefined>
-  /** Nonblocking single-definition read from current state; unlike snapshot() it never waits on integration discovery. */
-  readonly definition: (providerID: ID) => Effect.Effect<Definition | undefined>
   readonly all: () => Effect.Effect<readonly Info[]>
   readonly available: () => Effect.Effect<readonly Info[]>
   /** Internal definition/access snapshot; raw model inventories never cross the HTTP API. */
@@ -498,7 +496,6 @@ const layer = Layer.effect(
       transform: state.transform,
       reload: state.reload,
       get: Effect.fn("Provider.get")((id) => Effect.sync(() => freeze(state.get().get(id)?.provider, true))),
-      definition: Effect.fn("Provider.definition")((id) => Effect.sync(() => state.get().get(id))),
       all: Effect.fn("Provider.all")(() =>
         Effect.sync(() => Array.from(state.get().values(), (record) => freeze(record.provider, true))),
       ),
