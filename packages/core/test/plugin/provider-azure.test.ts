@@ -276,7 +276,6 @@ describe("AzurePlugin connecting", () => {
       ])
     }),
   )
-
 })
 
 describe("AzurePlugin startup", () => {
