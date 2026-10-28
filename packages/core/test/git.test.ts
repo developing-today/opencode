@@ -426,7 +426,11 @@ describe("Git objects", () => {
 
         expect((yield* git.tree.files({ repository, from: trees[0]!, to: trees.at(-1)! })).length).toBe(2100 + 16)
       }),
-    { timeout: 60_000 },
+    // 180s, not the usual 60s: this test writes 2100 files, packs >2048 loose objects and runs 16
+    // pack-objects/prune-packed batches, which takes ~4s on a fast Linux machine but intermittently
+    // crossed 60s on Windows CI runners (exactly 60001.52ms on PR #640, again on PR #718; #652).
+    // The workload cannot shrink: the >2048 loose-object threshold is part of what it asserts.
+    { timeout: 180_000 },
   )
 })
 
