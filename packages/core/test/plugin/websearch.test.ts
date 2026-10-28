@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect } from "bun:test"
+import { beforeEach, describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { Integration } from "@opencode/core/integration"
 import { WebSearch } from "@opencode/core/websearch"
@@ -370,4 +370,34 @@ describe("built-in web search providers", () => {
       expect(requests[3]?.headers["x-tinyfish-access-mode"]).toBeUndefined()
     }),
   )
+})
+
+describe("WebSearch cooldownMillis retry-after grammar", () => {
+  const now = 1_700_000_000_000
+
+  test("rejects hex and exponent spellings to the 60-second fallback", () => {
+    expect(WebSearch.cooldownMillis("1e3", now)).toBe(60_000)
+    expect(WebSearch.cooldownMillis("0x10", now)).toBe(60_000)
+    expect(WebSearch.cooldownMillis("1.5", now)).toBe(60_000)
+    expect(WebSearch.cooldownMillis("+7", now)).toBe(60_000)
+  })
+
+  test("keeps authored plain delay-seconds unchanged", () => {
+    expect(WebSearch.cooldownMillis("0", now)).toBe(0)
+    expect(WebSearch.cooldownMillis("7", now)).toBe(7_000)
+    expect(WebSearch.cooldownMillis(" 12 ", now)).toBe(12_000)
+  })
+
+  test("keeps the existing fallbacks for unusable values", () => {
+    expect(WebSearch.cooldownMillis(undefined, now)).toBe(60_000)
+    expect(WebSearch.cooldownMillis("", now)).toBe(60_000)
+    expect(WebSearch.cooldownMillis(" ", now)).toBe(60_000)
+    expect(WebSearch.cooldownMillis("-5", now)).toBe(60_000)
+    expect(WebSearch.cooldownMillis("garbage", now)).toBe(60_000)
+  })
+
+  test("keeps HTTP-date retry-after values", () => {
+    expect(WebSearch.cooldownMillis(new Date(now + 90_000).toUTCString(), now)).toBe(90_000)
+    expect(WebSearch.cooldownMillis(new Date(now - 90_000).toUTCString(), now)).toBe(0)
+  })
 })
