@@ -90,6 +90,13 @@ describe("ConfigCommandPlugin.Plugin", () => {
       expected: "First alpha beta. Rest gamma delta.",
     },
     { template: "$ARGUMENTS / $ARGUMENTS", input: "$& $$", expected: "$& $$ / $& $$" },
+    // $0 names no argument: it stays literal instead of reading args[-1]. The
+    // highest real placeholder still consumes the remaining arguments.
+    { template: "Run $0 with $1.", input: "hello world", expected: "Run $0 with hello world." },
+    { template: "Run $00 with $1.", input: "hello", expected: "Run $00 with hello." },
+    // A lone $0 is not an argument placeholder, so the input is appended as for
+    // any template without placeholders.
+    { template: "Run $0.", input: "hello world", expected: "Run $0.\n\nhello world" },
   ]) {
     it.live(`interpolates ${JSON.stringify(item.template)} with literal input ${JSON.stringify(item.input)}`, () =>
       Effect.gen(function* () {

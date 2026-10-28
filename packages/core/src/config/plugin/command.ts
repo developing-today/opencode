@@ -247,6 +247,8 @@ function parseArguments(input: string) {
 }
 
 const argsRegex = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi
-const placeholderRegex = /\$(\d+)/g
+// Arguments are 1-based: $1 is the first argument. $0 and zero-padded forms such
+// as $00 name no argument, so they stay literal like any other unrecognised $ form.
+const placeholderRegex = /\$([1-9]\d*)/g
 const quoteTrimRegex = /^["']|["']$/g
 const shellRegex = /!`([^`]+)`/g
