@@ -302,15 +302,20 @@ export const assertAllowed = Effect.fn("ModelGovernance.assertAllowed")(function
   const chain: SessionSchema.Info[] = [input.parent]
   const seen = new Set([input.parent.id])
   let current = input.parent
-  while (current.parentID) {
-    if (seen.has(current.parentID))
-      return yield* new DeniedError({ message: `Session parent cycle: ${current.parentID}` })
-    seen.add(current.parentID)
-    const parentID = current.parentID
+  // A fork is projected top-level (no parentID) but is a child of its source
+  // for governance (spec §6.2): follow the fork link when there is no parent
+  // link, so a fork cannot escape the policies above its source (#505).
+  let governanceParentID = current.parentID ?? current.fork?.sessionID
+  while (governanceParentID) {
+    if (seen.has(governanceParentID))
+      return yield* new DeniedError({ message: `Session parent cycle: ${governanceParentID}` })
+    seen.add(governanceParentID)
+    const parentID = governanceParentID
     current = yield* sessions
       .get(parentID)
       .pipe(Effect.mapError(() => new DeniedError({ message: `Parent session not found: ${parentID}` })))
     chain.push(current)
+    governanceParentID = current.parentID ?? current.fork?.sessionID
   }
 
   // Layer 1: ancestor session policies, hard at every level.
