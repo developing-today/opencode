@@ -291,6 +291,15 @@ export function validateFields(fields: ReadonlyArray<Form.Field>) {
     if (field.type === "string") {
       if (field.minLength !== undefined && field.maxLength !== undefined && field.minLength > field.maxLength)
         return `Form field has minLength greater than maxLength: ${field.key}`
+      // A required string needs at least one character: with maxLength 0 the
+      // empty answer is missing-required and any non-empty answer is too long.
+      if (field.required && field.maxLength === 0)
+        return `Form field has maxLength 0 but is required: ${field.key}`
+      // A required string with a closed empty options list has no valid
+      // answer: the empty answer is missing-required and any other value is
+      // not one of the (zero) declared options.
+      if (field.required && field.options !== undefined && !field.custom && field.options.length === 0)
+        return `Form field has no options but is required: ${field.key}`
       if (field.pattern !== undefined) {
         try {
           new RegExp(field.pattern)
@@ -320,6 +329,15 @@ export function validateFields(fields: ReadonlyArray<Form.Field>) {
       // for more selections than there are options can never be satisfied.
       if (!field.custom && field.minItems !== undefined && field.minItems > field.options.length)
         return `Form field has minItems greater than its number of options: ${field.key}`
+      // A required multiselect needs at least one selection: with maxItems 0
+      // the empty answer is missing-required and any selection is too many.
+      if (field.required && field.maxItems === 0)
+        return `Form field has maxItems 0 but is required: ${field.key}`
+      // A required closed multiselect with no options has no valid answer:
+      // the empty answer is missing-required and any selection is not one of
+      // the (zero) declared options.
+      if (field.required && !field.custom && field.options.length === 0)
+        return `Form field has no options but is required: ${field.key}`
     }
     for (const when of field.when ?? []) {
       const target = earlier.get(when.key)
