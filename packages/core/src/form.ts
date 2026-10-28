@@ -372,5 +372,18 @@ function isDate(value: string) {
 }
 
 function isDateTime(value: string) {
-  return !Number.isNaN(new Date(value).getTime())
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return false
+  // Date parsing rolls calendar-overflow days into the next month instead of failing, so an
+  // ISO date part must round-trip through a real calendar date (the same check isDate and
+  // ModelRouteLimits.parseAbsoluteTime make). Values without an ISO date part keep the
+  // existing lenient behaviour.
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
+  if (!iso) return true
+  const year = Number(iso[1])
+  const month = Number(iso[2])
+  const day = Number(iso[3])
+  const probe = new Date(0)
+  probe.setUTCFullYear(year, month - 1, day)
+  return probe.getUTCFullYear() === year && probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day
 }
