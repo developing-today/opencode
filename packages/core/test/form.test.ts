@@ -451,6 +451,45 @@ describe("Form", () => {
     }),
   )
 
+  it.effect("rejects duplicate multiselect selections instead of counting them twice (#707)", () =>
+    Effect.sync(() => {
+      const options = [
+        { value: "a", label: "A" },
+        { value: "b", label: "B" },
+      ]
+      // Repeating one option must not satisfy minItems 2 with a single distinct selection.
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, minItems: 2 }], { tags: ["a", "a"] }),
+      ).toBe("Duplicate selection for form field: tags")
+      // Same for a custom multiselect: three copies of one value are not three selections.
+      expect(
+        Form.validateAnswer(
+          [{ key: "tags", type: "multiselect", options: [{ value: "x", label: "X" }], custom: true, minItems: 3 }],
+          { tags: ["x", "x", "x"] },
+        ),
+      ).toBe("Duplicate selection for form field: tags")
+      // And against maxItems 1 the duplicate is reported as a duplicate, not as
+      // two selections exceeding the bound.
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, maxItems: 1 }], { tags: ["a", "a"] }),
+      ).toBe("Duplicate selection for form field: tags")
+      // The rule applies even with no item bounds at all.
+      expect(Form.validateAnswer([{ key: "tags", type: "multiselect", options }], { tags: ["b", "b"] })).toBe(
+        "Duplicate selection for form field: tags",
+      )
+      // Answers without duplicates behave exactly as before.
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, minItems: 2 }], { tags: ["a", "b"] }),
+      ).toBeUndefined()
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, maxItems: 1 }], { tags: ["a"] }),
+      ).toBeUndefined()
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, minItems: 2 }], { tags: ["a"] }),
+      ).toBe("Too few selections for form field: tags")
+    }),
+  )
+
   it.effect("gates fields on an external acknowledgement via when", () =>
     Effect.gen(function* () {
       const service = yield* Form.Service
