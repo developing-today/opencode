@@ -82,6 +82,9 @@ export const Plugin = define({
         const first = expanded[0].model
         const leafContext = Math.min(...expanded.map((target) => target.model.limit.context))
         const health = ModelRoute.policy(route.health)
+        const targetCacheFormats = expanded.map((target) =>
+          target.cacheFormat ? { cacheFormat: target.cacheFormat } : {},
+        )
         const info = Model.Info.make({
           ...Model.Info.default(ModelRoute.PROVIDER_ID, Model.ID.make(id)),
           name: route.name?.trim() || id,
@@ -93,9 +96,8 @@ export const Plugin = define({
                 ...(target.defaultVariant ? { default: target.defaultVariant } : {}),
                 ...(target.variantMap ? { map: target.variantMap } : {}),
               })),
-              targetCacheFormats: expanded.map((target) =>
-                target.cacheFormat ? { cacheFormat: target.cacheFormat } : {},
-              ),
+              // Routes that declare no cache format keep their stored settings unchanged.
+              ...(targetCacheFormats.some((item) => item.cacheFormat !== undefined) ? { targetCacheFormats } : {}),
               health,
               nodes,
               ...(route.attempts !== undefined ? { attempts: route.attempts } : {}),
