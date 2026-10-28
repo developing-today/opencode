@@ -309,6 +309,73 @@ describe("scheduled and absolute priorities", () => {
       false,
     )
   })
+
+  test("a malformed until drops the entry even when it has a schedule (#669)", () => {
+    const parsed = ModelRouteOverrides.parse({
+      overrides: [
+        { id: "string-until", action: "avoid", providers: ["openai"], until: "tomorrow", schedule: today },
+        { id: "null-until", action: "avoid", providers: ["openai"], until: null, schedule: today },
+        { id: "nan-until", action: "avoid", providers: ["openai"], until: Number.NaN, schedule: today },
+        {
+          id: "infinite-until",
+          action: "avoid",
+          providers: ["openai"],
+          until: Number.POSITIVE_INFINITY,
+          schedule: today,
+        },
+        { id: "string-until-nosched", action: "avoid", providers: ["openai"], until: "tomorrow" },
+        { id: "valid-until", action: "avoid", providers: ["openai"], until: now + DAY, schedule: today },
+        { id: "recurring", action: "avoid", providers: ["openai"], schedule: today },
+      ],
+    })
+    expect(parsed.map((item) => item.id)).toEqual(["valid-until", "recurring"])
+    expect(parsed.find((item) => item.id === "valid-until")?.until).toBe(now + DAY)
+    expect(parsed.find((item) => item.id === "recurring")?.until).toBeUndefined()
+  })
+
+  test("a present-but-invalid factor or weight drops the entry, never the default lift (#662)", () => {
+    const base = { action: "prefer", providers: ["anthropic"], until: now + DAY }
+    const parsed = ModelRouteOverrides.parse({
+      overrides: [
+        { ...base, id: "factor-zero", factor: 0 },
+        { ...base, id: "factor-negative", factor: -1 },
+        { ...base, id: "factor-infinite", factor: Infinity },
+        { ...base, id: "weight-zero", weight: 0 },
+        { ...base, id: "weight-negative", weight: -0.5 },
+        { ...base, id: "factor-valid", factor: 0.5 },
+        { ...base, id: "weight-valid", weight: 0.25 },
+        { ...base, id: "absent" },
+      ],
+    })
+    expect(parsed.map((item) => item.id)).toEqual(["factor-valid", "weight-valid", "absent"])
+    expect(parsed.find((item) => item.id === "factor-valid")?.factor).toBe(0.5)
+    expect(parsed.find((item) => item.id === "weight-valid")?.weight).toBe(0.25)
+  })
+
+  test("an invalid factor or weight does not drop a non-prefer entry (#662)", () => {
+    const parsed = ModelRouteOverrides.parse({
+      overrides: [
+        { action: "avoid", id: "avoid-zero", providers: ["anthropic"], until: now + DAY, factor: 0 },
+        {
+          action: "allow-over-budget",
+          id: "budget-zero",
+          providers: ["anthropic"],
+          until: now + DAY,
+          weight: 0,
+        },
+      ],
+    })
+    expect(parsed.map((item) => item.id)).toEqual(["avoid-zero", "budget-zero"])
+    expect(parsed.find((item) => item.id === "avoid-zero")?.factor).toBeUndefined()
+  })
+
+  test("a prefer override with factor: 0 or weight: 0 does not lift the target (#662)", () => {
+    ModelRouteOverrides.add(draft({ id: "zero-factor", action: "prefer", providers: ["anthropic"], factor: 0 }), now)
+    expect(ModelRoute.weightFactor(anthropic, now)).toBe(1)
+    ModelRouteOverrides.remove("zero-factor", now)
+    ModelRouteOverrides.add(draft({ id: "zero-weight", action: "prefer", providers: ["anthropic"], weight: 0 }), now)
+    expect(ModelRoute.weightFactor(anthropic, now)).toBe(1)
+  })
 })
 
 describe("traced weights (#589)", () => {

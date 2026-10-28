@@ -76,6 +76,24 @@ describe("MessagingTemplate.parseTime bare epochs", () => {
     expect(MessagingTemplate.parseTime("17672256000000", now)).toBeUndefined()
   })
 
+  test("a bare 4-digit ISO year parses as Jan 1 via Date.parse", () => {
+    expect(MessagingTemplate.parseTime("2026", now)).toBe(Date.parse("2026"))
+  })
+
+  test("calendar-invalid ISO dates are rejected instead of rolling into the next month", () => {
+    expect(MessagingTemplate.parseTime("2026-02-30", now)).toBeUndefined()
+    expect(MessagingTemplate.parseTime("2026-02-29", now)).toBeUndefined()
+    expect(MessagingTemplate.parseTime("2026-04-31", now)).toBeUndefined()
+    expect(MessagingTemplate.parseTime("2025-02-29T00:00:00Z", now)).toBeUndefined()
+    expect(MessagingTemplate.parseTime("2026-13-01", now)).toBeUndefined()
+  })
+
+  test("leap-valid and offset ISO forms still parse, and non-ISO forms keep Date.parse behaviour", () => {
+    expect(MessagingTemplate.parseTime("2024-02-29", now)).toBe(Date.parse("2024-02-29"))
+    expect(MessagingTemplate.parseTime("2026-01-01T00:00:00+05:00", now)).toBe(Date.parse("2026-01-01T00:00:00+05:00"))
+    expect(MessagingTemplate.parseTime("Jan 5 2026", now)).toBe(Date.parse("Jan 5 2026"))
+  })
+
   test("ISO and relative forms still parse", () => {
     expect(MessagingTemplate.parseTime("2026-01-01T00:00:00Z", now)).toBe(1767225600000)
     expect(MessagingTemplate.parseTime("2h", now)).toBe(now - 2 * 3_600_000)

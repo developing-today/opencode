@@ -74,7 +74,12 @@ export const pcm = (encoding: PcmEncoding, sampleRate: number | undefined, media
 
 export const sampleRate = (mediaType: string | undefined) => {
   const rate = /rate=(\d+)/i.exec(mediaType ?? "")?.[1]
-  return rate === undefined ? undefined : Number(rate)
+  // A non-positive rate can never describe audio, and callers treat undefined
+  // as "unknown, use my fallback"; returning 0 for `rate=0` would win over
+  // every `??` fallback and be reported as the audio's sample rate.
+  if (rate === undefined) return undefined
+  const parsed = Number(rate)
+  return parsed > 0 ? parsed : undefined
 }
 
 /** A declared `mediaType` wins over sniffing: headerless PCM can start with bytes that look like an MPEG frame sync. */
@@ -105,7 +110,13 @@ export const finish = (
 }
 
 export const headerUsage = (type: "characters" | "credits", value: string | undefined): MediaUsage | undefined => {
-  const amount = Number(value)
+  // A usage header is a plain non-negative decimal count. Number() alone is
+  // too wide: it reads a blank header as an authored 0, keeps negatives, and
+  // reinterprets hex/exponent spellings ("0x10" -> 16, "1e3" -> 1000) — all of
+  // which would be reported as the call's billed usage.
+  const trimmed = value?.trim()
+  if (!trimmed || !/^\d+(?:\.\d+)?$/.test(trimmed)) return undefined
+  const amount = Number(trimmed)
   if (!Number.isFinite(amount)) return undefined
   return type === "credits" ? { type, credits: amount } : { type, characters: amount }
 }

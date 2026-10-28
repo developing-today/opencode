@@ -164,7 +164,12 @@ const PCM_CODECS: Readonly<Record<string, SpeechStream.PcmEncoding>> = {
 
 const describeOutput = (format: string) => {
   const [codec = format, rate] = format.split("_")
-  const sampleRate = rate === undefined ? undefined : Number(rate)
+  // A rate segment is a plain positive integer. Number() alone is too wide:
+  // it turns non-numeric segments into NaN, keeps negative/zero rates, and
+  // reinterprets hex/exponent spellings ("0x10" -> 16, "1e5" -> 100000) --
+  // all of which would be reported as the audio's sample rate.
+  const parsed = rate !== undefined && /^\d+$/.test(rate) ? Number(rate) : undefined
+  const sampleRate = parsed !== undefined && parsed > 0 ? parsed : undefined
   const encoding = PCM_CODECS[codec]
   return encoding === undefined ? SpeechStream.container(codec, sampleRate) : SpeechStream.pcm(encoding, sampleRate)
 }

@@ -1,6 +1,7 @@
 export * as QuotaSnapshot from "./quota-snapshot.js"
 
 import { ModelUsage } from "./model-usage.js"
+import { ModelRouteLimits } from "./model-route-limits.js"
 import type { ModelPlan } from "./model-plan.js"
 
 /**
@@ -53,17 +54,23 @@ export interface Input {
 /**
  * The next reset a window's reset data yields a concrete time for: an explicit `resetAt` recorded on the
  * window, or a `daily HH:MM UTC` rule (the next occurrence after `now`). Anything else — `rolling`,
- * free-text rules — has no single derivable instant and yields null rather than a guess.
+ * free-text rules — has no single derivable instant and yields null rather than a guess. An explicit
+ * `resetAt` is a recorded fact, not a derivation, so it is returned as recorded even when it is already
+ * in the past; consumers judge staleness from `now`, the value is never discarded or rolled forward.
  */
 const resetAtOf = (window: ModelPlan.QuotaWindow, now: number): number | null => {
   if (window.resetAt !== undefined) {
-    const parsed = Date.parse(window.resetAt)
-    if (Number.isFinite(parsed)) return parsed
+    return ModelRouteLimits.parseAbsoluteTime(window.resetAt) ?? null
   }
   const daily = window.resetRule?.match(/^daily (\d{1,2}):(\d{2}) UTC$/)
   if (daily) {
+    const hour = Number(daily[1])
+    const minute = Number(daily[2])
+    // Out-of-range components have no derivable instant: yield null rather than letting
+    // setUTCHours roll the overflow into a fabricated reset in the next hour or day.
+    if (hour > 23 || minute > 59) return null
     const at = new Date(now)
-    at.setUTCHours(Number(daily[1]), Number(daily[2]), 0, 0)
+    at.setUTCHours(hour, minute, 0, 0)
     return at.getTime() <= now ? at.getTime() + 86_400_000 : at.getTime()
   }
   return null

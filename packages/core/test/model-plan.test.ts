@@ -124,6 +124,13 @@ describe("ModelPlan store", () => {
     expect(pooled.pools.hard).toMatchObject({ tier: "frontier", purpose: "debugging with an unknown cause" })
   })
 
+  test("slug never ends in a dash, including when the 64-char slice cuts after a separator", () => {
+    expect(ModelPlan.slug("a".repeat(63) + " b c")).toBe("a".repeat(63))
+    expect(ModelPlan.slug("a".repeat(64))).toBe("a".repeat(64))
+    expect(ModelPlan.slug("Claude Max 20x")).toBe("claude-max-20x")
+    expect(ModelPlan.slug("--weird--name--")).toBe("weird-name")
+  })
+
   test("notes are appended, filtered and kept in order, and a damaged line is skipped and counted", () => {
     const root = dir()
     ModelPlan.addNote(
@@ -148,6 +155,21 @@ describe("ModelPlan store", () => {
       "expectation",
     ])
     expect(ModelPlan.readNotes({ limit: 1 }, root).notes[0]?.kind).toBe("expectation")
+    expect(ModelPlan.readNotes({ limit: 0 }, root).notes).toEqual([])
+    expect(ModelPlan.readNotes({ limit: -1 }, root).notes).toEqual([])
+    expect(ModelPlan.readNotes({ limit: 0 }, root).skipped).toBe(1)
+  })
+
+  test("staleness counts whole days without going negative, and a blank note is refused", () => {
+    const now = Date.parse(NOW)
+    expect(ModelPlan.daysSince("2026-10-04", now)).toBe(10)
+    expect(ModelPlan.daysSince(new Date(now - 60 * 60 * 1000).toISOString(), now)).toBe(0)
+    expect(ModelPlan.daysSince(new Date(now - 25 * 60 * 60 * 1000).toISOString(), now)).toBe(1)
+    expect(ModelPlan.daysSince(new Date(now + 60 * 60 * 1000).toISOString(), now)).toBe(0)
+    expect(ModelPlan.daysSince(new Date(now + 10 * 86_400_000).toISOString(), now)).toBe(0)
+    expect(ModelPlan.daysSince(undefined, now)).toBeNull()
+    expect(ModelPlan.daysSince("not a date", now)).toBeNull()
+    expect(() => ModelPlan.addNote({ text: "   " }, NOW, dir())).toThrow("some text")
   })
 
   test("notes sort chronologically across timestamp formats and limits keep the newest", () => {
@@ -184,11 +206,25 @@ describe("ModelPlan store", () => {
     expect(ModelPlan.readNotes({ limit: 1 }, root).notes.map((note) => note.text)).toEqual(["later"])
   })
 
-  test("staleness counts whole days, and a blank note is refused", () => {
-    expect(ModelPlan.daysSince("2026-10-04", Date.parse(NOW))).toBe(10)
-    expect(ModelPlan.daysSince(undefined, Date.parse(NOW))).toBeNull()
-    expect(() => ModelPlan.addNote({ text: "   " }, NOW, dir())).toThrow("some text")
+  test("an unparseable since throws instead of silently returning no notes", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "a note" }, "2026-10-27T09:00:00Z", root)
+    expect(() => ModelPlan.readNotes({ since: "not-a-date" }, root)).toThrow("not-a-date")
+    expect(ModelPlan.readNotes({ since: "2026-12-01T00:00:00.000Z" }, root)).toEqual({ notes: [], skipped: 0 })
   })
+
+  test("a note whose timestamp does not parse is counted skipped under a since filter", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "bad timestamp" }, "not-a-date", root)
+    ModelPlan.addNote({ text: "good timestamp" }, "2026-10-27T09:00:00Z", root)
+    const filtered = ModelPlan.readNotes({ since: "2026-01-01T00:00:00.000Z" }, root)
+    expect(filtered.notes.map((note) => note.text)).toEqual(["good timestamp"])
+    expect(filtered.skipped).toBe(1)
+    const unfiltered = ModelPlan.readNotes({}, root)
+    expect(unfiltered.notes.map((note) => note.text)).toEqual(["bad timestamp", "good timestamp"])
+    expect(unfiltered.skipped).toBe(0)
+  })
+
 
   test("guidance points OpenCode's own plans at the console and leaves other providers without it", () => {
     expect(ModelPlan.guidance("opencode-go").join(" ")).toContain("opencode.ai/console")

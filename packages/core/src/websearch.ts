@@ -212,10 +212,19 @@ const layer = Layer.effect(
   }),
 )
 
-function cooldownMillis(value: string | undefined, now: number) {
+// retry-after is RFC 9110 delay-seconds (1*DIGIT) or an HTTP-date. Only plain
+// unsigned decimal integers are delay-seconds: spellings Number() would
+// reinterpret (hex "0x10", exponent "1e3", signs, fractions) are unusable and
+// take the 60-second fallback instead of an invented cooldown. They must not
+// reach the HTTP-date branch either — Date.parse reads some of them as dates.
+export function cooldownMillis(value: string | undefined, now: number) {
   if (!value?.trim()) return 60_000
-  const seconds = Number(value)
-  if (Number.isFinite(seconds)) return seconds >= 0 ? seconds * 1000 : 60_000
+  const trimmed = value.trim()
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed)
+    if (Number.isFinite(seconds)) return seconds * 1000
+  }
+  if (Number.isFinite(Number(trimmed))) return 60_000
   const date = Date.parse(value)
   return Number.isFinite(date) ? Math.max(0, date - now) : 60_000
 }

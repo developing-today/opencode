@@ -30,6 +30,57 @@ describe("Form", () => {
     }),
   )
 
+  it.effect("rejects calendar-invalid date-time formats while keeping valid and non-ISO values", () =>
+    Effect.sync(() => {
+      const fields = [{ key: "at", type: "string", format: "date-time" }] satisfies ReadonlyArray<Form.Field>
+
+      for (const value of ["2026-02-30T10:00:00Z", "2026-02-29T10:00:00Z", "2026-04-31T10:00:00Z"]) {
+        expect(Form.validateAnswer(fields, { at: value })).toBe("Expected date-time for form field: at")
+      }
+      expect(Form.validateAnswer(fields, { at: "2024-02-29T10:00:00Z" })).toBeUndefined()
+      expect(Form.validateAnswer(fields, { at: "2026-01-15T10:30:00Z" })).toBeUndefined()
+      expect(Form.validateAnswer(fields, { at: "2026-01-15T10:30:00+02:00" })).toBeUndefined()
+      expect(Form.validateAnswer(fields, { at: "2026-01-01T25:00:00Z" })).toBe(
+        "Expected date-time for form field: at",
+      )
+      expect(Form.validateAnswer(fields, { at: "2026-01-01T10:60:00Z" })).toBe(
+        "Expected date-time for form field: at",
+      )
+      expect(Form.validateAnswer(fields, { at: "not-a-date" })).toBe("Expected date-time for form field: at")
+      // Non-ISO forms carry no YYYY-MM-DD part, so their existing leniency is unchanged.
+      expect(Form.validateAnswer(fields, { at: "Jan 5 2026" })).toBeUndefined()
+    }),
+  )
+
+  it.effect("rejects hour-24 ISO date-times that roll into the next day (#666)", () =>
+    Effect.sync(() => {
+      const fields = [{ key: "at", type: "string", format: "date-time" }] satisfies ReadonlyArray<Form.Field>
+
+      for (const value of [
+        "2026-01-01T24:00:00Z",
+        "2026-01-01T24:00:00.000Z",
+        "2026-01-01T24:00:00+05:00",
+        "2025-12-31T24:00:00Z",
+      ]) {
+        expect(Form.validateAnswer(fields, { at: value })).toBe("Expected date-time for form field: at")
+      }
+      for (const value of ["2026-01-01T23:59:59Z", "2026-01-01T00:00:00Z", "2024-02-29T23:59:59Z"]) {
+        expect(Form.validateAnswer(fields, { at: value })).toBeUndefined()
+      }
+    }),
+  )
+
+  it.effect("pins date format behaviour alongside date-time", () =>
+    Effect.sync(() => {
+      const fields = [{ key: "day", type: "string", format: "date" }] satisfies ReadonlyArray<Form.Field>
+
+      expect(Form.validateAnswer(fields, { day: "2026-02-30" })).toBe("Expected date for form field: day")
+      expect(Form.validateAnswer(fields, { day: "2026-02-29" })).toBe("Expected date for form field: day")
+      expect(Form.validateAnswer(fields, { day: "2024-02-29" })).toBeUndefined()
+      expect(Form.validateAnswer(fields, { day: "2026-01-15" })).toBeUndefined()
+    }),
+  )
+
   it.effect("returns a terminal cancelled state from ask", () =>
     Effect.gen(function* () {
       const service = yield* Form.Service
@@ -289,6 +340,153 @@ describe("Form", () => {
           message: "Form field condition value must be one of the field's options: b -> a",
         }),
       )
+    }),
+  )
+
+  it.effect("rejects unsatisfiable field bounds and uncompilable patterns at creation (#681)", () =>
+    Effect.sync(() => {
+      expect(Form.validateFields([{ key: "name", type: "string", minLength: 10, maxLength: 5 }])).toBe(
+        "Form field has minLength greater than maxLength: name",
+      )
+      expect(Form.validateFields([{ key: "age", type: "number", minimum: 10, maximum: 5 }])).toBe(
+        "Form field has minimum greater than maximum: age",
+      )
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 10, maximum: 5 }])).toBe(
+        "Form field has minimum greater than maximum: count",
+      )
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [{ value: "a", label: "A" }],
+            minItems: 3,
+            maxItems: 1,
+          },
+        ]),
+      ).toBe("Form field has minItems greater than maxItems: tags")
+      expect(Form.validateFields([{ key: "code", type: "string", pattern: "[" }])).toBe(
+        "Form field has invalid pattern: code",
+      )
+      // Equal bounds and one-sided bounds are satisfiable and still create.
+      expect(Form.validateFields([{ key: "name", type: "string", minLength: 5, maxLength: 5 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "name", type: "string", minLength: 5 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "age", type: "number", minimum: 5, maximum: 5 }])).toBeUndefined()
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [
+              { value: "a", label: "A" },
+              { value: "b", label: "B" },
+            ],
+            minItems: 2,
+            maxItems: 2,
+          },
+        ]),
+      ).toBeUndefined()
+      expect(Form.validateFields([{ key: "code", type: "string", pattern: "^a+$" }])).toBeUndefined()
+    }),
+  )
+
+  it.effect("rejects field definitions no answer can satisfy: too few options, integer-free range (#696)", () =>
+    Effect.sync(() => {
+      // A closed multiselect may only be answered with declared options, so
+      // minItems beyond the option count is unsatisfiable.
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [
+              { value: "a", label: "A" },
+              { value: "b", label: "B" },
+            ],
+            minItems: 3,
+          },
+        ]),
+      ).toBe("Form field has minItems greater than its number of options: tags")
+      // An integer range containing no integer is unsatisfiable.
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 1.2, maximum: 1.8 }])).toBe(
+        "Form field range contains no integer: count",
+      )
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 0.5, maximum: 0.9 }])).toBe(
+        "Form field range contains no integer: count",
+      )
+      // Satisfiable controls still create: minItems within the option count, a
+      // custom multiselect (answers are not limited to the declared options),
+      // integer ranges containing an integer, equal integer bounds, one-sided
+      // integer bounds, and fractional bounds on a plain number field.
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [
+              { value: "a", label: "A" },
+              { value: "b", label: "B" },
+            ],
+            minItems: 2,
+          },
+        ]),
+      ).toBeUndefined()
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [{ value: "a", label: "A" }],
+            minItems: 3,
+            custom: true,
+          },
+        ]),
+      ).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 1, maximum: 2 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 1.2, maximum: 2.8 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 2, maximum: 2 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 1.2 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", maximum: 1.8 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "age", type: "number", minimum: 1.2, maximum: 1.8 }])).toBeUndefined()
+    }),
+  )
+
+  it.effect("rejects duplicate multiselect selections instead of counting them twice (#707)", () =>
+    Effect.sync(() => {
+      const options = [
+        { value: "a", label: "A" },
+        { value: "b", label: "B" },
+      ]
+      // Repeating one option must not satisfy minItems 2 with a single distinct selection.
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, minItems: 2 }], { tags: ["a", "a"] }),
+      ).toBe("Duplicate selection for form field: tags")
+      // Same for a custom multiselect: three copies of one value are not three selections.
+      expect(
+        Form.validateAnswer(
+          [{ key: "tags", type: "multiselect", options: [{ value: "x", label: "X" }], custom: true, minItems: 3 }],
+          { tags: ["x", "x", "x"] },
+        ),
+      ).toBe("Duplicate selection for form field: tags")
+      // And against maxItems 1 the duplicate is reported as a duplicate, not as
+      // two selections exceeding the bound.
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, maxItems: 1 }], { tags: ["a", "a"] }),
+      ).toBe("Duplicate selection for form field: tags")
+      // The rule applies even with no item bounds at all.
+      expect(Form.validateAnswer([{ key: "tags", type: "multiselect", options }], { tags: ["b", "b"] })).toBe(
+        "Duplicate selection for form field: tags",
+      )
+      // Answers without duplicates behave exactly as before.
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, minItems: 2 }], { tags: ["a", "b"] }),
+      ).toBeUndefined()
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, maxItems: 1 }], { tags: ["a"] }),
+      ).toBeUndefined()
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, minItems: 2 }], { tags: ["a"] }),
+      ).toBe("Too few selections for form field: tags")
     }),
   )
 

@@ -85,6 +85,16 @@ describe("ModelRouteLimits.holdUntil", () => {
   test("skips values that are not numbers", () => {
     expect(ModelRouteLimits.holdUntil(snap({ remaining: { requests: "lots" }, reset: { requests: "1s" } }), at)).toBe(0)
   })
+
+  test("skips blank remaining values instead of reading them as zero", () => {
+    const blank = snap({ limit: { requests: "100" }, remaining: { requests: "" }, reset: { requests: "60s" } })
+    expect(ModelRouteLimits.windows(blank)).toEqual([])
+    expect(ModelRouteLimits.holdUntil(blank, at)).toBe(0)
+    const whitespace = snap({ remaining: { requests: "  " } })
+    expect(ModelRouteLimits.windows(whitespace)).toEqual([])
+    expect(ModelRouteLimits.holdUntil(whitespace, at)).toBe(0)
+    expect(ModelRouteLimits.holdUntil(snap({ remaining: { requests: "0" } }), at)).toBe(at + 60_000)
+  })
 })
 
 describe("ModelRouteLimits.retryHintFromMessage", () => {
@@ -130,6 +140,24 @@ describe("ModelRouteLimits.retryHintFromMessage", () => {
     // The header form agrees: a calendar-invalid timestamp states no reset.
     expect(ModelRouteLimits.resetMs("2026-04-31", at)).toBeUndefined()
     expect(ModelRouteLimits.resetMs("2026-02-30", at)).toBeUndefined()
+  })
+
+  test("treats hour-24 ISO date-times as unparseable instead of rolling into the next day", () => {
+    // V8 parses hour 24 as midnight of the following day; RFC 3339 time-hour is 00-23.
+    for (const value of [
+      "2026-01-01T24:00:00Z",
+      "2026-01-01T24:00:00.000Z",
+      "2026-01-01T24:00:00+05:00",
+      "2025-12-31T24:00:00Z",
+    ]) {
+      expect(ModelRouteLimits.parseAbsoluteTime(value)).toBeUndefined()
+      expect(ModelRouteLimits.resetMs(value, at)).toBeUndefined()
+      expect(ModelRouteLimits.resetAtFromMessage(`quota reset at ${value}`, at)).toBeUndefined()
+    }
+    // Valid boundary times still parse exactly as before.
+    for (const value of ["2026-01-01T23:59:59Z", "2026-01-01T00:00:00Z", "2024-02-29T23:59:59Z"]) {
+      expect(ModelRouteLimits.parseAbsoluteTime(value)).toBe(Date.parse(value))
+    }
   })
 
   test("reads decimal and compound relative waits as the total", () => {

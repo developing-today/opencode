@@ -38,6 +38,18 @@ describe("client paths", () => {
     expect(truncateMiddle("abcdefghijklmnop", 9)).toBe("abcd…mnop")
   })
 
+  test("getFilenameTruncated never exceeds the requested length at widths 0-2", () => {
+    expect(getFilenameTruncated("/repo/long-component-name.tsx", 0)).toBe("")
+    expect(getFilenameTruncated("/repo/long-component-name.tsx", -1)).toBe("")
+    expect(getFilenameTruncated("/repo/long-component-name.tsx", 1)).toBe("…")
+    expect(getFilenameTruncated("/repo/long-component-name.tsx", 2)).toBe("l…")
+    expect(getFilenameTruncated("/repo/README", 0)).toBe("")
+    expect(getFilenameTruncated("/repo/README", 1)).toBe("…")
+    expect(getFilenameTruncated("/repo/README", 2)).toBe("R…")
+    expect(getFilenameTruncated("/repo/a.verylongext", 1)).toBe("…")
+    expect(getFilenameTruncated("/repo/a.verylongext", 2)).toBe("a…")
+  })
+
   test("truncateMiddle never exceeds the requested length at widths 0-2", () => {
     expect(truncateMiddle("abcdefghijklmnop", 0)).toBe("")
     expect(truncateMiddle("abcdefghijklmnop", 1)).toBe("…")
