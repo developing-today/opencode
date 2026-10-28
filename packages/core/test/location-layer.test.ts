@@ -547,9 +547,14 @@ describe("LocationServiceMap", () => {
                 providers: { pool: { name: "Pool", package: "test-provider", models: { one: {}, two: {} } } },
                 experimental: {
                   model_routes: {
-                    inner: { targets: ["pool/one", "pool/two"], selection: "weighted", weights: { "pool/two": 3 } },
+                    inner: {
+                      targets: [{ model: "pool/one", cache_format: "alibaba" }, "pool/two"],
+                      selection: "weighted",
+                      weights: { "pool/two": 3 },
+                    },
                     best: {
                       name: "Best",
+                      cache_format: "anthropic",
                       targets: ["opencode-route/inner", { model: "pool/one", defaultVariant: "max" }],
                       selection: "round-robin",
                       attempts: 2,
@@ -596,6 +601,8 @@ describe("LocationServiceMap", () => {
           expect(definition?.budgets?.[0]).toMatchObject({ requestsPerDay: 10, softLimit: 0.8 })
           expect(definition?.nodes.map((node) => node.selection)).toEqual(["round-robin", "weighted"])
           expect(definition?.nodes[1].weights).toEqual([1, 3])
+          // The route-level format reaches the leaf that inherits it; a target's own declaration wins.
+          expect(definition?.targetCacheFormats).toEqual([{ cacheFormat: "alibaba" }, { cacheFormat: "anthropic" }])
           const without = yield* inspect(plain.path)
           expect(without.providers.map(String)).not.toContain("opencode-route")
           expect(without.tools).not.toContain("route_adjust")

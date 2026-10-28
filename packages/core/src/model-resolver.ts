@@ -3,6 +3,7 @@ export * as ModelResolver from "./model-resolver.js"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { HttpOptions, LanguageModel, mergeHttpOptions, ProviderConfigurationError } from "@opencode/ai"
 import { Auth } from "@opencode/ai/route"
+import type { CacheFormat } from "@opencode/schema/model-compatibility"
 import { Context, Effect, Layer, Option, Result, Schema, Struct } from "effect"
 import { AISDK } from "./aisdk.js"
 import { Credential } from "./credential.js"
@@ -404,7 +405,11 @@ export const layer = Layer.effect(
     const npm = yield* Npm.Service
     const aisdk = yield* AISDK.Service
     const config = yield* Effect.serviceOption(Config.Service)
-    const load = Effect.fn("ModelResolver.resolveModel")(function* (selected: Info, variant?: VariantID) {
+    const load = Effect.fn("ModelResolver.resolveModel")(function* (
+      selected: Info,
+      variant?: VariantID,
+      cacheFormat?: CacheFormat,
+    ) {
       const provider = yield* providers.get(selected.providerID)
       const connection = yield* integrations.connection.active(
         provider?.integrationID ?? Integration.ID.make(selected.providerID),
@@ -413,6 +418,11 @@ export const layer = Layer.effect(
       const selectedVariant = yield* withVariant(selected, variant)
       const runtimeInfo: RuntimeInfo = {
         ...selectedVariant,
+        // A route target's declared cache format overrides the model's own compatibility for this
+        // resolution only; the catalog model stays as configured.
+        ...(cacheFormat === undefined
+          ? {}
+          : { compatibility: { ...selectedVariant.compatibility, cacheFormat } }),
         settings: Provider.mergeOverlay(provider?.settings, Provider.modelSettings(selectedVariant.settings)),
       }
       const model = yield* fromCatalogModel(runtimeInfo, credential, {
@@ -501,7 +511,9 @@ export const layer = Layer.effect(
               ? (targetVariants?.map?.[requestedVariant] ??
                 (source.variants.some((item) => item.id === requestedVariant) ? requestedVariant : undefined))
               : targetVariants?.default
-          const resolved = yield* Effect.result(load(source, target.variant ?? mapped))
+          const resolved = yield* Effect.result(
+            load(source, target.variant ?? mapped, definition.targetCacheFormats?.[index]?.cacheFormat),
+          )
           if (Result.isFailure(resolved)) {
             ModelRoute.failed(target, definition.health, now)
             lastError = resolved.failure

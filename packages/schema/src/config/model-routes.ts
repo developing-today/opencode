@@ -1,6 +1,7 @@
 export * as ConfigModelRoutes from "./model-routes.js"
 
 import { Schema } from "effect"
+import { CacheFormat } from "../model-compatibility.js"
 import { ConfigModel } from "./model.js"
 import { optional, PositiveInt } from "../schema.js"
 
@@ -30,6 +31,7 @@ const TargetObject = Schema.Struct({
     description:
       "Epoch milliseconds after which this target leaves the route. Used for time-limited pool membership; takes effect when the configuration reloads.",
   }).pipe(optional),
+  cache_format: CacheFormat.pipe(optional),
   window: Schema.Union([
     Schema.String,
     Schema.Struct({
@@ -221,6 +223,7 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
   targets: Schema.Array(Target).annotate({
     description: "Ordered provider/model references. A route may include another route reference.",
   }),
+  cache_format: CacheFormat.pipe(optional),
   health: Health.pipe(optional),
   budgets: Schema.Record(Schema.String, Budget)
     .annotate({

@@ -27,6 +27,7 @@ const route = (
         model: string
         until?: number
         variants?: Record<string, string>
+        cache_format?: string
         window?: string | { name: string; invert?: boolean }
       }
   )[],
@@ -397,5 +398,57 @@ describe("named windows", () => {
     expect(nodes[1].children).toEqual([{ leaf: 0 }])
     expect(nodes[2].children).toEqual([{ leaf: 1 }])
     expect(nodes[3].children).toEqual([{ leaf: 0 }])
+  })
+})
+
+describe("cache formats", () => {
+  test("a route-level cache_format reaches every leaf", () => {
+    const { leaves } = expand(
+      "r",
+      route(["anthropic/claude-opus-4-1", "openai/gpt-6-luna"], { cache_format: "anthropic" }),
+      definitions,
+    )
+    expect(leaves.map((leaf) => leaf.cacheFormat)).toEqual(["anthropic", "anthropic"])
+  })
+
+  test("a target-level cache_format overrides the route-level one", () => {
+    const { leaves } = expand(
+      "r",
+      route(
+        [{ model: "anthropic/claude-opus-4-1", cache_format: "alibaba" }, "openai/gpt-6-luna"],
+        { cache_format: "anthropic" },
+      ),
+      definitions,
+    )
+    expect(leaves.map((leaf) => leaf.cacheFormat)).toEqual(["alibaba", "anthropic"])
+  })
+
+  test("a nested route's own cache_format wins over the one it inherits", () => {
+    const routes = new Map<string, ConfigModelRoutes.Route>([
+      [
+        "inner",
+        {
+          cache_format: "alibaba",
+          targets: [{ model: { providerID: "anthropic", model: "claude-opus-4-1" } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+      [
+        "r",
+        {
+          cache_format: "anthropic",
+          targets: [
+            { model: { providerID: "opencode-route", model: "inner" } },
+            { model: { providerID: "openai", model: "gpt-6-luna" } },
+          ],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+    ])
+    const { leaves } = expand("r", routes, definitions)
+    expect(leaves.map((leaf) => leaf.cacheFormat)).toEqual(["alibaba", "anthropic"])
+  })
+
+  test("leaves carry no cache format when neither the route nor the target declares one", () => {
+    const { leaves } = expand("r", route(["anthropic/claude-opus-4-1", "openai/gpt-6-luna"]), definitions)
+    expect(leaves.every((leaf) => leaf.cacheFormat === undefined)).toBe(true)
   })
 })

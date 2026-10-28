@@ -1,6 +1,7 @@
 export * as ModelRoute from "./model-route.js"
 
 import { Model } from "@opencode/schema/model"
+import { CacheFormat } from "@opencode/schema/model-compatibility"
 import { Provider } from "@opencode/schema/provider"
 import { Schema } from "effect"
 import { ModelRouteLimits } from "./model-route-limits.js"
@@ -27,6 +28,11 @@ const Policy = Schema.Struct({
 const TargetVariant = Schema.Struct({
   default: Model.VariantID.pipe(optional),
   map: Schema.Record(Schema.String, Model.VariantID).pipe(optional),
+})
+
+/** A leaf's declared prompt-cache format; empty means the target keeps its own compatibility. */
+const TargetCacheFormat = Schema.Struct({
+  cacheFormat: CacheFormat.pipe(optional),
 })
 
 const Mode = Schema.Literals(["ordered", "round-robin", "weighted"])
@@ -113,6 +119,8 @@ const Definition = Schema.Struct({
   id: Model.ID,
   targets: Schema.Array(Model.Ref),
   targetVariants: Schema.Array(TargetVariant),
+  /** Parallel to `targets`; the resolved prompt-cache format for each leaf, an empty object when unset. */
+  targetCacheFormats: Schema.Array(TargetCacheFormat).pipe(optional),
   health: Policy,
   attempts: Schema.Finite.pipe(optional),
   hedgeAfterMs: Schema.Finite.pipe(optional),

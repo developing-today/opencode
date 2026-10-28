@@ -4,6 +4,7 @@ import { define } from "@opencode/plugin/effect/plugin"
 import { Document, type Entry } from "@opencode/schema/config"
 import { ConfigModel } from "@opencode/schema/config/model"
 import { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
+import { CacheFormat } from "@opencode/schema/model-compatibility"
 import { Effect } from "effect"
 import { Config } from "../../config.js"
 import { Model } from "../../model.js"
@@ -29,6 +30,8 @@ type SourceModel = {
   /** Route-level variant → this target's variant. */
   readonly budget?: ModelRoute.Budget
   readonly variantMap?: Readonly<Record<string, Model.VariantID>>
+  /** Prompt-cache format in force for this leaf: its own declaration, else the route's. */
+  readonly cacheFormat?: CacheFormat
 }
 
 export const Plugin = define({
@@ -90,6 +93,9 @@ export const Plugin = define({
                 ...(target.defaultVariant ? { default: target.defaultVariant } : {}),
                 ...(target.variantMap ? { map: target.variantMap } : {}),
               })),
+              targetCacheFormats: expanded.map((target) =>
+                target.cacheFormat ? { cacheFormat: target.cacheFormat } : {},
+              ),
               health,
               nodes,
               ...(route.attempts !== undefined ? { attempts: route.attempts } : {}),
@@ -280,6 +286,7 @@ export function expand(
     routeID: string,
     inheritedVariant: Model.VariantID | undefined,
     trail: ReadonlySet<string>,
+    inheritedCacheFormat: CacheFormat | undefined,
   ): number | undefined => {
     if (trail.has(routeID)) return
     const current = routes.get(routeID)
@@ -310,7 +317,12 @@ export function expand(
       const ref = targetRef(spec.model)
       if (spec.until !== undefined && Date.now() >= spec.until) continue
       if (ref.providerID === ModelRoute.PROVIDER_ID) {
-        const child = visit(ref.id, ref.variant ?? inheritedVariant, nextTrail)
+        const child = visit(
+          ref.id,
+          ref.variant ?? inheritedVariant,
+          nextTrail,
+          spec.cache_format ?? current.cache_format ?? inheritedCacheFormat,
+        )
         if (child !== undefined) {
           const gate = gateFor("window" in spec ? spec.window : undefined, windows)
           attach({ node: child, ...(gate ? { gate } : {}) }, `${ModelRoute.PROVIDER_ID}/${ref.id}`)
@@ -360,6 +372,9 @@ export function expand(
         )
         leafByKey.set(key, result.length)
         attach({ leaf: result.length, ...(gate ? { gate } : {}) }, leafKey)
+        // A leaf's own cache_format wins, then the route that declared it, then an enclosing
+        // route's. The first route to reach a shared model fixes it for that leaf.
+        const cacheFormat = spec.cache_format ?? current.cache_format ?? inheritedCacheFormat
         // Budgets belong to the target: the outermost route that declares one wins, wherever the
         // target was first reached.
         const budget = plainBudget(
@@ -375,13 +390,14 @@ export function expand(
           fixedVariant: ref.variant !== undefined || inheritedVariant !== undefined,
           ...(defaultVariant ? { defaultVariant } : {}),
           ...(Object.keys(variantMap).length ? { variantMap } : {}),
+          ...(cacheFormat ? { cacheFormat } : {}),
         })
       }
     }
     return node.children.length > 0 ? nodeIndex : undefined
   }
 
-  visit(id, undefined, new Set())
+  visit(id, undefined, new Set(), undefined)
   return { leaves: result, nodes }
 }
 
