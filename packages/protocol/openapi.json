@@ -16017,6 +16017,9 @@
             },
             "description": "Ordered provider/model references. A route may include another route reference."
           },
+          "cache_format": {
+            "$ref": "#/components/schemas/Model.CacheFormat"
+          },
           "health": {
             "type": "object",
             "properties": {
@@ -16202,6 +16205,9 @@
                 "type": "integer",
                 "exclusiveMinimum": 0,
                 "description": "Epoch milliseconds after which this target leaves the route. Used for time-limited pool membership; takes effect when the configuration reloads."
+              },
+              "cache_format": {
+                "$ref": "#/components/schemas/Model.CacheFormat"
               },
               "window": {
                 "anyOf": [
@@ -20108,7 +20114,8 @@
       },
       "Model.CacheFormat": {
         "type": "string",
-        "enum": ["anthropic", "alibaba"]
+        "enum": ["anthropic", "alibaba"],
+        "description": "Prompt-cache marker syntax the endpoint accepts. Overrides the route default; both send `cache_control`, and `alibaba` skips tool definitions. A model route may set it per route or per target; a target's own value overrides the route's and nested routes inherit it."
       },
       "Model.Capabilities": {
         "type": "object",

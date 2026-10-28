@@ -112,6 +112,46 @@ describe("mini command", () => {
     expect(mergeNonInteractiveInput(undefined, "from stdin")).toBe("from stdin")
   })
 
+  test("logs before waiting for piped stdin to reach EOF", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return Response.json({
+          version: OPENCODE_VERSION,
+          pid: process.pid,
+          urls: [],
+          paths: { tmp: "/tmp/opencode" },
+        })
+      },
+    })
+    const child = Bun.spawn(
+      [process.execPath, "run", "src/index.ts", "--print-logs", "run", "--server", server.url.toString(), "hi"],
+      {
+        cwd: path.join(import.meta.dir, ".."),
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    )
+    const reader = child.stderr.getReader()
+    const decoder = new TextDecoder()
+    let stderr = ""
+
+    try {
+      while (!stderr.includes("Reading stdin until EOF")) {
+        const next = await reader.read()
+        if (next.done) break
+        stderr += decoder.decode(next.value)
+      }
+      expect(stderr).toContain("Reading stdin until EOF; redirect from /dev/null")
+    } finally {
+      await child.stdin.end()
+      server.stop(true)
+      await child.exited
+      reader.releaseLock()
+    }
+  })
+
   test("parses model variants from the model reference", () => {
     expect(JSON.stringify(parseRunModel("openrouter/openai/gpt-5#high"))).toBe(
       JSON.stringify({ model: { providerID: "openrouter", modelID: "openai/gpt-5" }, variant: "high" }),
