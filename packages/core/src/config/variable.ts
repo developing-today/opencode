@@ -30,23 +30,42 @@ type Substituted = {
   authored: Array<readonly [number, number]>
 }
 
-/** Whether a `//` comment starts before `index` on its line. String-aware: a `//` inside a
- * quoted string (a URL, say) is not a comment, so a live reference later on the line still
- * expands; a reference after a real comment is comment text even when code precedes the
- * comment on the same line. */
-const commented = (text: string, lineStart: number, index: number) => {
+/** Whether `index` sits inside a comment — a line comment or a block comment, on the
+ * same line or spanning lines. String-aware: comment markers inside a quoted string
+ * (a URL, say) are not comments, so a live reference after one still expands; a
+ * reference inside comment text stays literal even when code precedes the comment.
+ * Scans from the start of the text because a block comment covering `index` may have
+ * opened on an earlier line. */
+const commented = (text: string, index: number) => {
   let quoted = false
-  for (let i = lineStart; i < index; i++) {
+  let line = false
+  let block = false
+  for (let i = 0; i < index; i++) {
     const char = text[i]
+    if (line) {
+      if (char === "\n") line = false
+      continue
+    }
+    if (block) {
+      if (char === "*" && text[i + 1] === "/") {
+        block = false
+        i++
+      }
+      continue
+    }
     if (quoted) {
       if (char === "\\") i++
       else if (char === '"') quoted = false
       continue
     }
     if (char === '"') quoted = true
-    else if (char === "/" && text[i + 1] === "/") return true
+    else if (char === "/" && text[i + 1] === "/") line = true
+    else if (char === "/" && text[i + 1] === "*") {
+      block = true
+      i++
+    }
   }
-  return false
+  return line || block
 }
 
 /** Apply {env:VAR}, {env:VAR:-fallback} and {file:path} substitutions to config text. */
@@ -69,11 +88,10 @@ export const substitute = Effect.fn("ConfigVariable.substitute")(function* (inpu
     for (const match of input.text.matchAll(/\{env:([^}]+)\}/g)) {
       const token = match[1]
       push(input.text.slice(cursor, match.index), true)
-      // Same comment-line guard as the file pass below: a reference on a // comment line
+      // Same comment guard as the file pass below: a reference inside a comment
       // stays literal, so a commented-out example never expands — and a newline in the
       // value cannot break out of the comment into live config text.
-      const lineStart = input.text.lastIndexOf("\n", match.index - 1) + 1
-      if (commented(input.text, lineStart, match.index)) {
+      if (commented(input.text, match.index)) {
         push(match[0], true)
         cursor = match.index + match[0].length
         continue
@@ -115,8 +133,7 @@ const substituteFiles = Effect.fnUntraced(function* (input: SubstituteInput, sub
     // an env value or fallback stays literal, so env contents cannot read local files
     // into the config.
     const authored = substituted.authored.some(([start, end]) => index >= start && index + token.length <= end)
-    const lineStart = text.lastIndexOf("\n", index - 1) + 1
-    if (!authored || commented(text, lineStart, index)) {
+    if (!authored || commented(text, index)) {
       out += token
       cursor = index + token.length
       continue
