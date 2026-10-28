@@ -21,10 +21,15 @@ const normalizedHeaders = (headers: Headers.Headers) =>
   Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]))
 
 const retryAfterMs = (headers: Record<string, string>) => {
-  const millis = Number(headers["retry-after-ms"])
-  if (Number.isFinite(millis)) return Math.max(0, millis)
+  // A blank header value is absent, not an authored 0: Number("") === 0 would
+  // otherwise discard a valid retry-after carried by the same response.
+  const millisHeader = headers["retry-after-ms"]?.trim()
+  if (millisHeader) {
+    const millis = Number(millisHeader)
+    if (Number.isFinite(millis)) return Math.max(0, millis)
+  }
 
-  const value = headers["retry-after"]
+  const value = headers["retry-after"]?.trim()
   if (!value) return undefined
 
   const seconds = Number(value)

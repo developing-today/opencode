@@ -202,4 +202,27 @@ describe("RequestExecutor.responseRateLimit", () => {
   test("reads retry-after on its own", () => {
     expect(RequestExecutor.responseRateLimit({ "retry-after": "7" })).toMatchObject({ retryAfterMs: 7_000 })
   })
+
+  test("treats a blank retry-after-ms as absent and falls through to retry-after", () => {
+    expect(RequestExecutor.responseRateLimit({ "retry-after-ms": "", "retry-after": "7" })).toMatchObject({
+      retryAfterMs: 7_000,
+    })
+    expect(RequestExecutor.responseRateLimit({ "retry-after-ms": "  ", "retry-after": "7" })).toMatchObject({
+      retryAfterMs: 7_000,
+    })
+  })
+
+  test("treats a blank retry-after-ms alone as absent", () => {
+    expect(RequestExecutor.responseRateLimit({ "retry-after-ms": "" })).toBeUndefined()
+  })
+
+  test("treats a whitespace-only retry-after as absent", () => {
+    expect(RequestExecutor.responseRateLimit({ "retry-after": " " })).toBeUndefined()
+  })
+
+  test("still reads an authored retry-after-ms of 0 as 0", () => {
+    expect(RequestExecutor.responseRateLimit({ "retry-after-ms": "0", "retry-after": "7" })).toMatchObject({
+      retryAfterMs: 0,
+    })
+  })
 })
