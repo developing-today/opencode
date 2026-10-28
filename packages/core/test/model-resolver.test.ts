@@ -1672,7 +1672,60 @@ describe("ModelResolver routes", () => {
   const ordered = {
     nodes: [{ selection: "ordered", weights: [1, 1], children: [{ leaf: 0 }, { leaf: 1 }] }],
   }
+  const single = { nodes: [{ selection: "ordered", weights: [1], children: [{ leaf: 0 }] }] }
   const targetOf = (resolved: ModelResolver.Resolved) => String(resolved.routing?.target.providerID)
+
+  it.effect("carries each target's declared cache format into the resolved model's compatibility", () => {
+    ModelRoute.resetHealth()
+    const a = leaf("pa")
+    const b = leaf("pb")
+    const route = routed([a, b], {
+      ...ordered,
+      targetCacheFormats: [{ cacheFormat: "anthropic" }, { cacheFormat: "alibaba" }],
+    })
+    return withResolver([a, b], (resolver) =>
+      Effect.gen(function* () {
+        const first = yield* resolver.resolveModel(route)
+        expect(first.model.compatibility?.cacheFormat).toBe("anthropic")
+        const next = yield* first.routing!.fallback()
+        expect(next?.model.compatibility?.cacheFormat).toBe("alibaba")
+      }),
+    )
+  })
+
+  it.effect("a target's declared cache format overrides the model's own compatibility", () => {
+    ModelRoute.resetHealth()
+    const a = model(Provider.aisdk("@ai-sdk/openai"), {
+      providerID: Provider.ID.make("pa"),
+      modelID: "luna",
+      settings: { apiKey: "key" },
+      compatibility: { cacheFormat: "alibaba" },
+    })
+    const route = routed([a], { ...single, targetCacheFormats: [{ cacheFormat: "anthropic" }] })
+    return withResolver([a], (resolver) =>
+      Effect.gen(function* () {
+        const resolved = yield* resolver.resolveModel(route)
+        expect(resolved.model.compatibility?.cacheFormat).toBe("anthropic")
+      }),
+    )
+  })
+
+  it.effect("leaves compatibility unchanged when the route declares no cache format", () => {
+    ModelRoute.resetHealth()
+    const a = model(Provider.aisdk("@ai-sdk/openai"), {
+      providerID: Provider.ID.make("pa"),
+      modelID: "luna",
+      settings: { apiKey: "key" },
+      compatibility: { cacheFormat: "alibaba" },
+    })
+    const route = routed([a], { ...single })
+    return withResolver([a], (resolver) =>
+      Effect.gen(function* () {
+        const resolved = yield* resolver.resolveModel(route)
+        expect(resolved.model.compatibility?.cacheFormat).toBe("alibaba")
+      }),
+    )
+  })
 
   it.effect("skips a target that is over budget, cooling or skipped, and uses it as a last resort", () => {
     ModelRoute.resetHealth()
