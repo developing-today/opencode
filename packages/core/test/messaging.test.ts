@@ -202,6 +202,31 @@ describe("Messaging topics and presets", () => {
     }),
   )
 
+  it.effect("accepts prototype-named custom variables and lists configured prototype names", () =>
+    Effect.gen(function* () {
+      const tree = yield* family
+      const vars = yield* MessagingVars.Service
+      const messaging = yield* Messaging.Service
+      yield* vars.configure(new ConfigMessaging.Info({ vars: { toString: "configured" } }), "/project")
+      yield* messaging.setVar({ as: tree.root.id, name: "constructor", value: "ctor" })
+      yield* messaging.setVar({ as: tree.root.id, name: "__proto__", value: "proto" })
+      const listed = yield* messaging.vars({
+        as: tree.root.id,
+        values: true,
+        render: "{constructor}-{__proto__}",
+      })
+      expect(listed.rendered).toBe("ctor-proto")
+      expect(listed.vars.find((item) => item.name === "constructor")).toMatchObject({
+        kind: "custom",
+        scope: tree.root.id,
+      })
+      expect(listed.vars.find((item) => item.name === "__proto__")).toMatchObject({ kind: "custom" })
+      expect(listed.vars.find((item) => item.name === "toString")).toMatchObject({ kind: "constant" })
+      // Storing a variable named __proto__ must not mutate any prototype.
+      expect(Object.getPrototypeOf({})).toBe(Object.prototype)
+    }),
+  )
+
   it.effect("uses the messaging config of the acting session's location", () =>
     Effect.gen(function* () {
       const tree = yield* family
