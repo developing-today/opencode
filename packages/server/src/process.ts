@@ -74,7 +74,11 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
     socket.once("close", () => accepted.delete(socket))
   })
   bound.server.on("request", (request: IncomingMessage, response: ServerResponse) => {
-    if (new URL(request.url ?? "/", "http://localhost").pathname === EVENT_STREAM_PATH) return
+    // Event streams are open-ended: the drain does not wait for them, so they must not hold the linger either.
+    if (new URL(request.url ?? "/", "http://localhost").pathname === EVENT_STREAM_PATH) {
+      accepted.delete(request.socket)
+      return
+    }
     inFlight.add(response)
     response.once("close", () => inFlight.delete(response))
     // A draining process closes each connection after its current response, so clients reconnect to the successor.
