@@ -426,7 +426,11 @@ describe("Git objects", () => {
 
         expect((yield* git.tree.files({ repository, from: trees[0]!, to: trees.at(-1)! })).length).toBe(2100 + 16)
       }),
-    { timeout: 60_000 },
+    // The workload is pinned by the >2048 loose-object assertion above (2100 files, 16 sequential
+    // capture + pack batches, many git subprocess spawns): ~4s on a fast Linux machine, but it
+    // intermittently crosses 60s on Windows CI runners (#652), failing unit (windows) on unrelated
+    // PRs. Give this test only a budget with real headroom; no assertion or workload changes.
+    { timeout: 180_000 },
   )
 })
 
