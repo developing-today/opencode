@@ -240,6 +240,23 @@ describe("RequestExecutor.responseRateLimit", () => {
     expect(details?.retryAfterMs).toBeLessThanOrEqual(60_000)
   })
 
+  test("ignores calendar-invalid ISO retry-after dates (#713)", () => {
+    expect(RequestExecutor.responseRateLimit({ "retry-after": "2026-02-30T00:00:00Z" })).toBeUndefined()
+    expect(RequestExecutor.responseRateLimit({ "retry-after": "2026-13-01T00:00:00Z" })).toBeUndefined()
+    expect(RequestExecutor.responseRateLimit({ "retry-after": "2026-01-01T24:00:00Z" })).toBeUndefined()
+  })
+
+  test("keeps valid ISO retry-after dates (#713)", () => {
+    const details = RequestExecutor.responseRateLimit({
+      "retry-after": new Date(Date.now() + 60_000).toISOString(),
+    })
+    expect(details?.retryAfterMs).toBeGreaterThan(55_000)
+    expect(details?.retryAfterMs).toBeLessThanOrEqual(60_000)
+    expect(RequestExecutor.responseRateLimit({ "retry-after": "2015-10-21T07:28:00Z" })).toMatchObject({
+      retryAfterMs: 0,
+    })
+  })
+
   test("treats a blank retry-after-ms as absent and falls through to retry-after", () => {
     expect(RequestExecutor.responseRateLimit({ "retry-after-ms": "", "retry-after": "7" })).toMatchObject({
       retryAfterMs: 7_000,
