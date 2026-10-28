@@ -310,7 +310,8 @@ const layer = Layer.effect(
         const project = yield* projects.resolve(location.directory)
         // Governance is enforced before anything is created: a denied child
         // fails here and no `session.created` is ever published for it.
-        if (parent !== undefined)
+        let storedModel = input.model
+        if (parent !== undefined) {
           yield* assertModelAllowed({
             location,
             parent,
@@ -318,6 +319,23 @@ const layer = Layer.effect(
             model: input.model,
             override: input.subagentOverride,
           })
+          // A model-less child is checked against the governance chain
+          // (the child agent's configured default, then the parent's model),
+          // but the runner resolves a model-less session against the global
+          // default — a model governance never saw. Store the checked model
+          // on the child so the checked model is the model that runs (#507).
+          // switchAgent stays consistent the same way: its check receives
+          // the child's now-stored model explicitly.
+          if (storedModel === undefined) {
+            const { entries } = yield* GovernanceConfig.load(locations, location)
+            storedModel = ModelGovernance.checkedModel(entries, {
+              parent,
+              agent: input.agent,
+              model: input.model,
+              override: input.subagentOverride,
+            })
+          }
+        }
         const projected = yield* bus
           .publish(
             SessionEvent.Created,
@@ -336,11 +354,11 @@ const layer = Layer.effect(
               metadata: input.metadata ?? parent?.metadata,
               subagentPolicy: input.subagentPolicy,
               permissions: input.permissions ?? parent?.permissions,
-              model: input.model
+              model: storedModel
                 ? {
-                    id: Model.ID.make(input.model.id),
-                    providerID: input.model.providerID,
-                    variant: input.model.variant,
+                    id: Model.ID.make(storedModel.id),
+                    providerID: storedModel.providerID,
+                    variant: storedModel.variant,
                   }
                 : undefined,
             },
