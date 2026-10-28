@@ -282,4 +282,37 @@ describe("Speech", () => {
       expect(yield* finish!.audio.bytes()).toEqual(Uint8Array.from([1, 2, 3]))
     }),
   )
+
+  it.effect("does not manufacture ElevenLabs sample rates from malformed output formats", () =>
+    Effect.gen(function* () {
+      const generate = (outputFormat: string) =>
+        Speech.generate({ model: elevenlabs, text: "Hi", voice, providerOptions: { outputFormat } }).pipe(
+          Effect.provide(respond("\u0001\u0002", "application/octet-stream")),
+        )
+      for (const format of ["pcm_abc", "pcm_44.1k", "pcm_-44100", "pcm_0", "pcm_0x10", "pcm_1e5"]) {
+        const response = yield* generate(format)
+        expect(response.audio.info).toEqual({
+          format: "pcm",
+          encoding: "pcm_s16le",
+          sampleRate: undefined,
+          channels: 1,
+        })
+      }
+      for (const format of ["wav_abc", "wav_-44100", "wav_0", "wav_0x10", "wav_1e5", "mp3_abc", "opus_0"]) {
+        const response = yield* generate(format)
+        expect(response.audio.info?.sampleRate).toBeUndefined()
+      }
+      const controls: Array<[string, number | undefined]> = [
+        ["pcm_44100", 44100],
+        ["ulaw_8000", 8000],
+        ["mp3_44100_128", 44100],
+        ["opus_48000_32", 48000],
+        ["pcm", undefined],
+      ]
+      for (const [format, sampleRate] of controls) {
+        const response = yield* generate(format)
+        expect(response.audio.info?.sampleRate).toBe(sampleRate)
+      }
+    }),
+  )
 })
