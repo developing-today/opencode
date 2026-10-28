@@ -172,6 +172,19 @@ describe("ModelPlan store", () => {
     expect(() => ModelPlan.addNote({ text: "   " }, NOW, dir())).toThrow("some text")
   })
 
+  test("calendar-invalid dates are not rolled into the next month by Date.parse", () => {
+    const now = Date.parse(NOW)
+    // Controls: dates that do exist keep the daysSince they always had, including non-ISO forms.
+    expect(ModelPlan.daysSince("2026-02-28", now)).toBe(Math.floor((now - Date.parse("2026-02-28")) / 86_400_000))
+    expect(ModelPlan.daysSince("Jan 5 2026", now)).toBe(Math.floor((now - Date.parse("Jan 5 2026")) / 86_400_000))
+    expect(ModelPlan.daysSince("2026-03-02T00:00:00.000Z", now)).toBe(226)
+    // Feb 30 and month 13 would roll; hour 24 rolls in V8 rather than being Invalid.
+    expect(ModelPlan.daysSince("2026-02-30", now)).toBeNull()
+    expect(ModelPlan.daysSince("2026-02-30T00:00:00.000Z", now)).toBeNull()
+    expect(ModelPlan.daysSince("2026-13-01T00:00:00.000Z", now)).toBeNull()
+    expect(ModelPlan.daysSince("2026-10-27T24:00:00.000Z", now)).toBeNull()
+  })
+
   test("notes sort chronologically across timestamp formats and limits keep the newest", () => {
     const root = dir()
     ModelPlan.addNote({ text: "half second later" }, "2026-10-27T09:00:00.500Z", root)
@@ -213,6 +226,25 @@ describe("ModelPlan store", () => {
     expect(ModelPlan.readNotes({ since: "2026-12-01T00:00:00.000Z" }, root)).toEqual({ notes: [], skipped: 0 })
   })
 
+  test("a calendar-invalid since throws the same caller error as an unparseable one", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "a note" }, "2026-10-27T09:00:00Z", root)
+    const messageFor = (since: string) => {
+      try {
+        ModelPlan.readNotes({ since }, root)
+        return undefined
+      } catch (error) {
+        return (error as Error).message
+      }
+    }
+    const unparseable = messageFor("not-a-date")
+    expect(unparseable).toContain("is not a parseable date")
+    // Date.parse rolls each of these into a real date instead of returning NaN.
+    for (const since of ["2026-02-30", "2026-02-30T00:00:00Z", "2026-13-01T00:00:00Z", "2026-10-27T24:00:00Z"])
+      expect(messageFor(since)).toBe(unparseable?.replace('"not-a-date"', `"${since}"`))
+    expect(ModelPlan.readNotes({ since: "2026-02-28T00:00:00Z" }, root).notes).toHaveLength(1)
+  })
+
   test("a note whose timestamp does not parse is counted skipped under a since filter", () => {
     const root = dir()
     ModelPlan.addNote({ text: "bad timestamp" }, "not-a-date", root)
@@ -223,6 +255,33 @@ describe("ModelPlan store", () => {
     const unfiltered = ModelPlan.readNotes({}, root)
     expect(unfiltered.notes.map((note) => note.text)).toEqual(["bad timestamp", "good timestamp"])
     expect(unfiltered.skipped).toBe(0)
+  })
+
+  test("calendar-invalid note timestamps sort with the unparseable ones and are skipped under a since filter", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "rolled if trusted" }, "2026-02-30T00:00:00Z", root)
+    ModelPlan.addNote({ text: "earliest real" }, "2026-01-01T00:00:00Z", root)
+    ModelPlan.addNote({ text: "middle real" }, "2026-03-01T00:00:00Z", root)
+    // Date.parse would place "rolled if trusted" on Mar 2, between the two real notes.
+    expect(ModelPlan.readNotes({}, root).notes.map((note) => note.text)).toEqual([
+      "rolled if trusted",
+      "earliest real",
+      "middle real",
+    ])
+    const filtered = ModelPlan.readNotes({ since: "2026-01-15T00:00:00Z" }, root)
+    expect(filtered.notes.map((note) => note.text)).toEqual(["middle real"])
+    expect(filtered.skipped).toBe(1)
+  })
+
+  test("a calendar-invalid note timestamp does not embed the rolled instant in the note id", () => {
+    const root = dir()
+    const invalid = ModelPlan.addNote({ text: "impossible date" }, "2026-02-30T00:00:00Z", root)
+    const valid = ModelPlan.addNote({ text: "real date" }, "2026-02-28T00:00:00Z", root)
+    expect(invalid.at).toBe("2026-02-30T00:00:00Z")
+    expect(invalid.id.startsWith(`note_${Date.parse("2026-02-30T00:00:00Z").toString(36)}_`)).toBe(false)
+    expect(invalid.id.startsWith("note_2026-02-30T00:00:00Z_")).toBe(true)
+    expect(valid.id.startsWith(`note_${Date.parse("2026-02-28T00:00:00Z").toString(36)}_`)).toBe(true)
+    expect(ModelPlan.readNotes({}, root).notes[0]?.id).toBe(invalid.id)
   })
 
 
