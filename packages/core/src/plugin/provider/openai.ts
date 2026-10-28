@@ -176,6 +176,17 @@ function addressInUse(error: Error) {
   return "code" in error && error.code === "EADDRINUSE"
 }
 
+/** Poll interval for the device flow, in milliseconds. The server-supplied
+ * `interval` string is restricted to a plain unsigned decimal integer
+ * spelling (the #715/#724 grammar family): spellings like "0x10", "1e1",
+ * "5junk", or "2.9" are not reinterpreted — they take the 5-second fallback,
+ * and the result is clamped to at least 1 second (#771). */
+export const deviceIntervalMs = (raw: string): number => {
+  const text = raw.trim()
+  const parsed = /^\d+$/.test(text) ? Number.parseInt(text, 10) : Number.NaN
+  return Math.max(parsed || 5, 1) * 1000
+}
+
 const headless = (app: App.Info, integrationID: Integration.ID) =>
   ({
     integrationID,
@@ -194,7 +205,7 @@ const headless = (app: App.Info, integrationID: Integration.ID) =>
             body: JSON.stringify({ client_id: clientID }),
           },
         )
-        const interval = Math.max(Number.parseInt(device.interval) || 5, 1) * 1000
+        const interval = deviceIntervalMs(device.interval)
         return {
           mode: "auto" as const,
           url: `${issuer}/codex/device`,
