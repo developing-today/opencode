@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "mcpx-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1793216845,
+        "narHash": "sha256-uVduC0snfz0vkYVFHKWBBROM0lTKy8bT2kHw3tnvYo0=",
+        "owner": "developing-today",
+        "repo": "code",
+        "rev": "e91098f1193ac50ccd049d0876605ea27d8673c8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "developing-today",
+        "repo": "code",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1791487292,
@@ -18,6 +34,7 @@
     },
     "root": {
       "inputs": {
+        "mcpx-src": "mcpx-src",
         "nixpkgs": "nixpkgs"
       }
     }
