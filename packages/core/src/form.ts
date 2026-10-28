@@ -350,9 +350,14 @@ export function validateFields(fields: ReadonlyArray<Form.Field>) {
 }
 
 function validateWhen(when: Form.When, target: Form.Field) {
-  // External targets are boolean too: the only valid answer is the `true` acknowledgement.
+  // External targets are boolean too, but their only answerable value is the `true`
+  // acknowledgement (validateAnswer rejects everything else), so `eq`/`false` and
+  // `neq`/`true` are constant-false in `matches` and the gated field could never
+  // activate — the same never-answerable class as #705, #708 and #712.
   if (target.type === "boolean" || target.type === "external") {
     if (typeof when.value !== "boolean") return "Form field condition value must be a boolean"
+    if (target.type === "external" && (when.op === "eq" ? when.value === false : when.value === true))
+      return "Form field condition can never match the external field's acknowledgement"
     return
   }
   if (target.type === "number" || target.type === "integer") {

@@ -512,6 +512,33 @@ describe("Form", () => {
     }),
   )
 
+  it.effect("rejects when values an external target can never answer (#732)", () =>
+    Effect.sync(() => {
+      const gated = (value: boolean, op: "eq" | "neq" = "eq") =>
+        Form.validateFields([
+          { key: "a", type: "external", url: "https://example.com" },
+          { key: "b", type: "string", when: [{ key: "a", op, value }] },
+        ])
+
+      // The only answerable value is the `true` acknowledgement, so eq/false and
+      // neq/true are constant-false and the gated field could never activate.
+      expect(gated(false)).toBe("Form field condition can never match the external field's acknowledgement: b -> a")
+      expect(gated(true, "neq")).toBe(
+        "Form field condition can never match the external field's acknowledgement: b -> a",
+      )
+      // The two satisfiable combinations stay accepted.
+      expect(gated(true)).toBeUndefined()
+      expect(gated(false, "neq")).toBeUndefined()
+      // Boolean targets still accept both values.
+      expect(
+        Form.validateFields([
+          { key: "a", type: "boolean" },
+          { key: "b", type: "string", when: [{ key: "a", op: "eq", value: false }] },
+        ]),
+      ).toBeUndefined()
+    }),
+  )
+
   it.effect("rejects field definitions no answer can satisfy: too few options, integer-free range (#696)", () =>
     Effect.sync(() => {
       // A closed multiselect may only be answered with declared options, so
