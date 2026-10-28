@@ -270,7 +270,8 @@ function matches(when: Form.When, value: Form.Value | undefined) {
 }
 
 // Create-time validation of field definitions and `when` references: a field's own bounds must
-// be satisfiable (min <= max) and a string pattern must compile, and each `when` condition must point at an earlier field,
+// be satisfiable (min <= max, enough options for minItems, an integer inside an integer range)
+// and a string pattern must compile, and each `when` condition must point at an earlier field,
 // carry a value matching that field's type, and use a declared option when the field's options
 // are closed. Rejecting these at creation surfaces authoring mistakes to the caller instead of
 // silently never matching.
@@ -301,10 +302,24 @@ export function validateFields(fields: ReadonlyArray<Form.Field>) {
     if (field.type === "number" || field.type === "integer") {
       if (field.minimum !== undefined && field.maximum !== undefined && field.minimum > field.maximum)
         return `Form field has minimum greater than maximum: ${field.key}`
+      // An integer range that contains no integer (1.2..1.8) passes the pairwise check
+      // but no answer can ever satisfy it: integers below the range are too small,
+      // integers above it are too large, and non-integers are rejected outright.
+      if (
+        field.type === "integer" &&
+        field.minimum !== undefined &&
+        field.maximum !== undefined &&
+        Math.ceil(field.minimum) > Math.floor(field.maximum)
+      )
+        return `Form field range contains no integer: ${field.key}`
     }
     if (field.type === "multiselect") {
       if (field.minItems !== undefined && field.maxItems !== undefined && field.minItems > field.maxItems)
         return `Form field has minItems greater than maxItems: ${field.key}`
+      // A closed multiselect's answers may only contain declared options, so asking
+      // for more selections than there are options can never be satisfied.
+      if (!field.custom && field.minItems !== undefined && field.minItems > field.options.length)
+        return `Form field has minItems greater than its number of options: ${field.key}`
     }
     for (const when of field.when ?? []) {
       const target = earlier.get(when.key)

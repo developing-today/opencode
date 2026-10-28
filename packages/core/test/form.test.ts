@@ -377,13 +377,77 @@ describe("Form", () => {
           {
             key: "tags",
             type: "multiselect",
-            options: [{ value: "a", label: "A" }],
+            options: [
+              { value: "a", label: "A" },
+              { value: "b", label: "B" },
+            ],
             minItems: 2,
             maxItems: 2,
           },
         ]),
       ).toBeUndefined()
       expect(Form.validateFields([{ key: "code", type: "string", pattern: "^a+$" }])).toBeUndefined()
+    }),
+  )
+
+  it.effect("rejects field definitions no answer can satisfy: too few options, integer-free range (#696)", () =>
+    Effect.sync(() => {
+      // A closed multiselect may only be answered with declared options, so
+      // minItems beyond the option count is unsatisfiable.
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [
+              { value: "a", label: "A" },
+              { value: "b", label: "B" },
+            ],
+            minItems: 3,
+          },
+        ]),
+      ).toBe("Form field has minItems greater than its number of options: tags")
+      // An integer range containing no integer is unsatisfiable.
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 1.2, maximum: 1.8 }])).toBe(
+        "Form field range contains no integer: count",
+      )
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 0.5, maximum: 0.9 }])).toBe(
+        "Form field range contains no integer: count",
+      )
+      // Satisfiable controls still create: minItems within the option count, a
+      // custom multiselect (answers are not limited to the declared options),
+      // integer ranges containing an integer, equal integer bounds, one-sided
+      // integer bounds, and fractional bounds on a plain number field.
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [
+              { value: "a", label: "A" },
+              { value: "b", label: "B" },
+            ],
+            minItems: 2,
+          },
+        ]),
+      ).toBeUndefined()
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [{ value: "a", label: "A" }],
+            minItems: 3,
+            custom: true,
+          },
+        ]),
+      ).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 1, maximum: 2 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 1.2, maximum: 2.8 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 2, maximum: 2 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 1.2 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", maximum: 1.8 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "age", type: "number", minimum: 1.2, maximum: 1.8 }])).toBeUndefined()
     }),
   )
 
