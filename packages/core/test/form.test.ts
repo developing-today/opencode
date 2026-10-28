@@ -343,6 +343,65 @@ describe("Form", () => {
     }),
   )
 
+  it.effect("rejects when values a string target can never answer (#708)", () =>
+    Effect.sync(() => {
+      const gated = (target: Form.Field, value: string, op: "eq" | "neq" = "eq") =>
+        Form.validateFields([target, { key: "b", type: "string", when: [{ key: "a", op, value }] }])
+
+      // A date-format target can never answer "not-a-date", for either op.
+      expect(gated({ key: "a", type: "string", format: "date" }, "not-a-date")).toBe(
+        "Form field condition value must be a date: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", format: "date" }, "2026-02-30", "neq")).toBe(
+        "Form field condition value must be a date: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", format: "date" }, "2026-01-15")).toBeUndefined()
+      expect(gated({ key: "a", type: "string", format: "date-time" }, "2026-02-30T00:00:00Z")).toBe(
+        "Form field condition value must be a date-time: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", format: "date-time" }, "2026-01-15T00:00:00Z")).toBeUndefined()
+      expect(gated({ key: "a", type: "string", format: "email" }, "not-an-email")).toBe(
+        "Form field condition value must be an email: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", format: "email" }, "a@example.com")).toBeUndefined()
+      expect(gated({ key: "a", type: "string", format: "uri" }, "not a uri")).toBe(
+        "Form field condition value must be a URI: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", format: "uri" }, "https://example.com")).toBeUndefined()
+
+      // A patterned target can never answer a non-matching value.
+      expect(gated({ key: "a", type: "string", pattern: "^\\d+$" }, "abc")).toBe(
+        "Form field condition value must match the field's pattern: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", pattern: "^\\d+$" }, "123")).toBeUndefined()
+
+      // Length bounds bind condition values too.
+      expect(gated({ key: "a", type: "string", minLength: 5 }, "abc")).toBe(
+        "Form field condition value must be at least 5 characters: b -> a",
+      )
+      expect(gated({ key: "a", type: "string", minLength: 5 }, "abcde")).toBeUndefined()
+      expect(gated({ key: "a", type: "string", maxLength: 3 }, "abcdef")).toBe(
+        "Form field condition value must be at most 3 characters: b -> a",
+      )
+
+      // Closed-options targets stay decided by membership alone, even when an
+      // option value would fail the target's other constraints.
+      expect(
+        gated(
+          { key: "a", type: "string", minLength: 5, options: [{ value: "abc", label: "ABC" }] },
+          "abc",
+        ),
+      ).toBeUndefined()
+      // Custom string targets still get the checks: options do not bind answers.
+      expect(
+        gated(
+          { key: "a", type: "string", custom: true, minLength: 5, options: [{ value: "abc", label: "ABC" }] },
+          "abc",
+        ),
+      ).toBe("Form field condition value must be at least 5 characters: b -> a")
+    }),
+  )
+
   it.effect("rejects unsatisfiable field bounds and uncompilable patterns at creation (#681)", () =>
     Effect.sync(() => {
       expect(Form.validateFields([{ key: "name", type: "string", minLength: 10, maxLength: 5 }])).toBe(
