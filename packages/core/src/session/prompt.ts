@@ -228,7 +228,10 @@ function decodeDataURL(uri: string, label: string) {
 }
 
 function positiveInt(value: string | null) {
-  if (value === null) return
+  // Only plain unsigned decimal spellings are line numbers; anything else
+  // (hex, exponent, signed, fractional, whitespace-padded) is treated as absent
+  // rather than reinterpreted by Number().
+  if (value === null || !/^\d+$/.test(value)) return
   const parsed = Number(value)
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
 }
