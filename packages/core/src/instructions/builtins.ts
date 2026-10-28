@@ -40,7 +40,7 @@ const layer = Layer.effect(
                   `  Workspace root folder: ${location.project.directory}`,
                   `  Is directory a git repo: ${location.vcs?.type === "git" ? "yes" : "no"}`,
                   `  Platform: ${process.platform}`,
-                  `  Prefer ${global.tmp} over generic system temporary directories such as /tmp; it is pre-created and approved for external access.`,
+                  `  Prefer ${global.tmp} over generic system temporary directories such as /tmp; it is pre-created and approved for external access. When running Python with that directory as the working directory, prefer python3 -I so a stray stdlib-named .py file in the tmp root cannot shadow the standard library.`,
                   "</env>",
                 ].join("\n"),
               ),

@@ -55,12 +55,14 @@ import {
 import { SessionModelTransport } from "./session/model-transport.js"
 import { llmClient } from "./effect/app-node-platform.js"
 import { Snapshot } from "./snapshot.js"
+import { TmpStdlib } from "./tmp-stdlib.js"
 import { Session } from "./session/session.js"
 import { ModelGovernance } from "./session/model-governance.js"
 import { GovernanceConfig } from "./session/governance-config.js"
 import { SessionDiff, TurnRangeError } from "./session/diff.js"
 import { LocationServiceMap } from "./location-service-map.js"
 import { FSUtil } from "@opencode/util/fs-util"
+import { Global } from "@opencode/util/global"
 import type { EventLog } from "@opencode/schema/event-log"
 import type { FileDiff } from "@opencode/schema/file-diff"
 import { Job } from "./job.js"
@@ -276,6 +278,7 @@ const layer = Layer.effect(
     const jobs = yield* Job.Service
     const environments = yield* SessionEnvironment.Service
     const locations = yield* LocationServiceMap.Service
+    const global = yield* Global.Service
     const sessions = yield* Session.make()
     const isDurableSessionEvent = Schema.is(SessionEvent.Durable)
     // Governance inputs (config entries + provider catalog) come from the one
@@ -300,6 +303,9 @@ const layer = Layer.effect(
     const result = Service.of({
       create: Effect.fn("Session.create")(function* (input) {
         const sessionID = input.id ?? SessionSchema.ID.create()
+        // A stray stdlib-named .py file in the shared tmp root silently breaks
+        // Python started there. Warn once per tmp root; never touches files.
+        yield* TmpStdlib.checkOnce(global.tmp)
         const recorded = yield* store.get(sessionID)
         if (recorded) return recorded
         const parent = input.parentID ? yield* store.get(input.parentID) : undefined
@@ -552,6 +558,7 @@ export const node: LayerNode.Provider<Service, never, typeof Node.tags.values.gl
     SessionProjector.node,
     LocationServiceMap.node,
     FSUtil.node,
+    Global.node,
     App.node,
     MessagingVars.node,
   ],

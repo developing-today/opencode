@@ -50,7 +50,7 @@ describe("InstructionBuiltIns", () => {
           `  Workspace root folder: ${projectDirectory}`,
           "  Is directory a git repo: yes",
           `  Platform: ${process.platform}`,
-          `  Prefer ${temporary} over generic system temporary directories such as /tmp; it is pre-created and approved for external access.`,
+          `  Prefer ${temporary} over generic system temporary directories such as /tmp; it is pre-created and approved for external access. When running Python with that directory as the working directory, prefer python3 -I so a stray stdlib-named .py file in the tmp root cannot shadow the standard library.`,
           "</env>",
         ].join("\n"),
       )
