@@ -1585,6 +1585,48 @@ describe("Config", () => {
     ),
   )
 
+  it.live("does not expand references in /* */ block comments, but expands live ones after */ (#692)", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() => fs.writeFile(path.join(tmp.path, "secret.txt"), "TOPSECRET"))
+          const substitute = (text: string, env: Record<string, string> = {}) =>
+            ConfigVariable.substitute({ type: "virtual", source: "test", dir: tmp.path, text, env })
+
+          // A token inside a same-line block comment is comment text, in both passes.
+          const sameLine = yield* substitute('{ "v": "x" } /* example: {file:secret.txt} and {env:TOKEN} */', {
+            TOKEN: "abc",
+          })
+          expect(sameLine).toContain("{file:secret.txt}")
+          expect(sameLine).toContain("{env:TOKEN}")
+          expect(sameLine).not.toContain("TOPSECRET")
+
+          // A token on a middle line of a multi-line block comment is comment text too.
+          const multiLine = yield* substitute(
+            ["{", "  /* example:", "     {file:secret.txt} and {env:TOKEN}", "  */", '  "v": "x"', "}"].join("\n"),
+            { TOKEN: "abc" },
+          )
+          expect(multiLine).toContain("{file:secret.txt}")
+          expect(multiLine).toContain("{env:TOKEN}")
+          expect(multiLine).not.toContain("TOPSECRET")
+
+          // A live reference after the closing */ on the same line still expands.
+          const after = yield* substitute('/* note */ { "v": "{file:secret.txt}", "w": "{env:TOKEN}" }', {
+            TOKEN: "abc",
+          })
+          expect(after).toContain("TOPSECRET")
+          expect(after).toContain('"w": "abc"')
+
+          // Comment markers inside a quoted string are not comments.
+          const inString = yield* substitute('{ "u": "https://example.com/*", "v": "{env:TOKEN}" }', {
+            TOKEN: "abc",
+          })
+          expect(JSON.parse(inString)).toEqual({ u: "https://example.com/*", v: "abc" })
+        }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
+      ),
+    ),
+  )
+
   it.live("does not expand file references introduced by env values or fallbacks", () =>
     Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
       Effect.flatMap((tmp) =>
