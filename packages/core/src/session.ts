@@ -237,7 +237,10 @@ export interface Interface {
   readonly active: Effect.Effect<ReadonlySet<SessionSchema.ID>>
   readonly background: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError>
   readonly resume: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError | SessionRunner.RunError>
-  readonly interrupt: (sessionID: SessionSchema.ID, options?: { readonly resume?: boolean }) => Effect.Effect<boolean>
+  readonly interrupt: (
+    sessionID: SessionSchema.ID,
+    options?: { readonly resume?: boolean; readonly force?: boolean },
+  ) => Effect.Effect<boolean>
   readonly synthetic: (
     input: Parameters<Session.Handle["synthetic"]>[0] & { sessionID: SessionSchema.ID },
   ) => ReturnType<Session.Handle["synthetic"]>
@@ -296,6 +299,72 @@ const layer = Layer.effect(
           ),
         ),
       )
+
+    const stopPolicyOf = (recovery: Job.Recovery): Job.StopPolicy =>
+      recovery.kind === "subagent" ? (recovery.stopPolicy ?? "independent") : "independent"
+
+    const interruptOne = Effect.fn("Session.interruptOne")(function* (sessionID: SessionSchema.ID) {
+      const session = yield* store.get(sessionID)
+      if (!session) return false
+      const interrupted = yield* sessions.forSession(sessionID).interrupt()
+      const cancelled = yield* jobs.cancel(sessionID)
+      return interrupted || cancelled !== undefined
+    })
+
+    const cascadeStopDescendants = Effect.fn("Session.cascadeStop")(function* (rootID: SessionSchema.ID) {
+      const pending = yield* jobs.pendingBackground
+      const policyByChild = new Map<string, { policy: Job.StopPolicy; status: Job.Status }>()
+      for (const marker of pending) {
+        if (marker.recovery.kind !== "subagent") continue
+        policyByChild.set(marker.recovery.childSessionID, {
+          policy: stopPolicyOf(marker.recovery),
+          status: marker.status,
+        })
+      }
+      const visited = new Set<string>([rootID])
+      const queue: SessionSchema.ID[] = [rootID]
+      let stopped = false
+      while (queue.length > 0) {
+        const current = queue.shift() as SessionSchema.ID
+        const children = yield* store.list({ parentID: current })
+        for (const child of children) {
+          if (visited.has(child.id)) continue
+          visited.add(child.id)
+          const marker = policyByChild.get(child.id)
+          if (marker && marker.status === "running") {
+            // Background child: only cascade policy follows a plain interrupt.
+            // Independent and detached subtrees survive untouched.
+            if (marker.policy !== "cascade") continue
+            if (yield* interruptOne(child.id)) stopped = true
+            queue.push(child.id)
+            continue
+          }
+          // Foreground (or idle) child: tied to the parent's execution through
+          // the subagent tool's interrupt handler. Interrupt explicitly so a
+          // cascade also settles foreground work below a stopped background child.
+          if (yield* interruptOne(child.id)) stopped = true
+          queue.push(child.id)
+        }
+      }
+      return stopped
+    })
+
+    const forceStopDescendants = Effect.fn("Session.forceStop")(function* (rootID: SessionSchema.ID) {
+      const visited = new Set<string>([rootID])
+      const queue: SessionSchema.ID[] = [rootID]
+      let stopped = false
+      while (queue.length > 0) {
+        const current = queue.shift() as SessionSchema.ID
+        const children = yield* store.list({ parentID: current })
+        for (const child of children) {
+          if (visited.has(child.id)) continue
+          visited.add(child.id)
+          if (yield* interruptOne(child.id)) stopped = true
+          queue.push(child.id)
+        }
+      }
+      return stopped
+    })
 
     const result = Service.of({
       create: Effect.fn("Session.create")(function* (input) {
@@ -521,7 +590,20 @@ const layer = Layer.effect(
       }),
       resume: (sessionID) => sessions.forSession(sessionID).resume(),
       synthetic: (input) => sessions.forSession(input.sessionID).synthetic(input),
-      interrupt: (sessionID, options) => sessions.forSession(sessionID).interrupt(options),
+      interrupt: Effect.fn("Session.interrupt")(function* (
+        sessionID: SessionSchema.ID,
+        options?: { readonly resume?: boolean; readonly force?: boolean },
+      ) {
+        yield* result.get(sessionID)
+        const force = options?.force === true
+        const selfInterrupted = yield* sessions.forSession(sessionID).interrupt(
+          options?.resume !== undefined ? { resume: options.resume } : undefined,
+        )
+        const childInterrupted = yield* Effect.uninterruptible(
+          force ? forceStopDescendants(sessionID) : cascadeStopDescendants(sessionID),
+        )
+        return selfInterrupted || childInterrupted
+      }),
       revert: {
         stage: (input) => sessions.forSession(input.sessionID).revert.stage(input),
         clear: (sessionID) => sessions.forSession(sessionID).revert.clear(),

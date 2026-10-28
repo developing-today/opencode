@@ -368,8 +368,13 @@ export const make = Effect.fn("Session.make")(function* () {
       ),
   )
   const interrupt = Effect.fn("Session.interrupt")(
-    (sessionID: SessionSchema.ID, options?: { readonly resume?: boolean }) =>
-      Effect.uninterruptible(execution.interrupt(sessionID, options)),
+    (sessionID: SessionSchema.ID, options?: { readonly resume?: boolean; readonly force?: boolean }) =>
+      Effect.uninterruptible(
+        execution.interrupt(
+          sessionID,
+          options?.resume !== undefined ? { resume: options.resume } : undefined,
+        ),
+      ),
   )
   const stage = Effect.fn("Session.revert.stage")(function* (
     sessionID: SessionSchema.ID,
