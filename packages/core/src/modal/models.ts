@@ -84,7 +84,7 @@ export function derive(baseURL: string, remote: Snapshot, existing: readonly Mod
 
 function price(value: string | number | undefined, fallback: Money.USDPerMillionTokens) {
   if (value === undefined) return fallback
-  if (typeof value === "string" && value.trim() === "") return fallback
+  if (typeof value === "string" && !/^\d+(?:\.\d+)?$/.test(value.trim())) return fallback
   const parsed = Number(value) * 1_000_000
   return Number.isFinite(parsed) && parsed >= 0 ? Money.USDPerMillionTokens.make(parsed) : fallback
 }

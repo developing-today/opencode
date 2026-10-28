@@ -170,6 +170,35 @@ test("falls back to template cost for blank and negative pricing", () => {
   expect(free.get(Model.ID.make("free"))?.cost[0]).toMatchObject({ input: 0, output: 0, cache: { read: 1, write: 2 } })
 })
 
+test("falls back to template cost for radix-spelling pricing", () => {
+  const base = template("hf-base", {
+    cost: [
+      {
+        input: Money.USDPerMillionTokens.make(5),
+        output: Money.USDPerMillionTokens.make(10),
+        cache: { read: Money.USDPerMillionTokens.make(1), write: Money.USDPerMillionTokens.make(2) },
+      },
+    ],
+  })
+
+  const radix = ModalModels.derive(
+    "https://modal.example",
+    [
+      {
+        id: "radix",
+        hugging_face_id: "hf-base",
+        pricing: { prompt: "0x10", completion: "0b101", input_cache_read: "0o17" },
+      },
+    ],
+    [base],
+  )
+  expect(radix.get(Model.ID.make("radix"))?.cost[0]).toMatchObject({
+    input: 5,
+    output: 10,
+    cache: { read: 1, write: 2 },
+  })
+})
+
 test("throws on proxy failure so the plugin can fail soft", async () => {
   const server = Bun.serve({
     port: 0,
