@@ -194,6 +194,28 @@ describe("ModelUsage", () => {
     })
   })
 
+  test("days keep providers whose id collides with Object.prototype members", () => {
+    const days = ModelUsage.dayReports([
+      { day: "2026-10-13", providerID: "__proto__", modelID: "a", ...totals({ requests: 7, costUsd: 1 }) },
+      { day: "2026-10-13", providerID: "__proto__", modelID: "a", ...totals({ requests: 1, costUsd: 0.5 }) },
+      { day: "2026-10-13", providerID: "constructor", modelID: "b", ...totals({ requests: 5, costUsd: 2 }) },
+      { day: "2026-10-13", providerID: "toString", modelID: "c", ...totals({ requests: 3, costUsd: 3 }) },
+      { day: "2026-10-13", providerID: "anthropic", modelID: "d", ...totals({ requests: 2, costUsd: 4 }) },
+    ])
+    const [day] = days
+    expect(day?.requests).toBe(18)
+    expect(Object.keys(day?.providers ?? {})).toEqual(["__proto__", "constructor", "toString", "anthropic"])
+    // Each default totals() row meters 150 (100 input + 50 output).
+    expect(day?.providers["__proto__"]).toEqual({ requests: 8, metered: 300, costUsd: 1.5 })
+    expect(day?.providers["constructor"]).toEqual({ requests: 5, metered: 150, costUsd: 2 })
+    expect(day?.providers["toString"]).toEqual({ requests: 3, metered: 150, costUsd: 3 })
+    expect(day?.providers["anthropic"]).toEqual({ requests: 2, metered: 150, costUsd: 4 })
+    const serialised = JSON.parse(JSON.stringify(day?.providers))
+    expect(Object.keys(serialised)).toEqual(["__proto__", "constructor", "toString", "anthropic"])
+    expect(serialised["__proto__"]).toEqual({ requests: 8, metered: 300, costUsd: 1.5 })
+    expect(serialised["constructor"]).toEqual({ requests: 5, metered: 150, costUsd: 2 })
+  })
+
   test("a plan window reports what it has used, its percent and what remains", () => {
     const plan = {
       id: "anthropic-max",

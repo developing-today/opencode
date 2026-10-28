@@ -243,17 +243,23 @@ export const dayReports = (rows: readonly DayRow[]): DayReport[] => {
   const days = new Map<string, DayRow[]>()
   for (const row of rows) days.set(row.day, [...(days.get(row.day) ?? []), row])
   return [...days].map(([day, dayRows]) => {
-    const providers: Record<string, { requests: number; metered: number; costUsd: number }> = {}
+    const providers = new Map<string, { requests: number; metered: number; costUsd: number }>()
     for (const row of dayRows) {
-      const current = providers[row.providerID] ?? { requests: 0, metered: 0, costUsd: 0 }
-      providers[row.providerID] = {
+      const current = providers.get(row.providerID) ?? { requests: 0, metered: 0, costUsd: 0 }
+      providers.set(row.providerID, {
         requests: current.requests + row.requests,
         metered: current.metered + metered(row),
         costUsd: current.costUsd + row.costUsd,
-      }
+      })
     }
     const total = sum(dayRows)
-    return { day, requests: total.requests, metered: metered(total), costUsd: total.costUsd, providers }
+    return {
+      day,
+      requests: total.requests,
+      metered: metered(total),
+      costUsd: total.costUsd,
+      providers: Object.fromEntries(providers),
+    }
   })
 }
 
