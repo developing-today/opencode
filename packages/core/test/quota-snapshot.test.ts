@@ -118,6 +118,27 @@ describe("QuotaSnapshot", () => {
     expect(rolling.resetAt).toBeNull()
   })
 
+  test("calendar-invalid explicit resetAt values yield null instead of a rolled-over reset", () => {
+    for (const resetAt of ["2026-02-30T00:00:00.000Z", "2026-02-29T00:00:00.000Z", "2026-04-31T12:00:00.000Z"]) {
+      const snapshot = QuotaSnapshot.derive(
+        { plan, window: { ...window, resetAt } as ModelPlan.QuotaWindow, totals: totals(), observedAt: now },
+        { now },
+      )
+      expect(snapshot.resetAt).toBeNull()
+    }
+
+    const leapDay = QuotaSnapshot.derive(
+      {
+        plan,
+        window: { ...window, resetAt: "2024-02-29T00:00:00.000Z" } as ModelPlan.QuotaWindow,
+        totals: totals(),
+        observedAt: now,
+      },
+      { now },
+    )
+    expect(leapDay.resetAt).toBe(Date.parse("2024-02-29T00:00:00.000Z"))
+  })
+
   test("a daily rule with out-of-range components yields null instead of a rolled-over reset", () => {
     for (const resetRule of ["daily 25:99 UTC", "daily 12:60 UTC", "daily 24:30 UTC"]) {
       const snapshot = QuotaSnapshot.derive(
