@@ -3,10 +3,18 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    # mcpx source: developing-today/code is the canonical home of mcpx
+    # (pkgs/mcpx). Used as a plain source tree (flake = false) so this
+    # flake does not evaluate that repo's flake-parts graph; the pin in
+    # flake.lock is the mcpx version this build ships.
+    mcpx-src = {
+      url = "github:developing-today/code";
+      flake = false;
+    };
   };
 
   outputs =
-    { self, nixpkgs, ... }:
+    { self, nixpkgs, mcpx-src, ... }:
     let
       systems = [
         "aarch64-linux"
@@ -41,9 +49,10 @@
             };
           in
           rec {
+            mcpx = final.callPackage "${mcpx-src}/pkgs/mcpx/package.nix" { };
             opencode = final.callPackage ./nix/opencode.nix {
               inherit node_modules;
-              mcpx = final.mcpx or null;
+              inherit mcpx;
             };
             opencode-desktop = final.callPackage ./nix/desktop.nix {
               inherit opencode;
@@ -60,9 +69,10 @@
         in
         rec {
           default = opencode;
+          mcpx = pkgs.callPackage "${mcpx-src}/pkgs/mcpx/package.nix" { };
           opencode = pkgs.callPackage ./nix/opencode.nix {
             inherit node_modules;
-            mcpx = pkgs.mcpx or null;
+            inherit mcpx;
           };
           opencode-desktop = pkgs.callPackage ./nix/desktop.nix {
             inherit opencode;
