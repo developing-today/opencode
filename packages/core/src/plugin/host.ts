@@ -25,7 +25,7 @@ import { PersistentPty } from "../persistent-pty.js"
 import { Provider } from "../provider.js"
 import { Reference } from "../reference.js"
 import { Rpc } from "../rpc.js"
-import { AbsolutePath, PositiveInt, type DeepMutable } from "../schema.js"
+import { AbsolutePath, type DeepMutable } from "../schema.js"
 import { Skill } from "../skill.js"
 import { Tool } from "../tool.js"
 import { Workspace } from "../workspace.js"
@@ -591,10 +591,9 @@ export const make = Effect.fn("PluginHost.make")(function* (
       list: Effect.fn("PluginHost.session.list")(function* (input) {
         const query: SessionListInput = input ?? {}
         // A cursor replaces the request filters, matching the HTTP handler: it already embeds them.
-        const filter = withoutAnchor(
-          query.cursor === undefined ? query : yield* decodeSessionListCursor(query.cursor),
-        )
-        const { data } = yield* sessions.list(sessionListInput(filter, query.limit))
+        const decoded = query.cursor === undefined ? undefined : yield* decodeSessionListCursor(query.cursor)
+        const filter = withoutAnchor(decoded ?? query)
+        const { data } = yield* sessions.list(sessionListInput(filter, query.limit, decoded?.anchor))
         const first = data[0]
         const last = data.at(-1)
         return {
@@ -723,15 +722,19 @@ export function storage(kv: KV.Interface, pluginID: string): Plugin.Context["sto
   }
 }
 
-function sessionListInput(filter: SessionListFilter, limit: number | undefined): Session.ListInput {
+function sessionListInput(
+  filter: SessionListFilter,
+  limit: number | undefined,
+  anchor?: Session.ListAnchor,
+): Session.ListInput {
   const { directory, project, subpath, ...rest } = filter
-  const bounded = limit as PositiveInt | undefined
+  const bounded = limit
   // The store applies every present scope condition; keep them all instead of picking one.
   if (directory !== undefined && project !== undefined)
-    return { ...rest, directory, project, subpath, limit: bounded } as Session.ListInput
-  if (directory !== undefined) return { ...rest, directory, limit: bounded }
-  if (project !== undefined) return { ...rest, project, subpath, limit: bounded }
-  return { ...rest, limit: bounded }
+    return { ...rest, directory, project, subpath, limit: bounded, anchor } as Session.ListInput
+  if (directory !== undefined) return { ...rest, directory, limit: bounded, anchor }
+  if (project !== undefined) return { ...rest, project, subpath, limit: bounded, anchor }
+  return { ...rest, limit: bounded, anchor }
 }
 
 function withoutAnchor(filter: SessionListFilter | DecodedSessionListCursor): SessionListFilter {
