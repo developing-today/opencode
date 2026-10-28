@@ -62,6 +62,10 @@ export const parseAbsoluteTime = (text: string): number | undefined => {
   probe.setUTCFullYear(year, month - 1, day)
   if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day)
     return undefined
+  // V8 rolls hour 24 into the next day instead of returning NaN (minutes/seconds 60+ are
+  // Invalid), so an ISO time part must not carry hour > 23 (RFC 3339 time-hour is 00-23).
+  const time = /[T ](\d{2}):\d{2}/i.exec(text)
+  if (time && Number(time[1]) > 23) return undefined
   return date
 }
 
