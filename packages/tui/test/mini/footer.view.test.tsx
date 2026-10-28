@@ -119,9 +119,11 @@ function subagent(input: {
   label: string
   description: string
   status?: FooterSubagentTab["status"]
+  parentID?: string
 }) {
   return {
     sessionID: input.sessionID,
+    parentID: input.parentID,
     label: input.label,
     description: input.description,
     status: input.status ?? "running",
@@ -1218,6 +1220,56 @@ test("direct subagent panel toggles between active and inactive subagents", asyn
     expect(inactive).toContain("Write migration plan")
     expect(inactive).toContain("done")
     expect(inactive).toContain("tab show active")
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("direct subagent panel nests grandchildren under the session that started them", async () => {
+  const [tabs] = createSignal([
+    subagent({ sessionID: "s-root", label: "Explore", description: "Inspect auth flow" }),
+    subagent({ sessionID: "s-child", parentID: "s-root", label: "General", description: "Write migration plan" }),
+    subagent({ sessionID: "s-grandchild", parentID: "s-child", label: "Build", description: "Run the migration" }),
+  ])
+  const [current] = createSignal<string | undefined>("s-grandchild")
+
+  const app = await testRender(
+    () => (
+      <box width={100} height={RUN_SUBAGENT_PANEL_ROWS}>
+        <RunSubagentSelectBody
+          theme={() => RUN_THEME_FALLBACK.footer}
+          tabs={tabs}
+          current={current}
+          onClose={() => {}}
+          onSelect={() => {}}
+        />
+      </box>
+    ),
+    { width: 100, height: RUN_SUBAGENT_PANEL_ROWS + 1 },
+  )
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+    const list = panelMenu(app.renderer.root)
+    const root = frame.indexOf("Inspect auth flow")
+    const child = frame.indexOf("Write migration plan")
+    const grandchild = frame.indexOf("Run the migration")
+
+    expect(root).toBeGreaterThanOrEqual(0)
+    expect(child).toBeGreaterThan(root)
+    expect(grandchild).toBeGreaterThan(child)
+    expect(frame).toContain("└─ Write migration plan")
+    expect(frame).toContain("└─ Run the migration")
+    expectPaletteList(list, 2)
+
+    // Search still finds a nested row by its own text.
+    await app.mockInput.typeText("migration")
+    await app.renderOnce()
+    const searched = app.captureCharFrame()
+    expect(searched).toContain("Write migration plan")
+    expect(searched).toContain("Run the migration")
+    expect(searched).not.toContain("Inspect auth flow")
   } finally {
     app.renderer.destroy()
   }
