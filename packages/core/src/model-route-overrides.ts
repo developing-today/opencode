@@ -75,11 +75,25 @@ export const parse = (value: unknown): Override[] => {
     const routes = strings(field(item, "routes"))
     const fixed = field(item, "fixed") !== false
     const factorValue = field(item, "factor")
-    const factor =
-      typeof factorValue === "number" && Number.isFinite(factorValue) && factorValue > 0 ? factorValue : undefined
     const weightValue = field(item, "weight")
-    const weight =
-      typeof weightValue === "number" && Number.isFinite(weightValue) && weightValue > 0 ? weightValue : undefined
+    // For `prefer`, a factor/weight that is present but not positive-finite is malformed,
+    // not absent: absent means the default PREFERRED_FACTOR lift in routing, so keeping
+    // the entry would silently turn a written factor: 0 into that lift — the widening
+    // shape of #536/#570, one field over. The schema surface defines these fields as
+    // PositiveFinite, so the entry is dropped instead (#662). Factor/weight mean
+    // nothing for the other actions, so there the fields are simply ignored as
+    // before — dropping an `avoid` entry over an irrelevant field would discard a
+    // user instruction that was never widened by it.
+    const positiveFinite = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined
+    if (
+      action === "prefer" &&
+      ((factorValue !== undefined && positiveFinite(factorValue) === undefined) ||
+        (weightValue !== undefined && positiveFinite(weightValue) === undefined))
+    )
+      return []
+    const factor = positiveFinite(factorValue)
+    const weight = positiveFinite(weightValue)
     const text = field(item, "text")
     const source = field(item, "source")
     const createdAt = field(item, "createdAt")
