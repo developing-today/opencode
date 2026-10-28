@@ -95,3 +95,17 @@ jobs:
           else
             gh issue create --title "$title" --body "The daily Jules upstream-sync workflow failed: ${run_url}. Jules performs this sync itself, so a workflow failure means Jules could not complete it (an unresolvable merge conflict, an API failure, or a failed validation after its PR). Per Drew's escalation chain (2026-10-28), the Muse repo tasks take over from here: reproduce the upstream merge in a laptop worktree, resolve conflicts preserving both sides' features per the workflow prompt, verify, and land the sync as a PR. This issue is maintained by the jules-daily-upstream-sync workflow: repeat failures comment here; close it once a sync run succeeds."
           fi
+
+      - name: Close the sync failure issue on success
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -u
+          title="chore(deps): automated upstream sync failing"
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          number=$(gh issue list --state open --search "\"$title\" in:title" --limit 100 --json number,title | jq -r --arg title "$title" '.[] | select(.title == $title) | .number' | head -n 1)
+          if [ -n "${number}" ]; then
+            gh issue close "${number}" --comment "Upstream sync succeeded: ${run_url}. Closing as promised in the tracking issue body; a later failure will open a fresh tracking issue."
+          fi
