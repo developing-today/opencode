@@ -160,6 +160,18 @@ describe("ModelPlan store", () => {
     expect(ModelPlan.readNotes({ limit: 0 }, root).skipped).toBe(1)
   })
 
+  test("staleness counts whole days without going negative, and a blank note is refused", () => {
+    const now = Date.parse(NOW)
+    expect(ModelPlan.daysSince("2026-10-04", now)).toBe(10)
+    expect(ModelPlan.daysSince(new Date(now - 60 * 60 * 1000).toISOString(), now)).toBe(0)
+    expect(ModelPlan.daysSince(new Date(now - 25 * 60 * 60 * 1000).toISOString(), now)).toBe(1)
+    expect(ModelPlan.daysSince(new Date(now + 60 * 60 * 1000).toISOString(), now)).toBe(0)
+    expect(ModelPlan.daysSince(new Date(now + 10 * 86_400_000).toISOString(), now)).toBe(0)
+    expect(ModelPlan.daysSince(undefined, now)).toBeNull()
+    expect(ModelPlan.daysSince("not a date", now)).toBeNull()
+    expect(() => ModelPlan.addNote({ text: "   " }, NOW, dir())).toThrow("some text")
+  })
+
   test("notes sort chronologically across timestamp formats and limits keep the newest", () => {
     const root = dir()
     ModelPlan.addNote({ text: "half second later" }, "2026-10-27T09:00:00.500Z", root)
@@ -213,11 +225,6 @@ describe("ModelPlan store", () => {
     expect(unfiltered.skipped).toBe(0)
   })
 
-  test("staleness counts whole days, and a blank note is refused", () => {
-    expect(ModelPlan.daysSince("2026-10-04", Date.parse(NOW))).toBe(10)
-    expect(ModelPlan.daysSince(undefined, Date.parse(NOW))).toBeNull()
-    expect(() => ModelPlan.addNote({ text: "   " }, NOW, dir())).toThrow("some text")
-  })
 
   test("guidance points OpenCode's own plans at the console and leaves other providers without it", () => {
     expect(ModelPlan.guidance("opencode-go").join(" ")).toContain("opencode.ai/console")
