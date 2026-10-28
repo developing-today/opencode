@@ -3,6 +3,7 @@ export * as MessagingTemplate from "./template.js"
 import { Effect, Schema } from "effect"
 import type { ConfigMessaging } from "@opencode/schema/config/messaging"
 import { ConfigMarkdown } from "../config/markdown.js"
+import { ModelRouteLimits } from "../model-route-limits.js"
 
 /**
  * Topic presets and template variables.
@@ -513,6 +514,9 @@ export function parseTime(input: string, now: number): number | undefined {
   if (/^\d{10}$/.test(bare)) return Number(bare) * 1_000
   if (/^\d{13}$/.test(bare)) return Number(bare)
   if (/^\d+$/.test(bare)) return undefined
-  const parsed = Date.parse(input)
-  return Number.isNaN(parsed) ? undefined : parsed
+  // Calendar check via ModelRouteLimits.parseAbsoluteTime (#609): a bare Date.parse
+  // silently rolls calendar-invalid ISO dates such as 2026-02-30 into the next month
+  // instead of failing, so callers would query the wrong day instead of raising
+  // Invalid time. Non-ISO Date.parse forms (e.g. "Jan 5 2026") keep their old behaviour.
+  return ModelRouteLimits.parseAbsoluteTime(input.trim())
 }

@@ -118,6 +118,43 @@ describe("QuotaSnapshot", () => {
     expect(rolling.resetAt).toBeNull()
   })
 
+  test("a daily rule with out-of-range components yields null instead of a rolled-over reset", () => {
+    for (const resetRule of ["daily 25:99 UTC", "daily 12:60 UTC", "daily 24:30 UTC"]) {
+      const snapshot = QuotaSnapshot.derive(
+        { plan, window: { ...window, resetRule } as ModelPlan.QuotaWindow, totals: totals(), observedAt: now },
+        { now },
+      )
+      expect(snapshot.resetAt).toBeNull()
+    }
+  })
+
+  test("well-formed daily rules keep their next-occurrence behaviour, including single-digit hours", () => {
+    const later = QuotaSnapshot.derive(
+      { plan, window: { ...window, resetRule: "daily 23:59 UTC" } as ModelPlan.QuotaWindow, totals: totals(), observedAt: now },
+      { now },
+    )
+    expect(later.resetAt).toBe(Date.parse("2026-10-27T23:59:00.000Z"))
+
+    const single = QuotaSnapshot.derive(
+      { plan, window: { ...window, resetRule: "daily 9:05 UTC" } as ModelPlan.QuotaWindow, totals: totals(), observedAt: now },
+      { now },
+    )
+    expect(single.resetAt).toBe(Date.parse("2026-10-28T09:05:00.000Z"))
+  })
+
+  test("an explicit resetAt in the past is returned as recorded (a stated fact, not a derivation)", () => {
+    const past = QuotaSnapshot.derive(
+      {
+        plan,
+        window: { ...window, resetAt: "2026-10-20T00:00:00.000Z" } as ModelPlan.QuotaWindow,
+        totals: totals(),
+        observedAt: now,
+      },
+      { now },
+    )
+    expect(past.resetAt).toBe(Date.parse("2026-10-20T00:00:00.000Z"))
+  })
+
   test("deriveAll yields one snapshot per window of every plan", () => {
     const plans = [
       { ...plan, quotas: [window, { ...window, name: "weekly" }] },

@@ -290,8 +290,13 @@ export interface NoteFilter {
 }
 
 /** The notes that match, oldest first, keeping the newest `limit`. A line that does not parse is skipped and
- * counted, so one damaged line cannot hide the rest. */
+ * counted, so one damaged line cannot hide the rest. A `since` that does not parse is a caller error and
+ * throws, rather than silently matching nothing; a note whose own timestamp does not parse cannot be
+ * shown to be at or after `since`, so under a `since` filter it is skipped and counted too. */
 export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: Note[]; skipped: number } => {
+  const since = filter.since === undefined ? undefined : Date.parse(filter.since)
+  if (since !== undefined && Number.isNaN(since))
+    throw new Error(`The since filter "${filter.since}" is not a parseable date. Use an ISO timestamp, or omit it.`)
   const file = noteFile(dataDir)
   if (!fs.existsSync(file)) return { notes: [], skipped: 0 }
   let skipped = 0
@@ -304,14 +309,26 @@ export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: N
       skipped += 1
     }
   }
-  const since = filter.since === undefined ? undefined : Date.parse(filter.since)
-  const matching = parsed
+  const candidates = parsed
     .filter((note) => filter.providerID === undefined || note.providerID === filter.providerID)
     .filter((note) => filter.planID === undefined || note.planID === filter.planID)
     .filter((note) => filter.modelID === undefined || note.modelID === filter.modelID)
     .filter((note) => filter.poolID === undefined || note.poolID === filter.poolID)
     .filter((note) => filter.kind === undefined || note.kind === filter.kind)
-    .filter((note) => since === undefined || Date.parse(note.at) >= since)
+  const matching: Note[] = []
+  for (const note of candidates) {
+    if (since === undefined) {
+      matching.push(note)
+      continue
+    }
+    const at = Date.parse(note.at)
+    if (Number.isNaN(at)) {
+      skipped += 1
+      continue
+    }
+    if (at >= since) matching.push(note)
+  }
+  matching
     .sort((left, right) => {
       const leftAt = Date.parse(left.at)
       const rightAt = Date.parse(right.at)
@@ -319,7 +336,9 @@ export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: N
       if (Number.isNaN(rightAt)) return 1
       return leftAt - rightAt
     })
-  return { notes: filter.limit === undefined ? matching : matching.slice(-filter.limit), skipped }
+  // slice(-0) is slice(0): a limit of 0 (or less) must keep no notes, not every note.
+  const limited = filter.limit === undefined ? matching : filter.limit <= 0 ? [] : matching.slice(-filter.limit)
+  return { notes: limited, skipped }
 }
 
 /** Whole days since a date the user or the model recorded, or null when there is no usable date. */

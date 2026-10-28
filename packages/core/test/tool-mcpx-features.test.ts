@@ -153,6 +153,72 @@ describe("Feature 4: Self-Healing & Diagnostics", () => {
     expect(repair.repairedParams?.timeout).toBe(5000)
     expect(repair.repairedParams?.active).toBe(true)
   })
+
+  it("does not floor non-integer strings for integer parameters", () => {
+    const schema = {
+      type: "object",
+      properties: { count: { type: "integer" } },
+      required: ["count"],
+    }
+
+    for (const value of ["3.9", "-1.9", "-1.1"]) {
+      const repair = attemptParameterRepair(schema, { count: value })
+      expect(repair.repaired).toBe(false)
+      expect(repair.repairedParams).toBeUndefined()
+    }
+
+    // Already-integer strings keep coercing, including "3.0".
+    for (const [value, expected] of [["42", 42], ["3.0", 3], ["-2", -2]] as const) {
+      const repair = attemptParameterRepair(schema, { count: value })
+      expect(repair.repaired).toBe(true)
+      expect(repair.repairedParams?.count).toBe(expected)
+    }
+  })
+
+  it("does not repair non-finite strings for number or integer parameters", () => {
+    const numberSchema = {
+      type: "object",
+      properties: { ratio: { type: "number" } },
+      required: ["ratio"],
+    }
+    const integerSchema = {
+      type: "object",
+      properties: { count: { type: "integer" } },
+      required: ["count"],
+    }
+
+    for (const value of ["Infinity", "-Infinity", "NaN"]) {
+      expect(attemptParameterRepair(numberSchema, { ratio: value }).repaired).toBe(false)
+      expect(attemptParameterRepair(integerSchema, { count: value }).repaired).toBe(false)
+    }
+
+    // A finite fractional string still coerces for a number parameter.
+    const repair = attemptParameterRepair(numberSchema, { ratio: "1.5" })
+    expect(repair.repaired).toBe(true)
+    expect(repair.repairedParams?.ratio).toBe(1.5)
+    expect(JSON.parse(JSON.stringify(repair.repairedParams))).toEqual({ ratio: 1.5 })
+  })
+
+  it("pins hex and exponent forms as accepted when finite and integral as required", () => {
+    const numberSchema = {
+      type: "object",
+      properties: { ratio: { type: "number" } },
+      required: ["ratio"],
+    }
+    const integerSchema = {
+      type: "object",
+      properties: { count: { type: "integer" } },
+      required: ["count"],
+    }
+
+    // Number() grammar: hex and exponent forms stay accepted.
+    expect(attemptParameterRepair(integerSchema, { count: "0x10" }).repairedParams?.count).toBe(16)
+    expect(attemptParameterRepair(integerSchema, { count: "1e3" }).repairedParams?.count).toBe(1000)
+    expect(attemptParameterRepair(numberSchema, { ratio: "1e3" }).repairedParams?.ratio).toBe(1000)
+    // A non-integral exponent result still cannot coerce to an integer.
+    expect(attemptParameterRepair(integerSchema, { count: "1e-1" }).repaired).toBe(false)
+    expect(attemptParameterRepair(numberSchema, { ratio: "1e-1" }).repairedParams?.ratio).toBe(0.1)
+  })
 })
 
 describe("Feature 5: Just-in-Time Secret Prompting", () => {
