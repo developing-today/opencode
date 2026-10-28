@@ -346,7 +346,10 @@ export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: N
       return leftAt - rightAt
     })
   // slice(-0) is slice(0): a limit of 0 (or less) must keep no notes, not every note.
-  const limited = filter.limit === undefined ? matching : filter.limit <= 0 ? [] : matching.slice(-filter.limit)
+  // A non-finite limit slips past that guard (NaN <= 0 is false, and slice(-Infinity) is
+  // also slice(0)), so it keeps no notes either (#733).
+  const limited =
+    filter.limit === undefined ? matching : !Number.isFinite(filter.limit) || filter.limit <= 0 ? [] : matching.slice(-filter.limit)
   return { notes: limited, skipped }
 }
 
