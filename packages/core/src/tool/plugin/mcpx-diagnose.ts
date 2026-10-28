@@ -277,12 +277,16 @@ export function attemptParameterRepair(schema: unknown, input: unknown): Paramet
 
     const expectedType = determinePropertyType(propSchema)
 
-    // String to number coercion
+    // String to number coercion. Only a type fix is allowed, never a value
+    // change: the parsed number must be finite, and for an integer parameter
+    // it must already be an integer ("3.0" coerces, "3.9" does not). The
+    // accepted grammar is Number()'s, so hex ("0x10") and exponent ("1e3")
+    // forms coerce when they satisfy those checks.
     if ((expectedType === "number" || expectedType === "integer") && typeof val === "string") {
       const trimmed = val.trim()
-      if (trimmed !== "" && !Number.isNaN(Number(trimmed))) {
-        const num = Number(trimmed)
-        repaired[prop] = expectedType === "integer" ? Math.floor(num) : num
+      const num = Number(trimmed)
+      if (trimmed !== "" && Number.isFinite(num) && (expectedType !== "integer" || Number.isInteger(num))) {
+        repaired[prop] = num
         explanations.push(`Coerced parameter "${prop}" from string "${val}" to number ${repaired[prop]}.`)
         madeChanges = true
       }
