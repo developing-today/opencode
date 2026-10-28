@@ -733,6 +733,56 @@ describe("ModelRoute window gates", () => {
     expect(ModelRoute.orderTargets(gated(always), ready, undefined, false)).toEqual([1, 0])
   })
 
+  test("a gate-closed leaf inside an ungated nested group does not strand its ready sibling", () => {
+    const nested = (gate: ModelRoute.Gate) =>
+      ({
+        id: "r",
+        targets: [flash, mimo],
+        targetVariants: [],
+        health: ModelRoute.policy(),
+        nodes: [
+          {
+            selection: "ordered",
+            weights: [1, 1],
+            children: [{ node: 1 }, { leaf: 1 }],
+          },
+          { selection: "ordered", weights: [1], children: [{ leaf: 0, gate }] },
+        ],
+      }) as unknown as ModelRoute.Definition
+    const closed = nested({ name: "peak", window: tomorrow })
+    expect(ModelRoute.nextTarget(closed, ready, new Set(), undefined, false)).toBe(1)
+    expect(ModelRoute.orderTargets(closed, ready, undefined, false)).toEqual([1])
+    // The same shape with the inner gate open resolves the inner leaf first.
+    expect(ModelRoute.orderTargets(nested({ name: "peak", window: always }), ready, undefined, false)).toEqual([0, 1])
+    // An inverted gate on an always-active window is closed at every depth too.
+    expect(
+      ModelRoute.orderTargets(nested({ name: "peak", window: always, invert: true }), ready, undefined, false),
+    ).toEqual([1])
+  })
+
+  test("a fully gate-closed route still returns no target", () => {
+    const route = {
+      id: "r",
+      targets: [flash, mimo],
+      targetVariants: [],
+      health: ModelRoute.policy(),
+      nodes: [
+        {
+          selection: "ordered",
+          weights: [1, 1],
+          children: [{ node: 1 }, { leaf: 1, gate: { name: "peak", window: tomorrow } }],
+        },
+        {
+          selection: "ordered",
+          weights: [1],
+          children: [{ leaf: 0, gate: { name: "peak", window: tomorrow } }],
+        },
+      ],
+    } as unknown as ModelRoute.Definition
+    expect(ModelRoute.nextTarget(route, ready, new Set(), undefined, false)).toBeUndefined()
+    expect(ModelRoute.orderTargets(route, ready, undefined, false)).toEqual([])
+  })
+
   test("a closed gate on a leaf removes only that leaf", () => {
     const route = {
       id: "r",

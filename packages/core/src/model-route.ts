@@ -875,15 +875,6 @@ export const nextTarget = (
   unavailable?: ReadonlyMap<number, string>,
   random: () => number = Math.random,
 ): number | undefined => {
-  const hasReady = (nodeIndex: number): boolean => {
-    const node = definition.nodes[nodeIndex]
-    if (!node) return false
-    return node.children.some((child) =>
-      child.leaf !== undefined
-        ? ready.has(child.leaf) && !tried.has(child.leaf)
-        : child.node !== undefined && hasReady(child.node),
-    )
-  }
   const leaves = (nodeIndex: number): number[] => {
     const node = definition.nodes[nodeIndex]
     if (!node) return []
@@ -892,6 +883,36 @@ export const nextTarget = (
     )
   }
   const now = Date.now()
+  /** The leaves under a node that can actually serve at `now`: ready, untried, and open at every
+   * gate on the way down — a gate on a leaf inside a nested group counts exactly like a gate on a
+   * direct child, so a group whose leaves are all gate-closed is not ready (#723). */
+  const openLeaves = (nodeIndex: number): number[] => {
+    const node = definition.nodes[nodeIndex]
+    if (!node) return []
+    return node.children.flatMap((child) =>
+      !gateOpen(child.gate, now)
+        ? []
+        : child.leaf !== undefined
+          ? ready.has(child.leaf) && !tried.has(child.leaf)
+            ? [child.leaf]
+            : []
+          : child.node !== undefined
+            ? openLeaves(child.node)
+            : [],
+    )
+  }
+  const hasReady = (nodeIndex: number): boolean => openLeaves(nodeIndex).length > 0
+  /** Whether any gate on the path from this node down to the leaf is closed at `now`. */
+  const gateClosedOnPath = (nodeIndex: number, leafIndex: number): boolean => {
+    const node = definition.nodes[nodeIndex]
+    if (!node) return false
+    return node.children.some((child) => {
+      const onPath = child.leaf === leafIndex || (child.node !== undefined && leaves(child.node).includes(leafIndex))
+      if (!onPath) return false
+      if (!gateOpen(child.gate, now)) return true
+      return child.node !== undefined && gateClosedOnPath(child.node, leafIndex)
+    })
+  }
   const scopeAt = (rules: readonly WeightRule[], path: readonly string[]): WeightScope => ({
     routeID: definition.id,
     routes: [definition.id, ...path.filter((id) => id !== definition.id)],
@@ -905,7 +926,7 @@ export const nextTarget = (
     const nodePath = node?.routeID && !path.includes(node.routeID) ? [...path, node.routeID] : path
     const rules = [...inherited, ...(node?.schedules ?? [])]
     const scope = scopeAt(rules, nodePath)
-    const eligible = leaves(nodeIndex).filter((index) => ready.has(index) && !tried.has(index))
+    const eligible = openLeaves(nodeIndex)
     return eligible.length === 0
       ? 1
       : eligible.reduce((sum, index) => sum + weightOf(definition.targets[index], 1, now, scope), 0) / eligible.length
@@ -1008,13 +1029,12 @@ export const nextTarget = (
     const excluded = node.children.flatMap((child, position) => {
       const childLeaves = child.leaf !== undefined ? [child.leaf] : child.node !== undefined ? leaves(child.node) : []
       return childLeaves.flatMap((index) => {
+        const gateClosed =
+          (child.gate !== undefined && !gateOpen(child.gate, now)) ||
+          (child.node !== undefined && gateClosedOnPath(child.node, index))
         const unavailableReason =
           unavailable?.get(index) ??
-          (tried.has(index)
-            ? "already-tried"
-            : child.gate && !gateOpen(child.gate, now)
-              ? "window-gate-closed"
-              : undefined)
+          (tried.has(index) ? "already-tried" : gateClosed ? "window-gate-closed" : undefined)
         return unavailableReason ? [{ candidate: label(node.children[position]), reason: unavailableReason }] : []
       })
     })
@@ -1045,10 +1065,18 @@ export const nextTarget = (
         },
       },
     })
-    const selected = chosen === undefined ? undefined : node.children[chosen]
-    if (!selected) return undefined
-    if (selected.leaf !== undefined) return selected.leaf
-    return selected.node === undefined ? undefined : walk(selected.node, rules, nodePath)
+    // Fall back to the remaining positions when the chosen group yields no target: a group can
+    // look available at this level yet resolve to nothing below, and that must not strand the
+    // ready siblings next to it (#723).
+    for (const position of ordered) {
+      const selected = node.children[position]
+      if (!selected) continue
+      if (selected.leaf !== undefined) return selected.leaf
+      if (selected.node === undefined) continue
+      const found = walk(selected.node, rules, nodePath)
+      if (found !== undefined) return found
+    }
+    return undefined
   }
   return walk(0)
 }
