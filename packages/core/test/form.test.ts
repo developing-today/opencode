@@ -377,13 +377,83 @@ describe("Form", () => {
           {
             key: "tags",
             type: "multiselect",
-            options: [{ value: "a", label: "A" }],
+            options: [
+              { value: "a", label: "A" },
+              { value: "b", label: "B" },
+            ],
             minItems: 2,
             maxItems: 2,
           },
         ]),
       ).toBeUndefined()
       expect(Form.validateFields([{ key: "code", type: "string", pattern: "^a+$" }])).toBeUndefined()
+    }),
+  )
+
+  it.effect("rejects unsatisfiable field definitions that pairwise bounds miss (#696)", () =>
+    Effect.gen(function* () {
+      // A closed multiselect may only contain declared options, so minItems cannot exceed them.
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [{ value: "a", label: "A" }],
+            minItems: 2,
+          },
+        ]),
+      ).toBe("Form field has minItems greater than the number of options: tags")
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [
+              { value: "a", label: "A" },
+              { value: "b", label: "B" },
+            ],
+            minItems: 3,
+          },
+        ]),
+      ).toBe("Form field has minItems greater than the number of options: tags")
+
+      // An integer range that contains no whole number has no legal answer.
+      for (const [minimum, maximum] of [
+        [1.2, 1.8],
+        [0.5, 0.9],
+        [1.5, 1.5],
+      ] as const) {
+        expect(Form.validateFields([{ key: "count", type: "integer", minimum, maximum }])).toBe(
+          "Form field has no integer between minimum and maximum: count",
+        )
+      }
+
+      // Satisfiable controls still create through the service.
+      const service = yield* Form.Service
+      yield* service.create({
+        sessionID: "global",
+        title: "Satisfiable bounds",
+        fields: [
+          // custom multiselects may add values, so minItems is not bounded by the option count
+          { key: "custom", type: "multiselect", options: [{ value: "a", label: "A" }], minItems: 3, custom: true },
+          {
+            key: "exact",
+            type: "multiselect",
+            options: [
+              { value: "a", label: "A" },
+              { value: "b", label: "B" },
+            ],
+            minItems: 2,
+          },
+          // intervals containing an integer, equal integer bounds, and one-sided bounds
+          { key: "span", type: "integer", minimum: 1.2, maximum: 2 },
+          { key: "equal", type: "integer", minimum: 3, maximum: 3 },
+          { key: "lower", type: "integer", minimum: 1.5 },
+          { key: "upper", type: "integer", maximum: 1.5 },
+          // number fields are continuous, so a narrow range is still satisfiable
+          { key: "ratio", type: "number", minimum: 1.2, maximum: 1.8 },
+        ],
+      })
     }),
   )
 

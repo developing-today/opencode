@@ -270,10 +270,10 @@ function matches(when: Form.When, value: Form.Value | undefined) {
 }
 
 // Create-time validation of field definitions and `when` references: a field's own bounds must
-// be satisfiable (min <= max) and a string pattern must compile, and each `when` condition must point at an earlier field,
-// carry a value matching that field's type, and use a declared option when the field's options
-// are closed. Rejecting these at creation surfaces authoring mistakes to the caller instead of
-// silently never matching.
+// be satisfiable (min <= max, and at least one legal answer inside them), a string pattern must
+// compile, and each `when` condition must point at an earlier field, carry a value matching that
+// field's type, and use a declared option when the field's options are closed. Rejecting these at
+// creation surfaces authoring mistakes to the caller instead of silently never matching.
 export function validateFields(fields: ReadonlyArray<Form.Field>) {
   if (fields.length === 0) return "Form must have at least one field"
   const earlier = new Map<string, Form.Field>()
@@ -301,10 +301,23 @@ export function validateFields(fields: ReadonlyArray<Form.Field>) {
     if (field.type === "number" || field.type === "integer") {
       if (field.minimum !== undefined && field.maximum !== undefined && field.minimum > field.maximum)
         return `Form field has minimum greater than maximum: ${field.key}`
+      // Integer answers are whole numbers, so a range narrower than one whole step between its
+      // bounds has no legal answer even when minimum <= maximum.
+      if (
+        field.type === "integer" &&
+        field.minimum !== undefined &&
+        field.maximum !== undefined &&
+        Math.ceil(field.minimum) > Math.floor(field.maximum)
+      )
+        return `Form field has no integer between minimum and maximum: ${field.key}`
     }
     if (field.type === "multiselect") {
       if (field.minItems !== undefined && field.maxItems !== undefined && field.minItems > field.maxItems)
         return `Form field has minItems greater than maxItems: ${field.key}`
+      // A closed multiselect may only answer with declared options, so it cannot supply more
+      // selections than it has options. Custom multiselects may add values and are not bounded.
+      if (!field.custom && field.minItems !== undefined && field.minItems > field.options.length)
+        return `Form field has minItems greater than the number of options: ${field.key}`
     }
     for (const when of field.when ?? []) {
       const target = earlier.get(when.key)
