@@ -451,6 +451,59 @@ describe("Form", () => {
     }),
   )
 
+  it.effect("rejects required fields no answer can satisfy: zero caps, closed empty options (#712)", () =>
+    Effect.sync(() => {
+      // A required answer needs at least one character / selection, so a zero
+      // cap makes every answer fail: empty is missing-required, non-empty is
+      // too long / too many.
+      expect(Form.validateFields([{ key: "name", type: "string", required: true, maxLength: 0 }])).toBe(
+        "Form field has maxLength 0 but is required: name",
+      )
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            required: true,
+            options: [{ value: "a", label: "A" }],
+            maxItems: 0,
+          },
+        ]),
+      ).toBe("Form field has maxItems 0 but is required: tags")
+      // A required field with a closed empty options list has no valid
+      // answer: empty is missing-required, any value is an invalid option.
+      expect(Form.validateFields([{ key: "name", type: "string", required: true, options: [] }])).toBe(
+        "Form field has no options but is required: name",
+      )
+      expect(
+        Form.validateFields([{ key: "tags", type: "multiselect", required: true, options: [] }]),
+      ).toBe("Form field has no options but is required: tags")
+      // Satisfiable controls still create: the same shapes without required
+      // (0 stays a legal cap for optional fields), a cap of 1, and custom
+      // fields whose answers are not limited to the declared options.
+      expect(Form.validateFields([{ key: "name", type: "string", maxLength: 0 }])).toBeUndefined()
+      expect(
+        Form.validateFields([
+          { key: "tags", type: "multiselect", options: [{ value: "a", label: "A" }], maxItems: 0 },
+        ]),
+      ).toBeUndefined()
+      expect(Form.validateFields([{ key: "name", type: "string", options: [] }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "tags", type: "multiselect", options: [] }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "name", type: "string", required: true, maxLength: 1 }])).toBeUndefined()
+      expect(
+        Form.validateFields([
+          { key: "tags", type: "multiselect", required: true, options: [{ value: "a", label: "A" }], maxItems: 1 },
+        ]),
+      ).toBeUndefined()
+      expect(
+        Form.validateFields([{ key: "name", type: "string", required: true, options: [], custom: true }]),
+      ).toBeUndefined()
+      expect(
+        Form.validateFields([{ key: "tags", type: "multiselect", required: true, options: [], custom: true }]),
+      ).toBeUndefined()
+    }),
+  )
+
   it.effect("rejects duplicate multiselect selections instead of counting them twice (#707)", () =>
     Effect.sync(() => {
       const options = [
