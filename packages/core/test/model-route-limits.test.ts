@@ -86,6 +86,36 @@ describe("ModelRouteLimits.holdUntil", () => {
     expect(ModelRouteLimits.holdUntil(snap({ remaining: { requests: "lots" }, reset: { requests: "1s" } }), at)).toBe(0)
   })
 
+  test("skips non-decimal remaining and limit spellings instead of reinterpreting them (#711)", () => {
+    for (const spelling of ["0x0", "0b0", "0o0", "1e3", "+5", "-5", "0x64"]) {
+      expect(ModelRouteLimits.windows(snap({ remaining: { requests: spelling } }))).toEqual([])
+      expect(ModelRouteLimits.holdUntil(snap({ remaining: { requests: spelling } }), at)).toBe(0)
+    }
+    // The #672 failure through another spelling: "0x0" must not bench a target as a spent window.
+    expect(
+      ModelRouteLimits.holdUntil(
+        snap({ limit: { requests: "100" }, remaining: { requests: "0x0" }, reset: { requests: "60s" } }),
+        at,
+      ),
+    ).toBe(0)
+    // A non-decimal limit yields an undefined limit, so no near-empty fraction is fabricated:
+    // remaining 3 of "0x64" (100 if reinterpreted) would otherwise hold until the reset.
+    const badLimit = snap({
+      limit: { requests: "0x64" },
+      remaining: { requests: "3" },
+      reset: { requests: "60s" },
+    })
+    expect(ModelRouteLimits.windows(badLimit)).toEqual([
+      { name: "requests", remaining: 3, limit: undefined, resetAt: at + 60_000 },
+    ])
+    expect(ModelRouteLimits.holdUntil(badLimit, at)).toBe(0)
+    // Plain decimals are unchanged.
+    expect(ModelRouteLimits.windows(snap({ limit: { requests: "100" }, remaining: { requests: "3.5" } }))).toEqual([
+      { name: "requests", remaining: 3.5, limit: 100, resetAt: undefined },
+    ])
+    expect(ModelRouteLimits.holdUntil(snap({ remaining: { requests: "0" } }), at)).toBe(at + 60_000)
+  })
+
   test("skips blank remaining values instead of reading them as zero", () => {
     const blank = snap({ limit: { requests: "100" }, remaining: { requests: "" }, reset: { requests: "60s" } })
     expect(ModelRouteLimits.windows(blank)).toEqual([])

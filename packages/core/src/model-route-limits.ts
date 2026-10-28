@@ -154,13 +154,28 @@ export interface Window {
   readonly resetAt: number | undefined
 }
 
+// Counts are plain unsigned decimals — digits with an optional fraction, the
+// grammar the sibling numeric-header parsers already enforce (the ai
+// executor's retry-after grammars, SpeechStream.headerUsage). Bare Number()
+// also reinterprets hex/binary/octal/exponent/signed spellings (#711):
+// "0x0" would read as a spent window and bench the target, "1e3" and "0x64"
+// would fabricate the near-empty fraction. A non-plain spelling is
+// unparseable here, exactly like "lots": the window drops / the limit is
+// undefined.
+const PLAIN_COUNT = /^\d+(?:\.\d+)?$/
+const plainCount = (raw: string | undefined): number => {
+  if (raw === undefined) return Number.NaN
+  const text = raw.trim()
+  return PLAIN_COUNT.test(text) ? Number(text) : Number.NaN
+}
+
 /** The windows a snapshot describes, with numbers parsed. */
 export const windows = (value: Snapshot): Window[] =>
   Object.entries(value.remaining ?? {}).flatMap(([name, raw]) => {
     if (raw.trim() === "") return []
-    const remaining = Number(raw)
+    const remaining = plainCount(raw)
     if (!Number.isFinite(remaining)) return []
-    const limit = Number(value.limit?.[name])
+    const limit = plainCount(value.limit?.[name])
     const reset = value.reset?.[name] === undefined ? undefined : resetMs(value.reset[name], value.at)
     return [
       {
