@@ -74,7 +74,12 @@ export const pcm = (encoding: PcmEncoding, sampleRate: number | undefined, media
 
 export const sampleRate = (mediaType: string | undefined) => {
   const rate = /rate=(\d+)/i.exec(mediaType ?? "")?.[1]
-  return rate === undefined ? undefined : Number(rate)
+  // A non-positive rate can never describe audio, and callers treat undefined
+  // as "unknown, use my fallback"; returning 0 for `rate=0` would win over
+  // every `??` fallback and be reported as the audio's sample rate.
+  if (rate === undefined) return undefined
+  const parsed = Number(rate)
+  return parsed > 0 ? parsed : undefined
 }
 
 /** A declared `mediaType` wins over sniffing: headerless PCM can start with bytes that look like an MPEG frame sync. */

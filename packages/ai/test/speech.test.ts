@@ -78,6 +78,51 @@ describe("Speech", () => {
     }),
   )
 
+  it.effect("ignores a zero rate in Google's mime type so the default sample rate wins", () =>
+    Effect.gen(function* () {
+      const response = yield* Speech.generate({ model: google38, text: "Hi" }).pipe(
+        Effect.provide(
+          respond(
+            JSON.stringify({
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        inlineData: {
+                          mimeType: "audio/L16;codec=pcm;rate=0",
+                          data: Base64.encode(new TextEncoder().encode("\u0001\u0002")),
+                        },
+                      },
+                    ],
+                  },
+                  finishReason: "STOP",
+                },
+              ],
+            }),
+            "application/json",
+          ),
+        ),
+      )
+      expect(response.audio.info).toEqual({ format: "pcm", encoding: "pcm_s16le", sampleRate: 24000, channels: 1 })
+    }),
+  )
+
+  it.effect("ignores a zero rate in Deepgram's content type so the configured sample rate still wins", () =>
+    Effect.gen(function* () {
+      const [requested, defaulted] = yield* Effect.all([
+        Speech.generate({
+          model: deepgram,
+          text: "Hi",
+          providerOptions: { encoding: "mulaw", container: "none", sampleRate: 16000 },
+        }),
+        Speech.generate({ model: deepgram, text: "Hi", providerOptions: { encoding: "alaw", container: "none" } }),
+      ]).pipe(Effect.provide(respond("\u0001\u0002", "audio/pcm;rate=0")))
+      expect(requested.audio.info).toEqual({ format: "pcm", encoding: "pcm_mulaw", sampleRate: 16000, channels: 1 })
+      expect(defaulted.audio.info).toEqual({ format: "pcm", encoding: "pcm_alaw", sampleRate: 8000, channels: 1 })
+    }),
+  )
+
   it.effect("describes Deepgram raw encodings in their default WAV container", () =>
     Effect.gen(function* () {
       const response = yield* Speech.generate({ model: deepgram, text: "Hi", providerOptions: { encoding: "mulaw" } })
@@ -316,6 +361,24 @@ describe("Speech", () => {
       }
     }),
   )
+})
+
+describe("SpeechStream.sampleRate", () => {
+  test("returns undefined for a non-positive rate so callers can fall back", () => {
+    expect(SpeechStream.sampleRate("audio/L16;codec=pcm;rate=0")).toBeUndefined()
+    expect(SpeechStream.sampleRate("audio/L16;codec=pcm;rate=0000")).toBeUndefined()
+  })
+
+  test("keeps positive rates unchanged", () => {
+    expect(SpeechStream.sampleRate("audio/L16;codec=pcm;rate=44100")).toBe(44100)
+    expect(SpeechStream.sampleRate("audio/pcm;rate=8000")).toBe(8000)
+  })
+
+  test("returns undefined when the media type has no usable rate", () => {
+    expect(SpeechStream.sampleRate("audio/L16;codec=pcm")).toBeUndefined()
+    expect(SpeechStream.sampleRate("audio/pcm;rate=abc")).toBeUndefined()
+    expect(SpeechStream.sampleRate(undefined)).toBeUndefined()
+  })
 })
 
 describe("SpeechStream.headerUsage", () => {
