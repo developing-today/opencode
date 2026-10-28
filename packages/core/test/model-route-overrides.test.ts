@@ -309,6 +309,29 @@ describe("scheduled and absolute priorities", () => {
       false,
     )
   })
+
+  test("a malformed until drops the entry even when it has a schedule (#669)", () => {
+    const parsed = ModelRouteOverrides.parse({
+      overrides: [
+        { id: "string-until", action: "avoid", providers: ["openai"], until: "tomorrow", schedule: today },
+        { id: "null-until", action: "avoid", providers: ["openai"], until: null, schedule: today },
+        { id: "nan-until", action: "avoid", providers: ["openai"], until: Number.NaN, schedule: today },
+        {
+          id: "infinite-until",
+          action: "avoid",
+          providers: ["openai"],
+          until: Number.POSITIVE_INFINITY,
+          schedule: today,
+        },
+        { id: "string-until-nosched", action: "avoid", providers: ["openai"], until: "tomorrow" },
+        { id: "valid-until", action: "avoid", providers: ["openai"], until: now + DAY, schedule: today },
+        { id: "recurring", action: "avoid", providers: ["openai"], schedule: today },
+      ],
+    })
+    expect(parsed.map((item) => item.id)).toEqual(["valid-until", "recurring"])
+    expect(parsed.find((item) => item.id === "valid-until")?.until).toBe(now + DAY)
+    expect(parsed.find((item) => item.id === "recurring")?.until).toBeUndefined()
+  })
 })
 
 describe("traced weights (#589)", () => {
