@@ -501,7 +501,7 @@ export function timeZone() {
 export const defaultSessionStart =
   "Session started {session_start} ({system_time_zone}). Session ID: {session_id}.{session_lineage}"
 
-/** Parses an ISO time, a relative age such as 90s, 15m, 2h, 3d or 1w, or a bare epoch timestamp into epoch milliseconds. Bare epochs are magnitude-aware: exactly 10 digits are epoch seconds (the form most tools emit) and are scaled to milliseconds; exactly 13 digits are epoch milliseconds. Any other bare-digit length is rejected (undefined, so callers raise Invalid time) instead of being silently misread. */
+/** Parses an ISO time, a relative age such as 90s, 15m, 2h, 3d or 1w, or a bare epoch timestamp into epoch milliseconds. Bare epochs are magnitude-aware: exactly 10 digits are epoch seconds (the form most tools emit) and are scaled to milliseconds; exactly 13 digits are epoch milliseconds. Any other bare-digit length is rejected (undefined, so callers raise Invalid time) instead of being silently misread, except a bare 4-digit ISO year ("2026"), which falls through to Date.parse and reads as Jan 1 of that year. */
 export function parseTime(input: string, now: number): number | undefined {
   const relative = /^(\d+(?:\.\d+)?)\s*(s|m|h|d|w)$/i.exec(input.trim())
   if (relative) {
@@ -513,7 +513,9 @@ export function parseTime(input: string, now: number): number | undefined {
   const bare = input.trim()
   if (/^\d{10}$/.test(bare)) return Number(bare) * 1_000
   if (/^\d{13}$/.test(bare)) return Number(bare)
-  if (/^\d+$/.test(bare)) return undefined
+  // A bare 4-digit ISO year ("2026") is not a bare epoch; fall through to the calendar-checked
+  // Date.parse path so it parses as Jan 1 (#695), restoring the pre-#623 behaviour for this form.
+  if (/^\d+$/.test(bare) && !/^\d{4}$/.test(bare)) return undefined
   // Calendar check via ModelRouteLimits.parseAbsoluteTime (#609): a bare Date.parse
   // silently rolls calendar-invalid ISO dates such as 2026-02-30 into the next month
   // instead of failing, so callers would query the wrong day instead of raising
