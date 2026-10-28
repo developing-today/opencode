@@ -1,6 +1,7 @@
 export * as TmpGuard from "./tmp-guard.js"
 
 import fs from "node:fs"
+import path from "node:path"
 import { Effect } from "effect"
 
 // Python standard-library top-level module names (CPython 3.14;
@@ -217,12 +218,39 @@ export function findCollisions(names: ReadonlyArray<string>): Array<string> {
 // the directory. Files are never deleted, moved, or modified — they may
 // belong to another project that shares the tmp root.
 export function scan(directory: string): Array<string> {
-  return findCollisions(
-    fs
-      .readdirSync(directory, { withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .map((entry) => entry.name),
-  )
+  const files: Array<string> = []
+  const packages: Array<string> = []
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    // Dirent follows lstat semantics: a symlink reports neither isFile() nor
+    // isDirectory() for its target, so a symlinked .py file or package
+    // directory used to pass unseen. Follow links with statSync (the target,
+    // not the link) so both are seen as what they point to; a broken link
+    // imports nothing and is skipped.
+    let isFile = entry.isFile()
+    let isDirectory = entry.isDirectory()
+    if (entry.isSymbolicLink()) {
+      try {
+        const target = fs.statSync(path.join(directory, entry.name))
+        isFile = target.isFile()
+        isDirectory = target.isDirectory()
+      } catch {
+        continue
+      }
+    }
+    if (isFile) {
+      files.push(entry.name)
+      continue
+    }
+    // A directory named after a stdlib top-level name shadows the standard
+    // library only as a regular package, i.e. when it contains __init__.py.
+    // A bare directory would only form a namespace package, and a regular
+    // stdlib package found later on sys.path beats a namespace portion, so
+    // a bare directory must not be reported.
+    if (isDirectory && stdlib.has(entry.name)) {
+      if (fs.existsSync(path.join(directory, entry.name, "__init__.py"))) packages.push(`${entry.name}/`)
+    }
+  }
+  return [...findCollisions(files), ...packages].toSorted()
 }
 
 export function warning(directory: string, files: ReadonlyArray<string>): string {
