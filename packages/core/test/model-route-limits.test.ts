@@ -132,6 +132,24 @@ describe("ModelRouteLimits.retryHintFromMessage", () => {
     expect(ModelRouteLimits.resetMs("2026-02-30", at)).toBeUndefined()
   })
 
+  test("treats hour-24 ISO date-times as unparseable instead of rolling into the next day", () => {
+    // V8 parses hour 24 as midnight of the following day; RFC 3339 time-hour is 00-23.
+    for (const value of [
+      "2026-01-01T24:00:00Z",
+      "2026-01-01T24:00:00.000Z",
+      "2026-01-01T24:00:00+05:00",
+      "2025-12-31T24:00:00Z",
+    ]) {
+      expect(ModelRouteLimits.parseAbsoluteTime(value)).toBeUndefined()
+      expect(ModelRouteLimits.resetMs(value, at)).toBeUndefined()
+      expect(ModelRouteLimits.resetAtFromMessage(`quota reset at ${value}`, at)).toBeUndefined()
+    }
+    // Valid boundary times still parse exactly as before.
+    for (const value of ["2026-01-01T23:59:59Z", "2026-01-01T00:00:00Z", "2024-02-29T23:59:59Z"]) {
+      expect(ModelRouteLimits.parseAbsoluteTime(value)).toBe(Date.parse(value))
+    }
+  })
+
   test("reads decimal and compound relative waits as the total", () => {
     expect(ModelRouteLimits.retryHintFromMessage("try again in 1.5 hours", at)).toBe(5_400_000)
     expect(ModelRouteLimits.resetAtFromMessage("try again in 1.5 hours", at)).toBe(at + 5_400_000)

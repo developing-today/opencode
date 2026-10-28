@@ -52,6 +52,24 @@ describe("Form", () => {
     }),
   )
 
+  it.effect("rejects hour-24 ISO date-times that roll into the next day (#666)", () =>
+    Effect.sync(() => {
+      const fields = [{ key: "at", type: "string", format: "date-time" }] satisfies ReadonlyArray<Form.Field>
+
+      for (const value of [
+        "2026-01-01T24:00:00Z",
+        "2026-01-01T24:00:00.000Z",
+        "2026-01-01T24:00:00+05:00",
+        "2025-12-31T24:00:00Z",
+      ]) {
+        expect(Form.validateAnswer(fields, { at: value })).toBe("Expected date-time for form field: at")
+      }
+      for (const value of ["2026-01-01T23:59:59Z", "2026-01-01T00:00:00Z", "2024-02-29T23:59:59Z"]) {
+        expect(Form.validateAnswer(fields, { at: value })).toBeUndefined()
+      }
+    }),
+  )
+
   it.effect("pins date format behaviour alongside date-time", () =>
     Effect.sync(() => {
       const fields = [{ key: "day", type: "string", format: "date" }] satisfies ReadonlyArray<Form.Field>
