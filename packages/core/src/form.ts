@@ -270,7 +270,8 @@ function matches(when: Form.When, value: Form.Value | undefined) {
 }
 
 // Create-time validation of field definitions and `when` references: a field's own bounds must
-// be satisfiable (min <= max) and a string pattern must compile, and each `when` condition must point at an earlier field,
+// be satisfiable (min <= max, enough options for minItems, an integer inside an integer range)
+// and a string pattern must compile, and each `when` condition must point at an earlier field,
 // carry a value matching that field's type, and use a declared option when the field's options
 // are closed. Rejecting these at creation surfaces authoring mistakes to the caller instead of
 // silently never matching.
@@ -290,6 +291,15 @@ export function validateFields(fields: ReadonlyArray<Form.Field>) {
     if (field.type === "string") {
       if (field.minLength !== undefined && field.maxLength !== undefined && field.minLength > field.maxLength)
         return `Form field has minLength greater than maxLength: ${field.key}`
+      // A required string needs at least one character: with maxLength 0 the
+      // empty answer is missing-required and any non-empty answer is too long.
+      if (field.required && field.maxLength === 0)
+        return `Form field has maxLength 0 but is required: ${field.key}`
+      // A required string with a closed empty options list has no valid
+      // answer: the empty answer is missing-required and any other value is
+      // not one of the (zero) declared options.
+      if (field.required && field.options !== undefined && !field.custom && field.options.length === 0)
+        return `Form field has no options but is required: ${field.key}`
       if (field.pattern !== undefined) {
         try {
           new RegExp(field.pattern)
@@ -301,10 +311,33 @@ export function validateFields(fields: ReadonlyArray<Form.Field>) {
     if (field.type === "number" || field.type === "integer") {
       if (field.minimum !== undefined && field.maximum !== undefined && field.minimum > field.maximum)
         return `Form field has minimum greater than maximum: ${field.key}`
+      // An integer range that contains no integer (1.2..1.8) passes the pairwise check
+      // but no answer can ever satisfy it: integers below the range are too small,
+      // integers above it are too large, and non-integers are rejected outright.
+      if (
+        field.type === "integer" &&
+        field.minimum !== undefined &&
+        field.maximum !== undefined &&
+        Math.ceil(field.minimum) > Math.floor(field.maximum)
+      )
+        return `Form field range contains no integer: ${field.key}`
     }
     if (field.type === "multiselect") {
       if (field.minItems !== undefined && field.maxItems !== undefined && field.minItems > field.maxItems)
         return `Form field has minItems greater than maxItems: ${field.key}`
+      // A closed multiselect's answers may only contain declared options, so asking
+      // for more selections than there are options can never be satisfied.
+      if (!field.custom && field.minItems !== undefined && field.minItems > field.options.length)
+        return `Form field has minItems greater than its number of options: ${field.key}`
+      // A required multiselect needs at least one selection: with maxItems 0
+      // the empty answer is missing-required and any selection is too many.
+      if (field.required && field.maxItems === 0)
+        return `Form field has maxItems 0 but is required: ${field.key}`
+      // A required closed multiselect with no options has no valid answer:
+      // the empty answer is missing-required and any selection is not one of
+      // the (zero) declared options.
+      if (field.required && !field.custom && field.options.length === 0)
+        return `Form field has no options but is required: ${field.key}`
     }
     for (const when of field.when ?? []) {
       const target = earlier.get(when.key)
@@ -378,6 +411,11 @@ function validateField(field: InputField, value: Form.Value): string | undefined
   if (field.type === "multiselect") {
     if (!isStringArray(value)) return `Expected string array for form field: ${field.key}`
     if (field.required && value.length === 0) return `Missing required form field: ${field.key}`
+    // Selections are distinct by definition — the create-time check for a closed
+    // multiselect counts declared options, not answer entries — so a repeated
+    // entry is rejected outright instead of being counted again toward
+    // minItems/maxItems or checked again against the declared options.
+    if (new Set(value).size !== value.length) return `Duplicate selection for form field: ${field.key}`
     if (field.minItems !== undefined && value.length < field.minItems)
       return `Too few selections for form field: ${field.key}`
     if (field.maxItems !== undefined && value.length > field.maxItems)

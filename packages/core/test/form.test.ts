@@ -377,7 +377,10 @@ describe("Form", () => {
           {
             key: "tags",
             type: "multiselect",
-            options: [{ value: "a", label: "A" }],
+            options: [
+              { value: "a", label: "A" },
+              { value: "b", label: "B" },
+            ],
             minItems: 2,
             maxItems: 2,
           },
@@ -447,6 +450,159 @@ describe("Form", () => {
           { key: "b", type: "string", when: [{ key: "age", op: "eq", value: 15.5 }] },
         ]),
       ).toBeUndefined()
+    }),
+  )
+
+  it.effect("rejects field definitions no answer can satisfy: too few options, integer-free range (#696)", () =>
+    Effect.sync(() => {
+      // A closed multiselect may only be answered with declared options, so
+      // minItems beyond the option count is unsatisfiable.
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [
+              { value: "a", label: "A" },
+              { value: "b", label: "B" },
+            ],
+            minItems: 3,
+          },
+        ]),
+      ).toBe("Form field has minItems greater than its number of options: tags")
+      // An integer range containing no integer is unsatisfiable.
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 1.2, maximum: 1.8 }])).toBe(
+        "Form field range contains no integer: count",
+      )
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 0.5, maximum: 0.9 }])).toBe(
+        "Form field range contains no integer: count",
+      )
+      // Satisfiable controls still create: minItems within the option count, a
+      // custom multiselect (answers are not limited to the declared options),
+      // integer ranges containing an integer, equal integer bounds, one-sided
+      // integer bounds, and fractional bounds on a plain number field.
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [
+              { value: "a", label: "A" },
+              { value: "b", label: "B" },
+            ],
+            minItems: 2,
+          },
+        ]),
+      ).toBeUndefined()
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [{ value: "a", label: "A" }],
+            minItems: 3,
+            custom: true,
+          },
+        ]),
+      ).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 1, maximum: 2 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 1.2, maximum: 2.8 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 2, maximum: 2 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 1.2 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "count", type: "integer", maximum: 1.8 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "age", type: "number", minimum: 1.2, maximum: 1.8 }])).toBeUndefined()
+    }),
+  )
+
+  it.effect("rejects required fields no answer can satisfy: zero caps, closed empty options (#712)", () =>
+    Effect.sync(() => {
+      // A required answer needs at least one character / selection, so a zero
+      // cap makes every answer fail: empty is missing-required, non-empty is
+      // too long / too many.
+      expect(Form.validateFields([{ key: "name", type: "string", required: true, maxLength: 0 }])).toBe(
+        "Form field has maxLength 0 but is required: name",
+      )
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            required: true,
+            options: [{ value: "a", label: "A" }],
+            maxItems: 0,
+          },
+        ]),
+      ).toBe("Form field has maxItems 0 but is required: tags")
+      // A required field with a closed empty options list has no valid
+      // answer: empty is missing-required, any value is an invalid option.
+      expect(Form.validateFields([{ key: "name", type: "string", required: true, options: [] }])).toBe(
+        "Form field has no options but is required: name",
+      )
+      expect(
+        Form.validateFields([{ key: "tags", type: "multiselect", required: true, options: [] }]),
+      ).toBe("Form field has no options but is required: tags")
+      // Satisfiable controls still create: the same shapes without required
+      // (0 stays a legal cap for optional fields), a cap of 1, and custom
+      // fields whose answers are not limited to the declared options.
+      expect(Form.validateFields([{ key: "name", type: "string", maxLength: 0 }])).toBeUndefined()
+      expect(
+        Form.validateFields([
+          { key: "tags", type: "multiselect", options: [{ value: "a", label: "A" }], maxItems: 0 },
+        ]),
+      ).toBeUndefined()
+      expect(Form.validateFields([{ key: "name", type: "string", options: [] }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "tags", type: "multiselect", options: [] }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "name", type: "string", required: true, maxLength: 1 }])).toBeUndefined()
+      expect(
+        Form.validateFields([
+          { key: "tags", type: "multiselect", required: true, options: [{ value: "a", label: "A" }], maxItems: 1 },
+        ]),
+      ).toBeUndefined()
+      expect(
+        Form.validateFields([{ key: "name", type: "string", required: true, options: [], custom: true }]),
+      ).toBeUndefined()
+      expect(
+        Form.validateFields([{ key: "tags", type: "multiselect", required: true, options: [], custom: true }]),
+      ).toBeUndefined()
+    }),
+  )
+
+  it.effect("rejects duplicate multiselect selections instead of counting them twice (#707)", () =>
+    Effect.sync(() => {
+      const options = [
+        { value: "a", label: "A" },
+        { value: "b", label: "B" },
+      ]
+      // Repeating one option must not satisfy minItems 2 with a single distinct selection.
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, minItems: 2 }], { tags: ["a", "a"] }),
+      ).toBe("Duplicate selection for form field: tags")
+      // Same for a custom multiselect: three copies of one value are not three selections.
+      expect(
+        Form.validateAnswer(
+          [{ key: "tags", type: "multiselect", options: [{ value: "x", label: "X" }], custom: true, minItems: 3 }],
+          { tags: ["x", "x", "x"] },
+        ),
+      ).toBe("Duplicate selection for form field: tags")
+      // And against maxItems 1 the duplicate is reported as a duplicate, not as
+      // two selections exceeding the bound.
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, maxItems: 1 }], { tags: ["a", "a"] }),
+      ).toBe("Duplicate selection for form field: tags")
+      // The rule applies even with no item bounds at all.
+      expect(Form.validateAnswer([{ key: "tags", type: "multiselect", options }], { tags: ["b", "b"] })).toBe(
+        "Duplicate selection for form field: tags",
+      )
+      // Answers without duplicates behave exactly as before.
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, minItems: 2 }], { tags: ["a", "b"] }),
+      ).toBeUndefined()
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, maxItems: 1 }], { tags: ["a"] }),
+      ).toBeUndefined()
+      expect(
+        Form.validateAnswer([{ key: "tags", type: "multiselect", options, minItems: 2 }], { tags: ["a"] }),
+      ).toBe("Too few selections for form field: tags")
     }),
   )
 
