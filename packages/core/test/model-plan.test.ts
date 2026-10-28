@@ -191,6 +191,25 @@ describe("ModelPlan store", () => {
     expect(ModelPlan.readNotes({ limit: 1 }, root).notes.map((note) => note.text)).toEqual(["later"])
   })
 
+  test("an unparseable since throws instead of silently returning no notes", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "a note" }, "2026-10-27T09:00:00Z", root)
+    expect(() => ModelPlan.readNotes({ since: "not-a-date" }, root)).toThrow("not-a-date")
+    expect(ModelPlan.readNotes({ since: "2026-12-01T00:00:00.000Z" }, root)).toEqual({ notes: [], skipped: 0 })
+  })
+
+  test("a note whose timestamp does not parse is counted skipped under a since filter", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "bad timestamp" }, "not-a-date", root)
+    ModelPlan.addNote({ text: "good timestamp" }, "2026-10-27T09:00:00Z", root)
+    const filtered = ModelPlan.readNotes({ since: "2026-01-01T00:00:00.000Z" }, root)
+    expect(filtered.notes.map((note) => note.text)).toEqual(["good timestamp"])
+    expect(filtered.skipped).toBe(1)
+    const unfiltered = ModelPlan.readNotes({}, root)
+    expect(unfiltered.notes.map((note) => note.text)).toEqual(["bad timestamp", "good timestamp"])
+    expect(unfiltered.skipped).toBe(0)
+  })
+
   test("staleness counts whole days, and a blank note is refused", () => {
     expect(ModelPlan.daysSince("2026-10-04", Date.parse(NOW))).toBe(10)
     expect(ModelPlan.daysSince(undefined, Date.parse(NOW))).toBeNull()
