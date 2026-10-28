@@ -329,6 +329,23 @@ describe("scheduled and absolute priorities", () => {
     expect(parsed.find((item) => item.id === "weight-valid")?.weight).toBe(0.25)
   })
 
+  test("an invalid factor or weight does not drop a non-prefer entry (#662)", () => {
+    const parsed = ModelRouteOverrides.parse({
+      overrides: [
+        { action: "avoid", id: "avoid-zero", providers: ["anthropic"], until: now + DAY, factor: 0 },
+        {
+          action: "allow-over-budget",
+          id: "budget-zero",
+          providers: ["anthropic"],
+          until: now + DAY,
+          weight: 0,
+        },
+      ],
+    })
+    expect(parsed.map((item) => item.id)).toEqual(["avoid-zero", "budget-zero"])
+    expect(parsed.find((item) => item.id === "avoid-zero")?.factor).toBeUndefined()
+  })
+
   test("a prefer override with factor: 0 or weight: 0 does not lift the target (#662)", () => {
     ModelRouteOverrides.add(draft({ id: "zero-factor", action: "prefer", providers: ["anthropic"], factor: 0 }), now)
     expect(ModelRoute.weightFactor(anthropic, now)).toBe(1)
