@@ -12,7 +12,7 @@ Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](REA
 | ----------------------------------------------------------- | --------------------------------------------------------------- |
 | [Nested subsessions](#nested-subsessions-and-their-asks)    | Shipped across the TUI, the app and ACP. One follow-up left     |
 | [mcpx integration](#mcpx-integration)                       | Where the flake gets mcpx                                       |
-| [Serve handover and restarts](#serve-handover-and-restarts) | Prove the handover under real systemd                           |
+| [Serve handover and restarts](#serve-handover-and-restarts) | Restarts that do not interrupt sessions                         |
 | [Routing, cost and plans](#routing-cost-and-plans)          | Feature requests for failover, cost display and cache use       |
 | [Plugin API](#plugin-api)                                   | Gaps found while building v2 plugins                            |
 | [CI and test health](#ci-and-test-health)                   | A main branch whose checks are green                            |
@@ -40,7 +40,6 @@ The fork projects mcpx tools into Code Mode, starts a detached daemon with just-
 
 | Title                                    | Horizon | Status   | Intent                                                                                                            | Links           |
 | ---------------------------------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------------- | --------------- |
-| Verify the handover under real systemd   | Now     | proposed | `Type=notify` with `NotifyAccess=all` is only tested with stand-ins. Also decide on the rare teardown race.       | #81             |
 | Session state outside the server process | Later   | idea     | A restarted server reattaches to in-flight work, so restarts stop being visible. Open questions are in `TODO.md`. | [TODO](TODO.md) |
 
 ## Routing, cost and plans
