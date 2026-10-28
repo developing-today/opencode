@@ -36,6 +36,30 @@ describe("TmpGuard.scan", () => {
     expect(fs.existsSync(path.join(tmp.path, "re.py"))).toBe(true)
   })
 
+  test("finds a stdlib package directory, but not a bare stdlib-named directory", async () => {
+    await using tmp = await tmpdir()
+    fs.mkdirSync(path.join(tmp.path, "json"))
+    fs.writeFileSync(path.join(tmp.path, "json", "__init__.py"), "MARKER = 'shadow-json'\n")
+    // No __init__.py: a namespace portion only, which the regular stdlib
+    // package beats, so this must not be reported.
+    fs.mkdirSync(path.join(tmp.path, "email"))
+
+    expect(TmpGuard.scan(tmp.path)).toEqual(["json/"])
+    expect(fs.existsSync(path.join(tmp.path, "json", "__init__.py"))).toBe(true)
+  })
+
+  const posixTest = process.platform === "win32" ? test.skip : test
+  posixTest("finds a symlinked .py file by its link name and skips a broken link", async () => {
+    await using tmp = await tmpdir()
+    fs.writeFileSync(path.join(tmp.path, "target.py"), "MARKER = 'shadow-colorsys'\n")
+    fs.symlinkSync(path.join(tmp.path, "target.py"), path.join(tmp.path, "colorsys.py"))
+    // A broken symlink imports nothing, so its stdlib name is not a collision.
+    fs.symlinkSync(path.join(tmp.path, "missing.py"), path.join(tmp.path, "re.py"))
+
+    expect(TmpGuard.scan(tmp.path)).toEqual(["colorsys.py"])
+    expect(fs.lstatSync(path.join(tmp.path, "colorsys.py")).isSymbolicLink()).toBe(true)
+  })
+
   test("is quiet for a clean directory", async () => {
     await using tmp = await tmpdir()
     fs.writeFileSync(path.join(tmp.path, "scratch.py"), "# fine\n")
