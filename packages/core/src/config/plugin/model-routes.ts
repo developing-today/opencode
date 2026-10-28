@@ -68,12 +68,13 @@ export const Plugin = define({
       if (providers.get(ModelRoute.PROVIDER_ID)) return
       const routes = configuredRoutes(loaded.entries)
       if (routes.size === 0) return
-      const globalSchedules = weightRulesAcross(configuredSchedules(loaded.entries))
+      const windows = configuredWindows(loaded.entries)
+      const globalSchedules = weightRulesAcross(configuredSchedules(loaded.entries), windows)
       const definitions = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>(
         providers.list().map((record) => [record.provider.id, record.models] as const),
       )
       const models = Array.from(routes, ([id, route]) => {
-        const { leaves: expanded, nodes } = expand(id, routes, definitions)
+        const { leaves: expanded, nodes } = expand(id, routes, definitions, windows)
         if (expanded.length === 0) return undefined
         const first = expanded[0].model
         const leafContext = Math.min(...expanded.map((target) => target.model.limit.context))
@@ -170,12 +171,51 @@ function configuredSchedules(entries: readonly Entry[]) {
     .flatMap((entry) => entry.info.experimental?.model_route_schedules ?? [])
 }
 
+/** The named windows defined in config, parsed once so schedules and target gates can reference
+ * them by name. An entry with an unreadable window is dropped rather than applied. */
+export function configuredWindows(entries: readonly Entry[]) {
+  const windows = new Map<string, ModelRouteSchedule.Window>()
+  entries
+    .filter((entry): entry is Document => entry.type === "document")
+    .forEach((entry) => {
+      Object.entries(entry.info.experimental?.model_route_windows ?? {}).forEach(([name, window]) => {
+        const parsed = ModelRouteSchedule.parse(window)
+        if (parsed) windows.set(name, parsed)
+      })
+    })
+  return windows
+}
+
+/** A schedule's window: inline (parsed as before), or the name of a configured window.
+ * An unknown name resolves to undefined, which drops the rule. */
+const resolveWindow = (
+  when: ConfigModelRoutes.Schedule["when"] | ConfigModelRoutes.GlobalSchedule["when"],
+  windows: ReadonlyMap<string, ModelRouteSchedule.Window>,
+): ModelRouteSchedule.Window | undefined =>
+  typeof when === "string" ? windows.get(when) : ModelRouteSchedule.parse(when)
+
+/** A target's eligibility gate, resolved from its `window` against the configured windows.
+ * An unknown name drops the gate, leaving the target always eligible. */
+const gateFor = (
+  window: string | { name: string; invert?: boolean } | undefined,
+  windows: ReadonlyMap<string, ModelRouteSchedule.Window>,
+): ModelRoute.Gate | undefined => {
+  if (window === undefined) return undefined
+  const name = typeof window === "string" ? window : window.name
+  const parsed = windows.get(name)
+  if (!parsed) return undefined
+  return { name, window: parsed, ...(typeof window !== "string" && window.invert ? { invert: true } : {}) }
+}
+
 /** The schedule rules a route declares for its own targets, in a shape the runtime can judge. An
  * entry with an unreadable window, or with nothing to change, is dropped rather than applied. */
-export function routeWeightRules(route: ConfigModelRoutes.Route): ModelRoute.WeightRule[] {
+export function routeWeightRules(
+  route: ConfigModelRoutes.Route,
+  windows: ReadonlyMap<string, ModelRouteSchedule.Window> = new Map(),
+): ModelRoute.WeightRule[] {
   return (route.schedules ?? []).flatMap((schedule) => {
     if (schedule.factor === undefined && schedule.weight === undefined) return []
-    const window = ModelRouteSchedule.parse(schedule.when)
+    const window = resolveWindow(schedule.when, windows)
     if (!window) return []
     const targets = (schedule.targets ?? []).map((target) => target.trim()).filter(Boolean)
     return [
@@ -193,10 +233,13 @@ export function routeWeightRules(route: ConfigModelRoutes.Route): ModelRoute.Wei
 
 /** The global schedule rules in a shape the runtime can judge. The route filter stays in the match,
  * so one list serves every route and nested route. An entry with nothing to change is dropped. */
-export function weightRulesAcross(schedules: readonly ConfigModelRoutes.GlobalSchedule[]): ModelRoute.WeightRule[] {
+export function weightRulesAcross(
+  schedules: readonly ConfigModelRoutes.GlobalSchedule[],
+  windows: ReadonlyMap<string, ModelRouteSchedule.Window> = new Map(),
+): ModelRoute.WeightRule[] {
   return schedules.flatMap((schedule) => {
     if (schedule.factor === undefined && schedule.weight === undefined) return []
-    const window = ModelRouteSchedule.parse(schedule.when)
+    const window = resolveWindow(schedule.when, windows)
     if (!window) return []
     const targets = (schedule.targets ?? []).map((target) => target.trim()).filter(Boolean)
     const providers = (schedule.providers ?? []).map((provider) => provider.trim()).filter(Boolean)
@@ -225,10 +268,11 @@ export function expand(
   id: string,
   routes: ReadonlyMap<string, ConfigModelRoutes.Route>,
   definitions: ReadonlyMap<Provider.ID, ReadonlyMap<string, Model.Info>>,
+  windows: ReadonlyMap<string, ModelRouteSchedule.Window> = new Map(),
 ) {
   const result: SourceModel[] = []
   const nodes: ModelRoute.Node[] = []
-  const seen = new Set<string>()
+  const leafByKey = new Map<string, number>()
 
   // Each route becomes a group node with its own selection mode and weights, so a weighted route
   // nested in another is chosen as one unit and then splits among its own members.
@@ -252,10 +296,11 @@ export function expand(
       routeID,
       selection: ModelRouteAutonomy.usesRules(current.autonomy) ? (current.selection ?? "ordered") : "ordered",
       weights: [],
-      schedules: routeWeightRules(current),
+      schedules: routeWeightRules(current, windows),
       children: [],
     }
     nodes.push(node)
+    const attached = new Set<string>()
     const attach = (child: ModelRoute.Node["children"][number], key: string) => {
       node.children.push(child)
       node.weights.push(ModelRouteAutonomy.usesRules(current.autonomy) ? (current.weights?.[key] ?? 1) : 1)
@@ -266,7 +311,10 @@ export function expand(
       if (spec.until !== undefined && Date.now() >= spec.until) continue
       if (ref.providerID === ModelRoute.PROVIDER_ID) {
         const child = visit(ref.id, ref.variant ?? inheritedVariant, nextTrail)
-        if (child !== undefined) attach({ node: child }, `${ModelRoute.PROVIDER_ID}/${ref.id}`)
+        if (child !== undefined) {
+          const gate = gateFor("window" in spec ? spec.window : undefined, windows)
+          attach({ node: child, ...(gate ? { gate } : {}) }, `${ModelRoute.PROVIDER_ID}/${ref.id}`)
+        }
         continue
       }
       for (const [id, model] of ModelRouteExpansion.matchingModels(ref.id, definitions.get(ref.providerID))) {
@@ -291,8 +339,16 @@ export function expand(
           ...(variant ? { variant } : {}),
         })
         const key = `${resolved.providerID}/${resolved.id}${resolved.variant ? `#${resolved.variant}` : ""}`
-        if (seen.has(key)) continue
-        seen.add(key)
+        if (attached.has(key)) continue
+        attached.add(key)
+        const gate = gateFor("window" in spec ? spec.window : undefined, windows)
+        const leafKey = `${resolved.providerID}/${resolved.id}`
+        const existing = leafByKey.get(key)
+        if (existing !== undefined) {
+          // First reach wins for the leaf itself; a different node re-attaches it by index.
+          attach({ leaf: existing, ...(gate ? { gate } : {}) }, leafKey)
+          continue
+        }
         const defaultVariant =
           spec.defaultVariant && model.variants.some((item) => item.id === spec.defaultVariant)
             ? Model.VariantID.make(spec.defaultVariant)
@@ -302,8 +358,8 @@ export function expand(
             model.variants.some((item) => item.id === to) ? [[from, Model.VariantID.make(to)] as const] : [],
           ),
         )
-        const leafKey = `${resolved.providerID}/${resolved.id}`
-        attach({ leaf: result.length }, leafKey)
+        leafByKey.set(key, result.length)
+        attach({ leaf: result.length, ...(gate ? { gate } : {}) }, leafKey)
         // Budgets belong to the target: the outermost route that declares one wins, wherever the
         // target was first reached.
         const budget = plainBudget(
