@@ -1,6 +1,7 @@
 export * as QuotaSnapshot from "./quota-snapshot.js"
 
 import { ModelUsage } from "./model-usage.js"
+import { ModelRouteLimits } from "./model-route-limits.js"
 import type { ModelPlan } from "./model-plan.js"
 
 /**
@@ -59,8 +60,7 @@ export interface Input {
  */
 const resetAtOf = (window: ModelPlan.QuotaWindow, now: number): number | null => {
   if (window.resetAt !== undefined) {
-    const parsed = Date.parse(window.resetAt)
-    if (Number.isFinite(parsed)) return parsed
+    return ModelRouteLimits.parseAbsoluteTime(window.resetAt) ?? null
   }
   const daily = window.resetRule?.match(/^daily (\d{1,2}):(\d{2}) UTC$/)
   if (daily) {
