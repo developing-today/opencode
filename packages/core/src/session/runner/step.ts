@@ -50,13 +50,16 @@ export type Outcome = Data.TaggedEnum<{
 }>
 export const Outcome = Data.taggedEnum<Outcome>()
 
+/** The attempt that started a response continued after an output token limit, and which chunk this request is. */
+export type ContinuationLink = { readonly of: SessionMessage.ID; readonly index: number }
+
 interface Input {
   readonly isLocationClosed: () => boolean
   readonly sessionID: SessionSchema.ID
   readonly assistantMessageID: SessionMessage.ID
   /** Set when this request continues a response that hit the output token limit: the assistant message of the
    * attempt that started the response, and this chunk's index (1 for the first continuation). */
-  readonly continuation?: { readonly of: SessionMessage.ID; readonly index: number }
+  readonly continuation?: ContinuationLink
   readonly agent: Agent.ID
   readonly model: SessionRunnerModel.Resolved
   /** Prompt-size estimate for budget accounting when a hedge is cancelled before provider usage arrives. */

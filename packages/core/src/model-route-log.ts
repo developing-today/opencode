@@ -665,6 +665,8 @@ export const turnAttempts = (db: Database.Interface["db"], since: number, sessio
       continuationIndex: RouteAttemptTable.continuation_index,
       assistantMessageID: RouteAttemptTable.assistant_message_id,
       sessionID: RouteAttemptTable.session_id,
+      providerID: RouteAttemptTable.provider_id,
+      modelID: RouteAttemptTable.model_id,
       timeStarted: RouteAttemptTable.time_started,
       timeEnded: RouteAttemptTable.time_ended,
       outcome: RouteAttemptTable.outcome,

@@ -5809,6 +5809,36 @@ describe("SessionRunnerLLM", () => {
     expect(second?.row.assistant_message_id).not.toBe(first?.row.assistant_message_id)
   })
 
+  scenario("keeps the continuation link when a truncated response runs a local tool first", function* (s) {
+    const recorded: ModelRouteLog.Event[] = []
+    ModelRouteLog.setSink((event) => recorded.push(event))
+    yield* Effect.addFinalizer(() => Effect.sync(() => ModelRouteLog.setSink(undefined)))
+    // A local tool that never settles forces the truncated step to end so the tool can be settled, and the
+    // response continues in the next step.
+    yield* s.llm.push(
+      TestLLM.complete(
+        { reason: { normalized: "length" } },
+        LLMEvent.toolInputStart({ id: "call-incomplete", name: "echo" }),
+        LLMEvent.toolInputDelta({ id: "call-incomplete", name: "echo", text: '{"text":"partial' }),
+        LLMEvent.textStart({ id: "partial" }),
+        LLMEvent.textDelta({ id: "partial", text: "Partial" }),
+        LLMEvent.textEnd({ id: "partial" }),
+      ),
+      TestLLM.text("Finished", "finished"),
+    )
+
+    yield* s.runPrompt("Complete the response")
+
+    const attempts = recorded.flatMap((event) => (event.kind === "attempt" ? [event] : []))
+    expect(attempts).toHaveLength(2)
+    const [root, continuation] = attempts
+    const rootMessageID = root?.row.assistant_message_id ?? undefined
+    expect(root?.row.continuation_index).toBeUndefined()
+    expect(rootMessageID).toBeDefined()
+    expect(continuation?.continuationOfMessageID).toBe(rootMessageID)
+    expect(continuation?.row.continuation_index).toBe(1)
+  })
+
   for (const tools of ["hosted", "unfinished"] as const) {
     scenario(`caps output token limit continuations and resets for new input (${tools})`, function* (s) {
       const toolEvents =

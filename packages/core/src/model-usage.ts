@@ -246,6 +246,8 @@ export interface TurnAttemptRow {
   readonly continuationIndex: number | null
   readonly assistantMessageID: string | null
   readonly sessionID: string | null
+  readonly providerID: string
+  readonly modelID: string
   readonly timeStarted: number
   readonly timeEnded: number
   readonly outcome: string
@@ -261,6 +263,9 @@ export interface TurnRow extends Totals {
   /** Id of the attempt that started the turn; for a partial turn whose root fell outside the window, the id it names. */
   readonly rootID: number
   readonly sessionID: string | null
+  /** The target the response started on; a failover mid-turn does not move the turn to another model. */
+  readonly providerID: string
+  readonly modelID: string
   /** Response segments: the root attempt plus each output-token-limit continuation, however many requests each took. */
   readonly chunks: number
   readonly first: number
@@ -282,16 +287,17 @@ export const turns = (rows: readonly TurnAttemptRow[]): TurnRow[] => {
   }
   const rootOf = (row: TurnAttemptRow) =>
     row.continuationOf ?? (row.assistantMessageID === null ? row.id : (roots.get(row.assistantMessageID) ?? row.id))
-  const grouped = new Map<number, TurnAttemptRow[]>()
+  const grouped = new Map<number, { readonly lead: TurnAttemptRow; readonly attempts: TurnAttemptRow[] }>()
   for (const row of rows) {
     const rootID = rootOf(row)
     const group = grouped.get(rootID)
-    if (group) group.push(row)
-    else grouped.set(rootID, [row])
+    if (group) group.attempts.push(row)
+    else grouped.set(rootID, { lead: row, attempts: [row] })
   }
   return [...grouped]
-    .map(([rootID, attempts]) => {
-      const root = attempts.find((attempt) => attempt.id === rootID)
+    .map(([rootID, { lead, attempts }]) => {
+      // The lead row stands in when the root fell outside the window, so the turn keeps a target to report.
+      const root = attempts.find((attempt) => attempt.id === rootID) ?? lead
       const totals = sum(
         attempts.map((attempt) => ({
           requests: 1,
@@ -309,7 +315,9 @@ export const turns = (rows: readonly TurnAttemptRow[]): TurnRow[] => {
       return {
         ...totals,
         rootID,
-        sessionID: root?.sessionID ?? attempts[0]?.sessionID ?? null,
+        sessionID: root.sessionID,
+        providerID: root.providerID,
+        modelID: root.modelID,
         chunks: 1 + Math.max(...attempts.map((attempt) => attempt.continuationIndex ?? 0)),
         first,
         last,

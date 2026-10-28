@@ -38,6 +38,9 @@ const CONTINUE_AFTER_INCOMPLETE_STREAM =
 const CONTINUE_AFTER_OUTPUT_LIMIT =
   "Your last response hit the output token limit (stop reason: length). Do not apologize, recap, or repeat yourself. Break the remaining work into smaller pieces."
 
+/** How a step ended: whether the turn needs another step, and the link that step's response continues. */
+type StepResult = { readonly needsContinuation: boolean; readonly continuation?: SessionStep.ContinuationLink }
+
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -59,6 +62,9 @@ const layer = Layer.effect(
       let force = input.force
       let continuing = input.continuation !== undefined
       let step = input.continuation?.step ?? 1
+      // A step that hit the output token limit with tools left to run ends and continues in the next step; the
+      // response's root and chunk index carry over until new input is promoted.
+      let stepContinuation: SessionStep.ContinuationLink | undefined
       let entering = true
       const promotable = input.promotable ?? "input"
       if (!force && !continuing) {
@@ -179,7 +185,7 @@ const layer = Layer.effect(
                       onlyIfMissing: true,
                     })
                   if (promoted > 0) step = 1
-                  return { _tag: "Ready" as const, context: yield* context.load(selected) }
+                  return { _tag: "Ready" as const, context: yield* context.load(selected), promoted }
                 }),
               )
               if (ready) return ready
@@ -191,7 +197,11 @@ const layer = Layer.effect(
       while (true) {
         const next = yield* advanceToStep()
         if (next._tag !== "Ready") return next
-        continuing = yield* runStep(next.context, step)
+        // Promoted input starts a new response; only a tool-driven step continuation keeps the link.
+        if (next.promoted > 0) stepContinuation = undefined
+        const completed = yield* runStep(next.context, step, stepContinuation)
+        continuing = completed.needsContinuation
+        stepContinuation = completed.continuation
         step++
         force = false
         entering = false
@@ -206,13 +216,18 @@ const layer = Layer.effect(
     })
 
     /** Owns logical Step policy; each attempt owns its streaming, tools, and durable settlement. */
-    const runStep = Effect.fn("SessionRunner.runStep")(function* (first: SessionContext.Loaded, step: number) {
+    const runStep = Effect.fn("SessionRunner.runStep")(function* (
+      first: SessionContext.Loaded,
+      step: number,
+      continuation?: SessionStep.ContinuationLink,
+    ) {
       const sessionID = first.session.id
       let assistantMessageID = SessionMessage.ID.create()
       // Set once this step's response has been continued after an output token limit. Every later chunk names the
-      // attempt that started the response, so a turn's tokens and cost can be read as one figure.
-      let continuationOf: SessionMessage.ID | undefined
-      let continuationIndex = 0
+      // attempt that started the response, so a turn's tokens and cost can be read as one figure. A step that
+      // continues a previous step's truncated response starts from that link.
+      let continuationOf: SessionMessage.ID | undefined = continuation?.of
+      let continuationIndex = continuation?.index ?? 0
       const retry = yield* SessionRunnerRetry.make(bus, sessionID)
       let initial: SessionContext.Loaded | undefined = first
       let recoverOverflow = true
@@ -285,7 +300,7 @@ const layer = Layer.effect(
           ),
         })
         const completed = yield* SessionStep.Outcome.$match(outcome, {
-          Completed: (outcome) => Effect.succeed(outcome.needsContinuation),
+          Completed: (outcome) => Effect.succeed<StepResult>({ needsContinuation: outcome.needsContinuation }),
           Retry: (outcome) =>
             retry.wait({
               decision: outcome.decision,
@@ -333,7 +348,11 @@ const layer = Layer.effect(
                   message: "Response still truncated after two output token limit continuations",
                 },
               })
-            if (outcome.needsContinuation) return true
+            if (outcome.needsContinuation)
+              return {
+                needsContinuation: true,
+                continuation: { of: continuationOf ?? assistantMessageID, index: continuationIndex + 1 },
+              }
             yield* bus.publish(SessionEvent.Synthetic, { sessionID, text: CONTINUE_AFTER_OUTPUT_LIMIT })
             continuationOf ??= assistantMessageID
             continuationIndex++

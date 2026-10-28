@@ -147,7 +147,7 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
     // A turn is a root attempt plus every chunk that continued it. Only continued turns are worth listing here:
     // a single-request turn is already a row of the target, session and day totals.
     const turns = ModelUsage.turns(history?.turns ?? [])
-      .filter((turn) => turn.chunks > 1)
+      .filter((turn) => turn.chunks > 1 && matches(turn))
       .slice(0, input.limit ?? 20)
     const planReports = windows.map(({ plan, window }) => {
       const found = history?.windowTotals.find((item) => item.plan === plan.id && item.window === window.name)

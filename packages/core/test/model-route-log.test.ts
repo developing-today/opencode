@@ -411,6 +411,13 @@ describe("continuation attempts", () => {
         expect(report.turns).toHaveLength(1)
         expect(report.turns[0]).toMatchObject({ chunks: 2, requests: 2, input: 300, output: 60, durationMs: 3_000 })
         expect(report.sessions[0]).toMatchObject({ requests: 2, input: 300, output: 60 })
+
+        // A provider filter narrows the turn list like it narrows the target and day reports.
+        const filtered = yield* RouteUsageTool.collect({ hours: 1, provider: "azure" }, undefined, {
+          dataDir: tmp.path,
+          now: () => now,
+        })
+        expect(filtered.turns).toEqual([])
       }),
     ),
   )
