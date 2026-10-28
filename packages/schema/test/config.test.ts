@@ -1,3 +1,7 @@
+import { ConfigAlias } from "../src/config/aliases.js"
+import { ConfigExperimental } from "../src/config/experimental.js"
+import { ConfigMessaging } from "../src/config/messaging.js"
+import { ConfigWarming } from "../src/config/warming.js"
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import { Config } from "../src/config.js"
@@ -183,6 +187,17 @@ describe("ConfigModelRoutes field descriptions", () => {
       [ConfigModelRoutes.Target, ["defaultVariant", "variants", "until"]],
       [ConfigModelRoutes.Tuning, ["enabled", "intervalMinutes", "windowHours", "notes"]],
       [ConfigModelRoutes.Log, ["captureErrorBodies"]],
+      [ConfigAlias.Info, ["providers", "models", "variants"]],
+      [ConfigExperimental.Info, ["portable_shell_scanner", "subagent_depth", "shell_timeout", "model_route_schedules"]],
+      [ConfigMessaging.Embedding, ["tier", "url", "path", "pooling", "query", "server", "autostart", "gpu_layers"]],
+      [ConfigMessaging.Search, ["match", "model"]],
+      [ConfigMessaging.Remote, ["key"]],
+      [ConfigMessaging.Info, ["presets", "vars", "session_start", "embedding"]],
+      [ConfigWarming.Warming, ["prompt"]],
+      [Config.Info, ["shell", "default_agent", "update", "share", "username", "agents", "snapshots", "formatter", "lsp", "commands", "references", "websearch", "plugins", "warming"]],
+      [Mcp.TimeoutConfig, ["startup", "catalog", "execution"]],
+      [Mcp.LocalConfig, ["cwd", "codemode"]],
+      [Mcp.OAuthConfig, ["auth_server_metadata_url"]],
     ]
     for (const [schema, names] of cases) {
       const fields = described(schema)
