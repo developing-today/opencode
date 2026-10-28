@@ -171,6 +171,12 @@ function configuredSchedules(entries: readonly Entry[]) {
     .flatMap((entry) => entry.info.experimental?.model_route_schedules ?? [])
 }
 
+/** A named window that cannot be applied is dropped, but never silently (#734): a typo'd or
+ * unreadable window name would otherwise remove a target's eligibility gate or a schedule rule
+ * with no signal anywhere. The warning names the window and where it was referenced. */
+const warnDroppedWindow = (name: string, site: string, reason: string) =>
+  console.warn(`model-route window ${JSON.stringify(name)} ${reason} (${site}); it is dropped, not applied`)
+
 /** The named windows defined in config, parsed once so schedules and target gates can reference
  * them by name. An entry with an unreadable window is dropped rather than applied. */
 export function configuredWindows(entries: readonly Entry[]) {
@@ -180,30 +186,43 @@ export function configuredWindows(entries: readonly Entry[]) {
     .forEach((entry) => {
       Object.entries(entry.info.experimental?.model_route_windows ?? {}).forEach(([name, window]) => {
         const parsed = ModelRouteSchedule.parse(window)
-        if (parsed) windows.set(name, parsed)
+        if (parsed) {
+          windows.set(name, parsed)
+          return
+        }
+        warnDroppedWindow(name, "experimental.model_route_windows", "is defined but cannot be parsed")
       })
     })
   return windows
 }
 
 /** A schedule's window: inline (parsed as before), or the name of a configured window.
- * An unknown name resolves to undefined, which drops the rule. */
+ * An unknown name resolves to undefined, which drops the rule — with a warning naming it. */
 const resolveWindow = (
   when: ConfigModelRoutes.Schedule["when"] | ConfigModelRoutes.GlobalSchedule["when"],
   windows: ReadonlyMap<string, ModelRouteSchedule.Window>,
-): ModelRouteSchedule.Window | undefined =>
-  typeof when === "string" ? windows.get(when) : ModelRouteSchedule.parse(when)
+  site: string,
+): ModelRouteSchedule.Window | undefined => {
+  if (typeof when !== "string") return ModelRouteSchedule.parse(when)
+  const window = windows.get(when)
+  if (!window) warnDroppedWindow(when, site, "is not a defined window")
+  return window
+}
 
 /** A target's eligibility gate, resolved from its `window` against the configured windows.
- * An unknown name drops the gate, leaving the target always eligible. */
+ * An unknown name drops the gate, leaving the target always eligible — with a warning naming it. */
 const gateFor = (
   window: string | { name: string; invert?: boolean } | undefined,
   windows: ReadonlyMap<string, ModelRouteSchedule.Window>,
+  site: string,
 ): ModelRoute.Gate | undefined => {
   if (window === undefined) return undefined
   const name = typeof window === "string" ? window : window.name
   const parsed = windows.get(name)
-  if (!parsed) return undefined
+  if (!parsed) {
+    warnDroppedWindow(name, site, "is not a defined window")
+    return undefined
+  }
   return { name, window: parsed, ...(typeof window !== "string" && window.invert ? { invert: true } : {}) }
 }
 
@@ -215,7 +234,11 @@ export function routeWeightRules(
 ): ModelRoute.WeightRule[] {
   return (route.schedules ?? []).flatMap((schedule) => {
     if (schedule.factor === undefined && schedule.weight === undefined) return []
-    const window = resolveWindow(schedule.when, windows)
+    const window = resolveWindow(
+      schedule.when,
+      windows,
+      schedule.id ? `route schedule ${JSON.stringify(schedule.id)}` : "a route schedule",
+    )
     if (!window) return []
     const targets = (schedule.targets ?? []).map((target) => target.trim()).filter(Boolean)
     return [
@@ -239,7 +262,11 @@ export function weightRulesAcross(
 ): ModelRoute.WeightRule[] {
   return schedules.flatMap((schedule) => {
     if (schedule.factor === undefined && schedule.weight === undefined) return []
-    const window = resolveWindow(schedule.when, windows)
+    const window = resolveWindow(
+      schedule.when,
+      windows,
+      schedule.id ? `global schedule ${JSON.stringify(schedule.id)}` : "a global schedule",
+    )
     if (!window) return []
     const targets = (schedule.targets ?? []).map((target) => target.trim()).filter(Boolean)
     const providers = (schedule.providers ?? []).map((provider) => provider.trim()).filter(Boolean)
@@ -312,7 +339,7 @@ export function expand(
       if (ref.providerID === ModelRoute.PROVIDER_ID) {
         const child = visit(ref.id, ref.variant ?? inheritedVariant, nextTrail)
         if (child !== undefined) {
-          const gate = gateFor("window" in spec ? spec.window : undefined, windows)
+          const gate = gateFor("window" in spec ? spec.window : undefined, windows, `route ${JSON.stringify(routeID)}`)
           attach({ node: child, ...(gate ? { gate } : {}) }, `${ModelRoute.PROVIDER_ID}/${ref.id}`)
         }
         continue
@@ -341,7 +368,7 @@ export function expand(
         const key = `${resolved.providerID}/${resolved.id}${resolved.variant ? `#${resolved.variant}` : ""}`
         if (attached.has(key)) continue
         attached.add(key)
-        const gate = gateFor("window" in spec ? spec.window : undefined, windows)
+        const gate = gateFor("window" in spec ? spec.window : undefined, windows, `route ${JSON.stringify(routeID)}`)
         const leafKey = `${resolved.providerID}/${resolved.id}`
         const existing = leafByKey.get(key)
         if (existing !== undefined) {

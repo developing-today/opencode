@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { expand, routeVariants, routeWeightRules, weightRulesAcross } from "@opencode/core/config/plugin/model-routes"
+import {
+  configuredWindows,
+  expand,
+  routeVariants,
+  routeWeightRules,
+  weightRulesAcross,
+} from "@opencode/core/config/plugin/model-routes"
+import type { Entry } from "@opencode/schema/config"
 import { Model } from "@opencode/core/model"
 import { Provider } from "@opencode/core/provider"
 import type { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
@@ -279,6 +286,21 @@ describe("pool weight schedules", () => {
   })
 })
 
+/** Runs `run` with console.warn captured, returning the warning messages (#734). */
+const warnings = (run: () => void) => {
+  const original = console.warn
+  const messages: string[] = []
+  console.warn = (...args: unknown[]) => {
+    messages.push(args.map(String).join(" "))
+  }
+  try {
+    run()
+  } finally {
+    console.warn = original
+  }
+  return messages
+}
+
 describe("named windows", () => {
   const windows = new Map([["peak", { daysOfWeek: [1, 5], start: "09:00", end: "17:00" }]])
 
@@ -363,6 +385,53 @@ describe("named windows", () => {
     )
     expect(leaves).toHaveLength(1)
     expect(nodes[0].children[0].gate).toBeUndefined()
+  })
+
+  test("an unknown window name in a schedule or gate warns, naming the window and the site (#734)", () => {
+    const scheduleWarnings = warnings(() =>
+      routeWeightRules(
+        {
+          targets: [],
+          schedules: [{ id: "peak-rule", targets: ["*"], when: "nope", factor: 3 }],
+        } as unknown as ConfigModelRoutes.Route,
+        windows,
+      ),
+    )
+    expect(scheduleWarnings).toHaveLength(1)
+    expect(scheduleWarnings[0]).toContain('"nope"')
+    expect(scheduleWarnings[0]).toContain("peak-rule")
+
+    const gateWarnings = warnings(() =>
+      expand("r", route([{ model: "anthropic/claude-opus-4-1", window: "nope" }]), definitions, windows),
+    )
+    expect(gateWarnings).toHaveLength(1)
+    expect(gateWarnings[0]).toContain('"nope"')
+    expect(gateWarnings[0]).toContain('"r"')
+  })
+
+  test("configuredWindows drops a defined-but-unparseable window with a warning naming it (#734)", () => {
+    const entries = [
+      {
+        type: "document",
+        info: {
+          experimental: {
+            model_route_windows: {
+              bad: { start: "25:99", end: "17:00" },
+              peak: { daysOfWeek: [1, 5], start: "09:00", end: "17:00" },
+            },
+          },
+        },
+      },
+    ] as unknown as Entry[]
+    let parsed: ReturnType<typeof configuredWindows> | undefined
+    const messages = warnings(() => {
+      parsed = configuredWindows(entries)
+    })
+    expect(parsed?.has("bad")).toBe(false)
+    expect(parsed?.has("peak")).toBe(true)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toContain('"bad"')
+    expect(messages[0]).toContain("model_route_windows")
   })
 
   test("a route referenced twice by one parent keeps both group nodes, sharing leaf indexes", () => {
