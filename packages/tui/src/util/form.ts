@@ -89,7 +89,7 @@ export function formValidateValue(field: FormAnswerField, value: FormValue | und
     if (field.format === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return "Expected an email address"
     if (field.format === "uri" && !validURL(value)) return "Expected a URL"
     if (field.format === "date" && !validDate(value)) return "Expected a date (YYYY-MM-DD)"
-    if (field.format === "date-time" && Number.isNaN(new Date(value).getTime())) return "Expected a date and time"
+    if (field.format === "date-time" && !validDateTime(value)) return "Expected a date and time"
     if (field.options && !field.custom && !field.options.some((option) => option.value === value))
       return "Select an available option"
     return
@@ -137,6 +137,28 @@ function validURL(value: string) {
   } catch {
     return false
   }
+}
+
+function validDateTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return false
+  // Date parsing rolls calendar-overflow days into the next month instead of failing, so an
+  // ISO date part must round-trip through a real calendar date (matching core isDateTime).
+  // Values without an ISO date part keep the existing lenient behaviour.
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
+  if (!iso) return true
+  const year = Number(iso[1])
+  const month = Number(iso[2])
+  const day = Number(iso[3])
+  const probe = new Date(0)
+  probe.setUTCFullYear(year, month - 1, day)
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day)
+    return false
+  // V8 rolls hour 24 into the next day instead of failing, so an ISO time part must not
+  // carry hour > 23 (RFC 3339 time-hour is 00-23).
+  const time = /[T ](\d{2}):\d{2}/i.exec(value)
+  if (time && Number(time[1]) > 23) return false
+  return true
 }
 
 function validDate(value: string) {
