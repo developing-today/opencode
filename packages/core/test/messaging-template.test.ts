@@ -76,6 +76,10 @@ describe("MessagingTemplate.parseTime bare epochs", () => {
     expect(MessagingTemplate.parseTime("17672256000000", now)).toBeUndefined()
   })
 
+  test("a bare 4-digit ISO year parses as Jan 1 via Date.parse", () => {
+    expect(MessagingTemplate.parseTime("2026", now)).toBe(Date.parse("2026"))
+  })
+
   test("calendar-invalid ISO dates are rejected instead of rolling into the next month", () => {
     expect(MessagingTemplate.parseTime("2026-02-30", now)).toBeUndefined()
     expect(MessagingTemplate.parseTime("2026-02-29", now)).toBeUndefined()
