@@ -343,6 +343,50 @@ describe("Form", () => {
     }),
   )
 
+  it.effect("rejects unsatisfiable field bounds and uncompilable patterns at creation (#681)", () =>
+    Effect.sync(() => {
+      expect(Form.validateFields([{ key: "name", type: "string", minLength: 10, maxLength: 5 }])).toBe(
+        "Form field has minLength greater than maxLength: name",
+      )
+      expect(Form.validateFields([{ key: "age", type: "number", minimum: 10, maximum: 5 }])).toBe(
+        "Form field has minimum greater than maximum: age",
+      )
+      expect(Form.validateFields([{ key: "count", type: "integer", minimum: 10, maximum: 5 }])).toBe(
+        "Form field has minimum greater than maximum: count",
+      )
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [{ value: "a", label: "A" }],
+            minItems: 3,
+            maxItems: 1,
+          },
+        ]),
+      ).toBe("Form field has minItems greater than maxItems: tags")
+      expect(Form.validateFields([{ key: "code", type: "string", pattern: "[" }])).toBe(
+        "Form field has invalid pattern: code",
+      )
+      // Equal bounds and one-sided bounds are satisfiable and still create.
+      expect(Form.validateFields([{ key: "name", type: "string", minLength: 5, maxLength: 5 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "name", type: "string", minLength: 5 }])).toBeUndefined()
+      expect(Form.validateFields([{ key: "age", type: "number", minimum: 5, maximum: 5 }])).toBeUndefined()
+      expect(
+        Form.validateFields([
+          {
+            key: "tags",
+            type: "multiselect",
+            options: [{ value: "a", label: "A" }],
+            minItems: 2,
+            maxItems: 2,
+          },
+        ]),
+      ).toBeUndefined()
+      expect(Form.validateFields([{ key: "code", type: "string", pattern: "^a+$" }])).toBeUndefined()
+    }),
+  )
+
   it.effect("gates fields on an external acknowledgement via when", () =>
     Effect.gen(function* () {
       const service = yield* Form.Service
