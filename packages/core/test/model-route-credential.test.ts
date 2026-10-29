@@ -59,6 +59,83 @@ describe("ModelRoute credential health (#6)", () => {
   })
 })
 
+describe("ModelRoute credential threading (#870)", () => {
+  test("credential failure history feeds escalation, not the target's", () => {
+    ModelRoute.failed(target, policy, 10_000, undefined, "cred-lab")
+    ModelRoute.failed(target, policy, 11_000, undefined, "cred-lab")
+
+    // The serving credential has given up twice: it is no longer steady and the route escalates.
+    expect(ModelRoute.giveUps(target, "cred-lab")).toBe(2)
+    expect(ModelRoute.steady(target, "cred-lab")).toBe(false)
+    expect(ModelRoute.escalates(target, "cred-lab")).toBe(true)
+    // The target itself recorded nothing (#6 isolation), and the other credential is unaffected.
+    expect(ModelRoute.giveUps(target)).toBe(0)
+    expect(ModelRoute.steady(target)).toBe(true)
+    expect(ModelRoute.steady(target, "cred-personal")).toBe(true)
+    expect(ModelRoute.escalates(target, "cred-personal")).toBe(false)
+  })
+
+  test("credential-qualified quota demotion applies in ranking and stickiness", () => {
+    const now = Date.now()
+    for (const at of [now, now + 1_000, now + 2_000])
+      ModelRoute.failed(target, policy, at, { quota: true }, "cred-lab")
+    // Successes restore steadiness without erasing the quota history, isolating demotion.
+    for (const at of [now + 3_000, now + 4_000, now + 5_000, now + 6_000, now + 7_000])
+      ModelRoute.completed(target, policy, fast, at, "cred-lab")
+    const at = now + 8_000
+
+    expect(ModelRoute.demoted(target, at, "cred-lab")).toBe(true)
+    expect(ModelRoute.weightOf(target, 2, at, { credentialID: "cred-lab" })).toBeCloseTo(0.02)
+    expect(ModelRoute.weightOf(target, 2, at, { credentialID: "cred-personal" })).toBe(2)
+    expect(ModelRoute.weightOf(target, 2, at)).toBe(2)
+
+    ModelRoute.served("threading", "s1", target)
+    expect(ModelRoute.keepsThrough("threading", "s1", target, at, "cred-lab")).toBe(false)
+    expect(ModelRoute.keepsThrough("threading", "s1", target, at, "cred-personal")).toBe(true)
+    expect(ModelRoute.keepsThrough("threading", "s1", target, at)).toBe(true)
+  })
+
+  test("credential demotion steers nextTarget selection to the healthy credential's target", () => {
+    const now = Date.now()
+    const a = ModelRoute.ref({ providerID: "thread-a", model: "m" })
+    const b = ModelRoute.ref({ providerID: "thread-b", model: "m" })
+    for (const at of [now, now + 1_000, now + 2_000]) ModelRoute.failed(a, policy, at, { quota: true }, "cred-lab")
+    const definition = {
+      id: "threading-route",
+      targets: [a, b],
+      targetVariants: [{}, {}],
+      health: policy,
+      nodes: [{ selection: "ordered", weights: [1, 1], children: [{ leaf: 0 }, { leaf: 1 }] }],
+    } as unknown as ModelRoute.Definition
+    const ready = new Set([0, 1])
+    const credentialOf = (index: number) => (index === 0 ? "cred-lab" : "cred-personal")
+
+    // Equal weights, ordered mode: ranking puts the demoted credential's target last.
+    expect(ModelRoute.nextTarget(definition, ready, new Set(), undefined, false, undefined, undefined, Math.random, credentialOf)).toBe(1)
+    // The same targets rank normally when the serving credential is the healthy one.
+    expect(
+      ModelRoute.nextTarget(definition, ready, new Set(), undefined, false, undefined, undefined, Math.random, () => "cred-personal"),
+    ).toBe(0)
+  })
+
+  test("rate-limit holds are per credential and clear per credential", () => {
+    const spent = { at: 10_000, remaining: { requests: "0" }, reset: { requests: "45s" } }
+    ModelRoute.observeRateLimit(target, spent, 10_000, "cred-lab")
+
+    expect(ModelRoute.limitedUntil(target, 10_000, "cred-lab")).toBe(55_000)
+    expect(ModelRoute.limitedUntil(target, 10_000, "cred-personal")).toBe(0)
+    expect(ModelRoute.limitedUntil(target, 10_000)).toBe(0)
+    expect(ModelRoute.rateLimitOf(target, "cred-lab")?.remaining).toEqual({ requests: "0" })
+    expect(ModelRoute.rateLimitOf(target, "cred-personal")).toBeUndefined()
+
+    // A success on the other credential clears only its own (absent) hold.
+    ModelRoute.clearRateLimit(target, "cred-personal")
+    expect(ModelRoute.limitedUntil(target, 10_000, "cred-lab")).toBe(55_000)
+    ModelRoute.clearRateLimit(target, "cred-lab")
+    expect(ModelRoute.limitedUntil(target, 10_000, "cred-lab")).toBe(0)
+  })
+})
+
 describe("ModelRoute credential quota gate (#6)", () => {
   test("a known-full credential is blocked until its reset, then re-admitted with a health record", () => {
     const events: ModelRouteLog.Event[] = []

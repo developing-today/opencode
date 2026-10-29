@@ -78,7 +78,7 @@ export const generate = Effect.fn("SessionGenerate.generate")(function* (input: 
         sessionID: selection.session.id,
         startedAt: Date.now(),
       },
-      (snapshot) => ModelRoute.observeRateLimit(model.ref, snapshot),
+      (snapshot) => ModelRoute.observeRateLimit(model.ref, snapshot, Date.now(), model.routing?.credentialID),
     )
     const started = Date.now()
     const response = yield* llm.generate(prepared.request, observed.options(prepared.options)).pipe(

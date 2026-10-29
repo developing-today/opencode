@@ -441,18 +441,22 @@ export const configure = (
 
 export const currentSettings = () => settings
 
-/** Give-ups among a target's recent requests. */
-export const giveUps = (target: Model.Ref) => {
-  const state = health.get(key(target))
+/** Give-ups among a target's recent requests. With a credentialID, the serving credential's own
+ * history counts (#870): credential failures are recorded only in credentialHealth, so a
+ * target-level read would call a repeatedly failing credential steady forever. */
+export const giveUps = (target: Model.Ref, credentialID?: string) => {
+  const state = credentialID ? credentialHealth.get(credentialKey(target, credentialID)) : health.get(key(target))
   return (state?.outcomes ?? []).filter((answered) => !answered).length
 }
 
 /** A target is steady while it has fewer give-ups than the race threshold among its recent requests. */
-export const steady = (target: Model.Ref) => giveUps(target) < settings.escalation.afterGiveUps
+export const steady = (target: Model.Ref, credentialID?: string) =>
+  giveUps(target, credentialID) < settings.escalation.afterGiveUps
 
 /** A route should race its next target immediately when its current target keeps giving up. Whether a
  * route races at all depends on its autonomy level; see ModelRouteAutonomy.races. */
-export const escalates = (target: Model.Ref) => settings.escalation.enabled && !steady(target)
+export const escalates = (target: Model.Ref, credentialID?: string) =>
+  settings.escalation.enabled && !steady(target, credentialID)
 
 // Quota errors are recorded per target so a provider that keeps saying "out of quota" drops to the end
 // of every order, instead of being retried first on each new session.
@@ -761,31 +765,48 @@ const ModelRoute_ref = (providerID: string, modelID: string) => ref({ providerID
 // back. Kept apart from cooldowns: this is the provider's own forecast, not a failure.
 const limits = new Map<string, { snapshot?: ModelRouteLimits.Snapshot; until: number }>()
 
-/** Records a response's rate-limit snapshot. A spent window holds the target back until it resets. */
+/** Records a response's rate-limit snapshot. A spent window holds the target back until it resets.
+ * With a credentialID the hold is scoped to that credential (#870): one credential's 429 must not
+ * bench the others behind the same target, and a later success on another credential must not
+ * clear (or inherit) this one's hold. */
 export const observeRateLimit = (
   target: Model.Ref,
   snapshot: ModelRouteLimits.Snapshot | undefined,
   now = Date.now(),
+  credentialID?: string,
 ) => {
   if (!snapshot) return
-  const id = key(target)
+  const id = credentialID ? credentialKey(target, credentialID) : key(target)
   const until = ModelRouteLimits.holdUntil(snapshot, now)
   const previous = limits.get(id)
   limits.delete(id)
   limits.set(id, { snapshot, until })
   while (limits.size > HEALTH_LIMIT) limits.delete(limits.keys().next().value!)
   if (until > now && (previous?.until ?? 0) < until - 1_000)
-    logHealth(target, "rate-limit-window", "provider-reported", until)
+    logHealth(
+      target,
+      "rate-limit-window",
+      credentialID ? `provider-reported credential:${credentialID}` : "provider-reported",
+      until,
+    )
 }
 
-/** Until when the provider's own numbers say to leave the target alone; 0 when they don't. */
-export const limitedUntil = (target: Model.Ref, now = Date.now()) => {
-  const state = limits.get(key(target))
+/** Drops a recorded rate-limit hold: a credential (or target) that just succeeded without
+ * advertising any limit has replaced the provider's last word with a healthy response (#870). */
+export const clearRateLimit = (target: Model.Ref, credentialID?: string) => {
+  limits.delete(credentialID ? credentialKey(target, credentialID) : key(target))
+}
+
+/** Until when the provider's own numbers say to leave the target alone; 0 when they don't.
+ * With a credentialID, only that credential's hold counts. */
+export const limitedUntil = (target: Model.Ref, now = Date.now(), credentialID?: string) => {
+  const state = limits.get(credentialID ? credentialKey(target, credentialID) : key(target))
   return state && state.until > now ? state.until : 0
 }
 
 /** The latest rate-limit snapshot seen for the target, if any. */
-export const rateLimitOf = (target: Model.Ref) => limits.get(key(target))?.snapshot
+export const rateLimitOf = (target: Model.Ref, credentialID?: string) =>
+  limits.get(credentialID ? credentialKey(target, credentialID) : key(target))?.snapshot
 
 /** Re-applies windows that were still holding targets back when the process last stopped, with the
  * snapshot that produced them, so a cold target still has the provider's last word. */
@@ -795,13 +816,16 @@ export const seedLimits = (
     modelID: string
     until: number
     snapshot?: ModelRouteLimits.Snapshot
+    credentialID?: string
   }>,
 ) => {
-  for (const row of rows)
-    limits.set(key(ref({ providerID: row.providerID, model: row.modelID })), {
+  for (const row of rows) {
+    const target = ref({ providerID: row.providerID, model: row.modelID })
+    limits.set(row.credentialID ? credentialKey(target, row.credentialID) : key(target), {
       until: row.until,
       ...(row.snapshot ? { snapshot: row.snapshot } : {}),
     })
+  }
 }
 
 /** An expiring operator or agent instruction about which targets to use. `match` is a case-insensitive
@@ -857,8 +881,16 @@ export const removeAdjustment = (id: string) => {
 }
 
 /** Re-applies cooldowns that were still running when the process last stopped. */
-export const seedCooldowns = (rows: ReadonlyArray<{ providerID: string; modelID: string; until: number }>) => {
-  for (const row of rows) entry(ref({ providerID: row.providerID, model: row.modelID })).cooldownUntil = row.until
+export const seedCooldowns = (
+  rows: ReadonlyArray<{ providerID: string; modelID: string; until: number; credentialID?: string }>,
+) => {
+  for (const row of rows) {
+    const target = ref({ providerID: row.providerID, model: row.modelID })
+    // A credential-scoped cooldown restores onto that credential only (#870): the healthy
+    // credentials behind the same target stay routable after a restart.
+    if (row.credentialID) credentialEntry(target, row.credentialID).cooldownUntil = row.until
+    else entry(target).cooldownUntil = row.until
+  }
 }
 
 ModelRouteLog.onRestoreCooldowns(seedCooldowns)
@@ -929,6 +961,9 @@ export interface WeightScope extends ModelRouteOverrides.Scope {
   readonly routes?: readonly string[]
   /** Scheduled rules in force where this target is judged: global first, then the route's own. */
   readonly schedules?: readonly WeightRule[]
+  /** The credential that would serve this target, when the caller knows it: quota demotion is
+   * judged against that credential's events, not the target's (#870). */
+  readonly credentialID?: string
 }
 
 const ruleMatches = (rule: WeightRule, target: Model.Ref, scope: WeightScope) => {
@@ -1006,7 +1041,7 @@ export const tracedWeightOf = (
     scheduled: afterScheduled,
     prefer: afterPrefer,
     adjustment: weight,
-    demotion: weight * (demoted(target, now) ? DEMOTED_FACTOR : 1),
+    demotion: weight * (demoted(target, now, scope.credentialID) ? DEMOTED_FACTOR : 1),
     gate: null,
   }
 }
@@ -1021,11 +1056,17 @@ export const weightFactor = (target: Model.Ref, now = Date.now(), scope: WeightS
 /** A session already answered by this target keeps it through a burst rate-limit hold, as long as the
  * target is still working and not demoted. New sessions go elsewhere; current ones stay where their
  * cache is, and only move when the target itself starts failing. */
-export const keepsThrough = (routeID: string, sessionID: string | undefined, target: Model.Ref, now = Date.now()) =>
+export const keepsThrough = (
+  routeID: string,
+  sessionID: string | undefined,
+  target: Model.Ref,
+  now = Date.now(),
+  credentialID?: string,
+) =>
   sessionID !== undefined &&
   continuityOf(routeID, sessionID)?.current === key(target) &&
-  steady(target) &&
-  !demoted(target, now)
+  steady(target, credentialID) &&
+  !demoted(target, now, credentialID)
 
 /** The scope overrides and weights are judged against: this route (and nested ids reached on the
  * way in), whether it is `fixed`, and the route-level schedule rules. */
@@ -1048,6 +1089,7 @@ export const nextTarget = (
   variant?: string,
   unavailable?: ReadonlyMap<number, string>,
   random: () => number = Math.random,
+  credentialOf?: (index: number) => string | undefined,
 ): number | undefined => {
   const leaves = (nodeIndex: number): number[] => {
     const node = definition.nodes[nodeIndex]
@@ -1103,7 +1145,11 @@ export const nextTarget = (
     const eligible = openLeaves(nodeIndex)
     return eligible.length === 0
       ? 1
-      : eligible.reduce((sum, index) => sum + weightOf(definition.targets[index], 1, now, scope), 0) / eligible.length
+      : eligible.reduce(
+          (sum, index) =>
+            sum + weightOf(definition.targets[index], 1, now, { ...scope, credentialID: credentialOf?.(index) }),
+          0,
+        ) / eligible.length
   }
   const label = (child: Node["children"][number]) =>
     child.leaf !== undefined
@@ -1148,7 +1194,10 @@ export const nextTarget = (
     // in force. Equal weights keep their configured relative order when the list is sorted.
     const traces = node.children.map((child, position) => {
       if (child.leaf === undefined) return undefined
-      const trace = tracedWeightOf(definition.targets[child.leaf], node.weights[position] ?? 1, now, scope)
+      const trace = tracedWeightOf(definition.targets[child.leaf], node.weights[position] ?? 1, now, {
+        ...scope,
+        credentialID: credentialOf?.(child.leaf),
+      })
       return child.gate
         ? { ...trace, gate: `${child.gate.name}:${gateOpen(child.gate, now) ? "open" : "closed"}` }
         : trace
@@ -1171,7 +1220,7 @@ export const nextTarget = (
             const leaf = node.children[position].leaf
             if (leaf === undefined) return false
             const target = definition.targets[leaf]
-            return key(target) === current && !demoted(target)
+            return key(target) === current && !demoted(target, now, credentialOf?.(leaf))
           })
     const rank = (from: readonly number[]) =>
       [...from].toSorted((left, right) => (effective[right] ?? 1) - (effective[left] ?? 1))
