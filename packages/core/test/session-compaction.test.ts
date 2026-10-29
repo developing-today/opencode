@@ -246,6 +246,21 @@ it.effect("auto compaction estimates current content against the buffered prompt
     // Another provider's usage is not trusted either.
     const foreign = { ...assistant, model: { ...assistant.model, providerID: Provider.ID.make("other") } }
     expect(SessionCompaction.estimateContext({ ...grown, messages: [foreign] })).toBe(21)
+    // #891: the pre-resolution sizing that feeds route ceilings accepts any provider's
+    // anchor — a routed session's previous turn was served by one of the route's leaves —
+    // and returns undefined for an empty history, so an unknown size never filters.
+    const history = (messages: SessionContext.Loaded["messages"]) =>
+      SessionCompaction.estimateHistoryRequest({
+        agent: grown.agent,
+        model: { ref: grown.model.ref, capabilities: grown.model.capabilities },
+        tools: grown.tools,
+        initial: grown.initial,
+        messages,
+      })
+    expect(history([])).toBeUndefined()
+    expect(history(grown.messages)).toBe(90_000)
+    expect(history([foreign])).toBe(89_000)
+    expect(history([interrupted])).toBe(21)
     expect(
       SessionCompaction.estimateContext({
         ...grown,

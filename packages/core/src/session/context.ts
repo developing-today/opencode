@@ -23,6 +23,12 @@ import { SessionProviderContext } from "./provider-context.js"
 import { InstructionEntry } from "./instruction-entry.js"
 import { SessionMessage } from "./message.js"
 import { SessionModelRequest } from "./model-request.js"
+import { Config } from "../config.js"
+import { ModelAlias } from "../model-alias.js"
+import { ModelRoute } from "../model-route.js"
+import { hasPackage } from "../model-resolver.js"
+import { Provider } from "../provider.js"
+import { SessionCompaction } from "./compaction.js"
 import { SessionRunnerModel } from "./runner/model.js"
 import { SessionSchema } from "./schema.js"
 import { SessionStore } from "./store.js"
@@ -56,6 +62,7 @@ export interface Interface {
   readonly load: (selection: Selection) => Effect.Effect<Loaded, SessionRunnerModel.Error>
   readonly resolveModel: (
     session: SessionSchema.Info,
+    requestTokens?: number,
   ) => Effect.Effect<SessionRunnerModel.Resolved, SessionRunnerModel.Error>
   /** Selects auxiliary title capabilities without instruction or tool preflight. */
   readonly selectTitle: (session: SessionSchema.Info) => Effect.Effect<
@@ -85,6 +92,7 @@ const layer = Layer.effect(
     const mcpInstructions = yield* McpInstructions.Service
     const mcpTools = yield* McpTool.Service
     const models = yield* SessionRunnerModel.Service
+    const config = yield* Effect.serviceOption(Config.Service)
     const request = yield* SessionModelRequest.Service
     const referenceInstructions = yield* ReferenceInstructions.Service
     const skillInstructions = yield* SkillInstructions.Service
@@ -92,7 +100,8 @@ const layer = Layer.effect(
     const registry = yield* Tool.Service
     const vars = yield* MessagingVars.Service
 
-    const resolveModel = (session: SessionSchema.Info) => models.resolve(session, model.available)
+    const resolveModel = (session: SessionSchema.Info, requestTokens?: number) =>
+      models.resolve(session, model.available, requestTokens)
 
     const selectTitle = Effect.fn("SessionContext.selectTitle")(function* (session: SessionSchema.Info) {
       const agent = yield* agents.get(Agent.ID.make("title"))
@@ -180,19 +189,97 @@ const layer = Layer.effect(
     })
 
     const load = Effect.fn("SessionContext.load")(function* (selection: Selection) {
-      const model = yield* resolveModel(selection.session)
-      const history = yield* SessionHistory.entriesForRunner(
-        db,
-        selection.session.id,
-        selection.instructions,
-        SessionProviderContext.provenance(model) ?? "local",
+      // A routed model resolves to a leaf whose per-target context ceiling can only filter
+      // live turns if resolution knows the request size (#891). Routed sessions always read
+      // the local transcript (a routed model's provenance is undefined), so for a route the
+      // history can be read first and sized with compaction's accounting, and that size is
+      // threaded into the single resolution. Every other selection keeps the original
+      // order and passes no size, so unknown sizes never filter and plain models are
+      // unaffected.
+      const selected = selection.session.model
+      // The catalog lookup must see the effective selection: a bare alias pointing at a
+      // route is expanded inside SessionRunnerModel.resolve, so mirror that expansion here
+      // or an aliased route would never take the sized path below.
+      let effective = selected
+      if (selected && Option.isSome(config)) {
+        const entries = yield* config.value.entries()
+        const aliases = Config.latest(entries, "aliases")
+        if (aliases) {
+          const available = yield* model.available()
+          const exists = ({ providerID, modelID }: { providerID: string; modelID: string }) =>
+            available.some((item) => item.providerID === providerID && item.id === modelID)
+          try {
+            const res = ModelAlias.resolveRef(aliases, ModelAlias.refString(selected), exists)
+            effective = Model.Ref.make({
+              providerID: Provider.ID.make(res.providerID),
+              id: Model.ID.make(res.id),
+              ...(res.variant ? { variant: Model.VariantID.make(res.variant) } : {}),
+            })
+          } catch {}
+        }
+      }
+      const catalog = effective ? yield* model.get(effective.providerID, effective.id) : undefined
+      // A session with no explicit model resolves through the global default, which can
+      // itself be a route: determine the effective default catalog selection the same way
+      // ModelResolver.resolve does (the configured default when it is usable, else the
+      // first available packaged text model), or default-route sessions would bypass the
+      // sized path and their per-target ceilings would never filter (#891).
+      let fallback: Model.Info | undefined
+      if (!selected) {
+        const candidate = yield* model.default()
+        fallback =
+          candidate && hasPackage(candidate)
+            ? candidate
+            : (yield* model.available()).find((item) => hasPackage(item) && Model.supportsText(item))
+      }
+      const routeModel = catalog ?? fallback
+      const route = routeModel && ModelRoute.definition(routeModel) !== undefined ? routeModel : undefined
+      if (!route || (!selected && !fallback)) {
+        const resolved = yield* resolveModel(selection.session)
+        const history = yield* SessionHistory.entriesForRunner(
+          db,
+          selection.session.id,
+          selection.instructions,
+          SessionProviderContext.provenance(resolved) ?? "local",
+        )
+        return {
+          session: selection.session,
+          agent: selection.agent,
+          model: resolved,
+          initial: history.initial,
+          messages: history.entries.map((entry) => entry.message),
+          tools: selection.tools,
+        }
+      }
+      const history = yield* SessionHistory.entriesForRunner(db, selection.session.id, selection.instructions, "local")
+      const messages = history.entries.map((entry) => entry.message)
+      const requestTokens = SessionCompaction.estimateHistoryRequest({
+        agent: selection.agent,
+        model: {
+          ref: effective ?? Model.Ref.make({ providerID: route.providerID, id: route.id }),
+          capabilities: route.capabilities,
+        },
+        tools: selection.tools,
+        initial: history.initial,
+        messages,
+      })
+      // If the sized resolution fails, automatic compaction — which runs after load and
+      // exists precisely to shrink an oversized history — must still get its chance, so
+      // fall back to the unsized resolution (the pre-#891 behaviour) and let it run. That
+      // covers both every target being over its ceiling (RouteUnavailableError) and the
+      // mixed case where the over-limit targets are filtered out and a fitting target
+      // then fails to initialize: resolveRoute surfaces that as the target's own error
+      // (e.g. ModelConfigurationError), not RouteUnavailableError. If the unsized
+      // resolution also fails, that error surfaces unchanged.
+      const resolved = yield* resolveModel(selection.session, requestTokens).pipe(
+        Effect.catch(() => resolveModel(selection.session)),
       )
       return {
         session: selection.session,
         agent: selection.agent,
-        model,
+        model: resolved,
         initial: history.initial,
-        messages: history.entries.map((entry) => entry.message),
+        messages,
         tools: selection.tools,
       }
     })

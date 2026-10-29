@@ -147,3 +147,55 @@ describe("ModelResolver bare aliases", () => {
     }),
   )
 })
+
+describe("SessionRunnerModel requestTokens threading (#891)", () => {
+  const seen: Array<number | undefined> = []
+  const stub = SessionRunnerModel.resolved(runtime, {
+    capabilities: { tools: true, input: ["text"], output: ["text"] },
+    cost: [],
+    limit: { context: 100, output: 20 },
+  })
+  const resolveSeen: Array<number | undefined> = []
+  const mockResolver = Layer.mock(ModelResolver.Service)({
+    resolve: (_requested, requestTokens) => {
+      resolveSeen.push(requestTokens)
+      return Effect.succeed(stub)
+    },
+    resolveModel: (_selected, _variant, _sessionID, requestTokens) => {
+      seen.push(requestTokens)
+      return Effect.succeed(stub)
+    },
+  })
+  const itThreading = testEffect(SessionRunnerModel.layer.pipe(Layer.provide(Layer.mergeAll(mockResolver, config))))
+
+  itThreading.effect("passes the live request size through to the resolver, and undefined when unknown", () =>
+    Effect.gen(function* () {
+      const models = yield* SessionRunnerModel.Service
+      const ref = Ref.make({ providerID: Provider.ID.make("deepseek"), id: ID.make("deepseek-chat") })
+      const sized = yield* models.resolve(session(ref), () => Effect.succeed([catalog]), 123_456)
+      expect(sized).toBe(stub)
+      const unsized = yield* models.resolve(session(ref), () => Effect.succeed([catalog]))
+      expect(unsized).toBe(stub)
+      // The known size reaches route resolution, where per-target ceilings can skip
+      // over-limit leaves; an unknown size stays undefined so it never filters.
+      expect(seen).toEqual([123_456, undefined])
+    }),
+  )
+
+  itThreading.effect("passes the live request size to the default resolution when the session selects no model", () =>
+    Effect.gen(function* () {
+      const models = yield* SessionRunnerModel.Service
+      // A session with no explicit model delegates to ModelResolver.resolve (the global
+      // default); the size must follow it there too, or a default route's per-target
+      // ceilings never filter (#891).
+      const sized = yield* models.resolve(
+        // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
+        { id: SessionSchema.ID.make("ses_runner_model_test") } as unknown as SessionSchema.Info,
+        () => Effect.succeed([catalog]),
+        98_765,
+      )
+      expect(sized).toBe(stub)
+      expect(resolveSeen).toEqual([98_765])
+    }),
+  )
+})

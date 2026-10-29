@@ -41,6 +41,9 @@ export interface Interface {
   readonly resolve: (
     session: SessionSchema.Info,
     available: () => Effect.Effect<ReadonlyArray<Model.Info>>,
+    /** The live request's context size in tokens, when known: route targets whose per-target
+     * ceiling it exceeds are skipped (over-limit). Unknown (undefined) never filters. */
+    requestTokens?: number,
   ) => Effect.Effect<Resolved, Error>
 }
 
@@ -79,10 +82,10 @@ export const layer = Layer.effect(
     const resolver = yield* ModelResolver.Service
     const config = yield* Effect.serviceOption(Config.Service)
     return Service.of({
-      resolve: Effect.fn("SessionRunnerModel.resolve")(function* (session, available) {
+      resolve: Effect.fn("SessionRunnerModel.resolve")(function* (session, available, requestTokens) {
         // Location plugins populate and filter the catalog asynchronously during layer startup.
         if (!session.model) {
-          const resolved = yield* resolver.resolve()
+          const resolved = yield* resolver.resolve(undefined, requestTokens)
           if (resolved) return resolved
           return yield* new ModelNotSelectedError({ sessionID: session.id })
         }
@@ -117,7 +120,7 @@ export const layer = Layer.effect(
             providerID: target.providerID,
             modelID: target.id,
           })
-        return yield* resolver.resolveModel(selected, target.variant, session.id)
+        return yield* resolver.resolveModel(selected, target.variant, session.id, requestTokens)
       }),
     })
   }),
