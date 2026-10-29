@@ -13,7 +13,11 @@ export const MaxTokensField = Schema.Literals(["max_completion_tokens", "max_tok
 })
 export type MaxTokensField = typeof MaxTokensField.Type
 
-export const CacheFormat = Schema.Literals(["anthropic", "alibaba"]).annotate({ identifier: "Model.CacheFormat" })
+export const CacheFormat = Schema.Literals(["anthropic", "alibaba"]).annotate({
+  identifier: "Model.CacheFormat",
+  description:
+    "Prompt-cache marker syntax the endpoint accepts. Overrides the route default; both send `cache_control`, and `alibaba` skips tool definitions. A model route may set it per route or per target; a target's own value overrides the route's and nested routes inherit it.",
+})
 export type CacheFormat = typeof CacheFormat.Type
 
 export interface Compatibility extends Schema.Schema.Type<typeof Compatibility> {}

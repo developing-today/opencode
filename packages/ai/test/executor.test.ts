@@ -525,6 +525,28 @@ describe("RequestExecutor", () => {
     ),
   )
 
+  it.effect("records a __proto__ rate-limit window as an own entry", () =>
+    Effect.gen(function* () {
+      const executor = yield* RequestExecutor.Service
+      const error = yield* executor.execute(request).pipe(Effect.flip)
+
+      expectAIError(error)
+      if (error.reason._tag !== "RateLimit") throw new Error("expected rate-limit details")
+      expect(Object.hasOwn(error.reason.rateLimit.remaining, "__proto__")).toBe(true)
+      expect(error.reason.rateLimit.remaining?.["__proto__"]).toBe("5")
+    }).pipe(
+      Effect.provide(
+        fixedResponse("rate limited", {
+          status: 429,
+          headers: {
+            "x-ratelimit-limit-requests": "100",
+            "x-ratelimit-remaining-__proto__": "5",
+          },
+        }),
+      ),
+    ),
+  )
+
   it.effect("extracts Anthropic-style rate-limit diagnostics", () =>
     Effect.gen(function* () {
       const executor = yield* RequestExecutor.Service

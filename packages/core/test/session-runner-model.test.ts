@@ -107,3 +107,43 @@ describe("SessionRunnerModel bare aliases", () => {
     }),
   )
 })
+
+const itResolver = testEffect(resolver)
+
+describe("ModelResolver bare aliases", () => {
+  itResolver.effect("expands a bare-alias target that carries its own variant", () =>
+    Effect.gen(function* () {
+      const resolverService = yield* ModelResolver.Service
+      // Same discriminating case as the SessionRunnerModel test above: the
+      // target's variant ("low") differs from the alias target's variant
+      // ("high" in flash -> deepseek/deepseek-chat#high); the user's variant
+      // must win through ModelResolver.resolve too (issue #391).
+      const resolved = yield* resolverService.resolve(
+        Ref.make({ providerID: Provider.ID.make("flash"), id: ID.make(""), variant: VariantID.make("low") }),
+      )
+      expect(resolved?.ref).toEqual(
+        Ref.make({
+          providerID: Provider.ID.make("deepseek"),
+          id: ID.make("deepseek-chat"),
+          variant: VariantID.make("low"),
+        }),
+      )
+    }),
+  )
+
+  itResolver.effect("expands a bare-alias target without a variant to the alias target's variant", () =>
+    Effect.gen(function* () {
+      const resolverService = yield* ModelResolver.Service
+      const resolved = yield* resolverService.resolve(
+        Ref.make({ providerID: Provider.ID.make("flash"), id: ID.make("") }),
+      )
+      expect(resolved?.ref).toEqual(
+        Ref.make({
+          providerID: Provider.ID.make("deepseek"),
+          id: ID.make("deepseek-chat"),
+          variant: VariantID.make("high"),
+        }),
+      )
+    }),
+  )
+})

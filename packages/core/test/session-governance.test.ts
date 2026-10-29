@@ -202,6 +202,49 @@ describe("Session model governance", () => {
     }),
   )
 
+  it.effect("forking a child does not escape the policy above its source", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Service
+      const bus = yield* Bus.Service
+      const { db } = yield* Database.Service
+      const grandparent = yield* session.create({
+        location,
+        model: model("haiku"),
+        subagentPolicy: { models: ["test/haiku"] },
+      })
+      const child = yield* session.create({
+        parentID: grandparent.id,
+        agent: Agent.ID.make("worker"),
+        model: model("haiku"),
+      })
+      yield* session.prompt({ sessionID: child.id, text: "Fork context", resume: false })
+      yield* SessionInbox.promote(db, bus, child.id, "steer")
+
+      const forked = yield* session.fork({ sessionID: child.id })
+      // The fork is projected top-level, but governance still binds it to
+      // the chain above its source.
+      expect(forked.parentID).toBeUndefined()
+
+      const switchError = yield* session
+        .switchModel({ sessionID: forked.id, model: model("opus") })
+        .pipe(Effect.flip)
+      expect(switchError).toBeInstanceOf(ModelGovernance.DeniedError)
+      expect((yield* session.get(forked.id)).model?.id).toBe(Model.ID.make("haiku"))
+
+      const childError = yield* session
+        .create({ parentID: forked.id, agent: Agent.ID.make("worker"), model: model("opus") })
+        .pipe(Effect.flip)
+      expect(childError).toBeInstanceOf(ModelGovernance.DeniedError)
+
+      const grandchild = yield* session.create({
+        parentID: forked.id,
+        agent: Agent.ID.make("worker"),
+        model: model("haiku"),
+      })
+      expect(grandchild.model?.id).toBe(Model.ID.make("haiku"))
+    }),
+  )
+
   it.effect("a policy agent override narrows the models a named agent may launch with", () =>
     Effect.gen(function* () {
       const session = yield* Session.Service

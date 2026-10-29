@@ -14,6 +14,7 @@ import { errorMessage } from "../util/error"
 
 export type RunCommandInput = {
   server: ServerConnection.Resolved
+  log?: (message: string) => void
   message: string[]
   continue?: boolean
   session?: string
@@ -73,7 +74,14 @@ async function run(input: RunCommandInput, options: ExecutionOptions) {
   const root = options.root ?? process.env.PWD ?? process.cwd()
   const local = localDirectory(root)
   const directory = options.useServerDirectory ? undefined : (options.directory ?? local)
-  const message = mergeInput(formatMessage(input.message), process.stdin.isTTY ? undefined : await readStdin())
+  const message = mergeInput(
+    formatMessage(input.message),
+    process.stdin.isTTY
+      ? undefined
+      : await readStdin(() =>
+          input.log?.("Reading stdin until EOF; redirect from /dev/null when no piped input is intended"),
+        ),
+  )
   if (!message?.trim()) fail("You must provide a message")
   const files = await Promise.all(input.file.map((file) => prepareFile(file, root, options)))
   const prepared = { directory, message, files }

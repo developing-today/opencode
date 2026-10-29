@@ -37,6 +37,15 @@ const decodeCallback = Schema.decodeUnknownOption(
   ),
 )
 
+/** Server-supplied `expires_in` seconds, restricted to a plain unsigned
+ * decimal integer spelling (the #715/#724 grammar family): spellings like
+ * "1e3", "0x10", "3600junk", or "3600.9" are not reinterpreted — they yield
+ * NaN and the caller applies its 30-day fallback (#771). */
+export const expiresInSeconds = (raw: string | undefined): number => {
+  const text = (raw ?? "0").trim()
+  return /^\d+$/.test(text) ? Number.parseInt(text, 10) : Number.NaN
+}
+
 const oauth = {
   integrationID,
   method: {
@@ -71,7 +80,7 @@ const oauth = {
               response.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: message }))
               return
             }
-            const expires = Number.parseInt(body.expires_in ?? "0", 10)
+            const expires = expiresInSeconds(body.expires_in)
             Effect.runFork(
               Deferred.succeed(token, {
                 access,

@@ -995,6 +995,9 @@ it.live("fails over when a routed provider misses the first-output deadline", ()
     expect(Exit.isSuccess(result)).toBe(true)
     if (Exit.isSuccess(result)) expect(result.value._tag).toBe("Failover")
     expect(ModelRoute.coolingDown(primary.ref)).toBe(true)
+    // The failover completes on the deadline, not on the provider stream: wait for the
+    // request to actually be recorded before snapshotting llm.requests() (issue #488).
+    yield* llm.wait(1)
     expect(yield* llm.requests()).toHaveLength(1)
   }),
 )
@@ -1713,6 +1716,9 @@ describe("escalation follows the route's autonomy", () => {
 
           // A racing route answers from the next target at once; one that only fails over hands the turn back.
           expect(Exit.isSuccess(result) ? result.value._tag : undefined).toBe(races ? "Completed" : "Failover")
+          // The non-racing branch ends on the first-output deadline, which does not wait
+          // for the provider stream fiber that records the request (issue #488 audit).
+          yield* llm.wait(races ? 2 : 1)
           expect(yield* llm.requests()).toHaveLength(races ? 2 : 1)
           const starts = logged.filter((event) => event.kind === "decision" && event.row.reason === "hedge-started")
           expect(starts).toHaveLength(races ? 1 : 0)
