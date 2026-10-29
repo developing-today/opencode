@@ -11,10 +11,14 @@ const TIMEOUT_MS = 30_000
  */
 export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 
-const readBounded = async (response: Response): Promise<Uint8Array> => {
+const readBounded = async (response: Response, method: string): Promise<Uint8Array> => {
   const tooLarge = () => new Error(`Response too large (exceeds ${MAX_RESPONSE_BYTES} byte limit)`)
-  const declared = Number(response.headers.get("content-length"))
-  if (Number.isSafeInteger(declared) && declared > MAX_RESPONSE_BYTES) throw tooLarge()
+  // A HEAD response has no body: its `content-length` describes the corresponding GET, so the
+  // declared-size check would reject a HEAD for a resource a later GET could legitimately stream.
+  if (method !== "HEAD") {
+    const declared = Number(response.headers.get("content-length"))
+    if (Number.isSafeInteger(declared) && declared > MAX_RESPONSE_BYTES) throw tooLarge()
+  }
   if (!response.body) {
     const bytes = await response.bytes()
     if (bytes.byteLength > MAX_RESPONSE_BYTES) throw tooLarge()
@@ -50,13 +54,14 @@ type Init = {
 
 const fetch = async (input: string | URL, init: Init = {}) => {
   if (URL.parse(String(input))?.protocol === "file:") throw new Error("fetch cannot be used for filesystem access.")
+  const method = (init.method ?? "GET").toUpperCase()
   const response = await globalThis.fetch(input, {
     method: init.method,
     headers: init.headers,
     body: init.body,
     signal: AbortSignal.timeout(TIMEOUT_MS),
   })
-  const bytes = await readBounded(response)
+  const bytes = await readBounded(response, method)
   const headers = Object.fromEntries(response.headers)
   const text = () => new TextDecoder().decode(bytes)
   return {

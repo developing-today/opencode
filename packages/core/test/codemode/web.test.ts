@@ -11,6 +11,10 @@ type WebResponse = {
 }
 
 const webFetch = CodeModeWeb.extension.globals.fetch as (input: string) => Promise<WebResponse>
+const webFetchWithInit = CodeModeWeb.extension.globals.fetch as (
+  input: string,
+  init: { method: string },
+) => Promise<WebResponse>
 
 const serve = (headers: Record<string, string>) => {
   const server = Bun.serve({ port: 0, fetch: () => new Response("hello", { headers }) })
@@ -90,6 +94,24 @@ describe("CodeModeWeb fetch response size cap (#923)", () => {
       expect(response.status).toBe(200)
     } finally {
       server.stop()
+    }
+  })
+
+  test("a HEAD response is not rejected by the declared-size check", async () => {
+    // HEAD carries the GET representation's content-length but no body, so the declared-size
+    // pre-check must not reject a HEAD for a resource larger than the cap.
+    const server = Bun.serve({
+      port: 0,
+      fetch: (request) =>
+        request.method === "HEAD"
+          ? new Response(null, { headers: { "content-length": String(CodeModeWeb.MAX_RESPONSE_BYTES + 1) } })
+          : new Response("x".repeat(CodeModeWeb.MAX_RESPONSE_BYTES + 1)),
+    })
+    try {
+      const response = await webFetchWithInit(`http://127.0.0.1:${server.port}/`, { method: "HEAD" })
+      expect(response.status).toBe(200)
+    } finally {
+      server.stop(true)
     }
   })
 })

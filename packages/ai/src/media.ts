@@ -270,7 +270,7 @@ const download = Effect.fn("Media.download")(function* (
   const parsedSize = contentLength ? Number.parseInt(contentLength, 10) : undefined
   const declaredSize =
     parsedSize !== undefined && Number.isSafeInteger(parsedSize) && parsedSize >= 0 ? parsedSize : undefined
-  if (declaredSize !== undefined && declaredSize > MAX_DOWNLOAD_BYTES) return yield* Effect.fail(tooLarge)
+  if (declaredSize !== undefined && declaredSize > MAX_DOWNLOAD_BYTES) return yield* tooLarge
   let body = Buffer.allocUnsafe(Math.min(MAX_DOWNLOAD_BYTES, declaredSize || 64 * 1024))
   let size = 0
   yield* Stream.runForEach(response.stream, (chunk) =>
