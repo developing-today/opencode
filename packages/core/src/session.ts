@@ -612,7 +612,10 @@ const layer = Layer.effect(
         sessionID: SessionSchema.ID,
         options?: { readonly resume?: boolean; readonly force?: boolean },
       ) {
-        yield* result.get(sessionID)
+        // Existence is not an error channel on interrupt (the protocol contract is
+        // interrupted=false for the idle no-op): a missing session simply has no
+        // execution to stop and no descendants to cascade to.
+        yield* result.get(sessionID).pipe(Effect.catchTag("Session.NotFoundError", () => Effect.void))
         const force = options?.force === true
         const selfInterrupted = yield* sessions.forSession(sessionID).interrupt(
           options?.resume !== undefined ? { resume: options.resume } : undefined,
