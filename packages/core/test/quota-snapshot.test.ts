@@ -91,6 +91,30 @@ describe("QuotaSnapshot", () => {
     ).toBe(false)
   })
 
+  test("a plan named like an Object.prototype member still goes stale when the override record has no own entry for it (#824)", () => {
+    const observedAt = now - 61 * 60_000
+    for (const id of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
+      const input = { plan: { ...plan, id } as ModelPlan.Plan, window, totals: totals({ requests: 50 }), observedAt }
+      // An empty record and a JSON-parsed record naming other plans both lack an own entry for the plan.
+      expect(QuotaSnapshot.derive(input, { now, perPlanMaxAgeMs: {} }).stale).toBe(true)
+      expect(
+        QuotaSnapshot.derive(input, { now, perPlanMaxAgeMs: JSON.parse('{"other-plan": 7200000}') }).stale,
+      ).toBe(true)
+      expect(QuotaSnapshot.known(QuotaSnapshot.derive(input, { now, perPlanMaxAgeMs: {} }))).toBe(false)
+    }
+  })
+
+  test("an explicit own entry for a prototype-named plan is still honoured as its override (#824)", () => {
+    const observedAt = now - 61 * 60_000
+    const ctor = { plan: { ...plan, id: "constructor" } as ModelPlan.Plan, window, totals: totals(), observedAt }
+    expect(QuotaSnapshot.derive(ctor, { now, perPlanMaxAgeMs: { constructor: 7_200_000 } }).stale).toBe(false)
+    // An own "__proto__" key exists only via JSON.parse; an object literal would set the prototype.
+    const record = JSON.parse('{"__proto__": 7200000}') as Record<string, number>
+    expect(Object.hasOwn(record, "__proto__")).toBe(true)
+    const proto = { plan: { ...plan, id: "__proto__" } as ModelPlan.Plan, window, totals: totals(), observedAt }
+    expect(QuotaSnapshot.derive(proto, { now, perPlanMaxAgeMs: record }).stale).toBe(false)
+  })
+
   test("resetAt comes from an explicit resetAt or a daily rule, and is null for a rolling rule", () => {
     const explicit = QuotaSnapshot.derive(
       {

@@ -81,7 +81,12 @@ export const derive = (input: Input, options: Options): Snapshot => {
   // Without `windowHours` the totals cannot be attributed to this window (#550), so a percent computed
   // from them would not be a reading of the window: report unknown instead of that number.
   const windowed = input.window.windowHours !== undefined
-  const maxAge = options.perPlanMaxAgeMs?.[input.plan.id] ?? options.maxAgeMs ?? DEFAULT_MAX_AGE_MS
+  // Own-property resolution only: a plain lookup reads through the prototype chain, so a plan
+  // named e.g. "constructor" would inherit the Object function as its max age instead of falling
+  // through to the configured/default max age, and would never go stale (#824).
+  const perPlan = options.perPlanMaxAgeMs
+  const override = perPlan && Object.hasOwn(perPlan, input.plan.id) ? perPlan[input.plan.id] : undefined
+  const maxAge = override ?? options.maxAgeMs ?? DEFAULT_MAX_AGE_MS
   return {
     planID: input.plan.id,
     window: input.window.name,

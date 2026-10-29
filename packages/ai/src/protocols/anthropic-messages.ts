@@ -1193,7 +1193,11 @@ const SERVER_TOOL_RESULT_NAMES: Record<AnthropicServerToolResultType, string> = 
   web_fetch_tool_result: "web_fetch",
 }
 
-const isServerToolResultType = (type: string): type is AnthropicServerToolResultType => type in SERVER_TOOL_RESULT_NAMES
+// Own keys only: `in` reads through the prototype chain, so a streamed block typed
+// "constructor" (or toString, __proto__, ...) would pass this gate and kill the stream
+// when the mapped name turns out to be an Object prototype member instead of a string.
+const isServerToolResultType = (type: string): type is AnthropicServerToolResultType =>
+  Object.hasOwn(SERVER_TOOL_RESULT_NAMES, type)
 
 const serverToolResultEvent = (block: AnthropicStreamBlock, providerMetadataKey: string): LLMEvent | undefined => {
   if (!block.type || !isServerToolResultType(block.type)) return undefined
@@ -1383,10 +1387,7 @@ const onContentBlockDelta = Effect.fnUntraced(function* (
   return [state, NO_EVENTS] satisfies StepResult
 })
 
-const onContentBlockStop = Effect.fnUntraced(function* (
-  state: ParserState,
-  event: AnthropicEvent,
-) {
+const onContentBlockStop = Effect.fnUntraced(function* (state: ParserState, event: AnthropicEvent) {
   if (event.index === undefined) return [state, NO_EVENTS] satisfies StepResult
   if (event.index in state.compactions) {
     const { [event.index]: content, ...compactions } = state.compactions
