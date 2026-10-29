@@ -33,6 +33,10 @@ type SourceModel = {
   readonly variantMap?: Readonly<Record<string, Model.VariantID>>
   /** Prompt-cache format in force for this leaf: its own declaration, else the route's. */
   readonly cacheFormat?: CacheFormat
+  /** Effective per-target context ceiling from config: the smallest `limit.context` on the path that
+   * reached this leaf, including a nested-route reference's own limit. Undefined when no target on the
+   * path declares one; the model's own limit applies on top of what is stored here. */
+  readonly contextLimit?: number
 }
 
 export const Plugin = define({
@@ -81,7 +85,10 @@ export const Plugin = define({
         const { leaves: expanded, nodes } = expand(id, routes, definitions, windows)
         if (expanded.length === 0) return undefined
         const first = expanded[0].model
-        const leafContext = Math.min(...expanded.map((target) => target.model.limit.context))
+        // A leaf serves at most its own limit and the per-target ceilings on the path that reached it.
+        const leafCeiling = (target: (typeof expanded)[number]) =>
+          Math.min(target.model.limit.context, target.contextLimit ?? Number.POSITIVE_INFINITY)
+        const leafContext = Math.min(...expanded.map(leafCeiling))
         const health = ModelRoute.policy(route.health)
         const targetCacheFormats = expanded.map((target) =>
           target.cacheFormat ? { cacheFormat: target.cacheFormat } : {},
@@ -104,7 +111,18 @@ export const Plugin = define({
               ...(route.attempts !== undefined ? { attempts: route.attempts } : {}),
               ...(route.hedgeAfterMs ? { hedgeAfterMs: route.hedgeAfterMs } : {}),
               ...(route.autonomy ? { autonomy: route.autonomy } : {}),
+              ...(route.limit?.context !== undefined ? { limit: { context: route.limit.context } } : {}),
               budgets: expanded.map((target) => target.budget ?? {}),
+              // Parallel to targets: each leaf's effective ceiling, so selection can skip a leaf
+              // whose ceiling a request does not fit. Stored effective (with the model's own limit
+              // folded in) so eligibility needs nothing beyond the definition and the request size.
+              ...(expanded.some((target) => target.contextLimit !== undefined)
+                ? {
+                    targetLimits: expanded.map((target) => ({
+                      context: Math.min(target.model.limit.context, target.contextLimit ?? Number.POSITIVE_INFINITY),
+                    })),
+                  }
+                : {}),
               ...(globalSchedules.length > 0 ? { schedules: globalSchedules } : {}),
             },
           },
@@ -126,8 +144,17 @@ export const Plugin = define({
                   // input would silently bypass the cap whenever targets define one.
                   input:
                     route.limit?.context !== undefined
-                      ? Math.min(route.limit.context, ...expanded.map((target) => target.model.limit.input!))
-                      : Math.min(...expanded.map((target) => target.model.limit.input!)),
+                      ? Math.min(
+                          route.limit.context,
+                          ...expanded.map((target) =>
+                            Math.min(target.model.limit.input!, target.contextLimit ?? Number.POSITIVE_INFINITY),
+                          ),
+                        )
+                      : Math.min(
+                          ...expanded.map((target) =>
+                            Math.min(target.model.limit.input!, target.contextLimit ?? Number.POSITIVE_INFINITY),
+                          ),
+                        ),
                 }
               : {}),
           },
@@ -339,6 +366,7 @@ export function expand(
     inheritedVariant: Model.VariantID | undefined,
     trail: ReadonlySet<string>,
     inheritedCacheFormat: CacheFormat | undefined,
+    inheritedLimit: number | undefined,
   ): number | undefined => {
     if (trail.has(routeID)) return
     const current = routes.get(routeID)
@@ -368,12 +396,17 @@ export function expand(
       const spec = targetSpec(target)
       const ref = targetRef(spec.model)
       if (spec.until !== undefined && Date.now() >= spec.until) continue
+      // A per-target limit composes down the reach path: the smallest ceiling wins, so a
+      // nested-route reference's own limit caps every leaf reached through it.
+      const own = "limit" in spec ? spec.limit?.context : undefined
+      const ceiling = own === undefined ? inheritedLimit : Math.min(own, inheritedLimit ?? own)
       if (ref.providerID === ModelRoute.PROVIDER_ID) {
         const child = visit(
           ref.id,
           ref.variant ?? inheritedVariant,
           nextTrail,
           spec.cache_format ?? current.cache_format ?? inheritedCacheFormat,
+          ceiling,
         )
         if (child !== undefined) {
           const gate = gateFor("window" in spec ? spec.window : undefined, windows, `route ${JSON.stringify(routeID)}`)
@@ -415,7 +448,18 @@ export function expand(
           ...(variant ? { variant } : {}),
         })
         const key = `${resolved.providerID}/${resolved.id}${resolved.variant ? `#${resolved.variant}` : ""}`
-        if (attached.has(key)) continue
+        if (attached.has(key)) {
+          // Already attached to this node, but a duplicate target can still tighten the leaf's
+          // ceiling: ceilings only ever tighten, whichever reach declares the smaller one.
+          const existing = leafByKey.get(key)
+          if (
+            existing !== undefined &&
+            ceiling !== undefined &&
+            (result[existing].contextLimit === undefined || ceiling < result[existing].contextLimit)
+          )
+            result[existing] = { ...result[existing], contextLimit: ceiling }
+          continue
+        }
         attached.add(key)
         const gate = gateFor("window" in spec ? spec.window : undefined, windows, `route ${JSON.stringify(routeID)}`)
         const leafKey = `${resolved.providerID}/${resolved.id}`
@@ -423,6 +467,13 @@ export function expand(
         if (existing !== undefined) {
           // First reach wins for the leaf itself; a different node re-attaches it by index.
           attach({ leaf: existing, ...(gate ? { gate } : {}) }, leafKey)
+          // Ceilings only ever tighten: a leaf reached through several references keeps the smallest
+          // per-target ceiling, so a cap cannot be bypassed through another path.
+          if (
+            ceiling !== undefined &&
+            (result[existing].contextLimit === undefined || ceiling < result[existing].contextLimit)
+          )
+            result[existing] = { ...result[existing], contextLimit: ceiling }
           continue
         }
         const defaultVariant =
@@ -455,6 +506,7 @@ export function expand(
           ...(defaultVariant ? { defaultVariant } : {}),
           ...(Object.keys(variantMap).length ? { variantMap } : {}),
           ...(cacheFormat ? { cacheFormat } : {}),
+          ...(ceiling !== undefined ? { contextLimit: ceiling } : {}),
         })
         }
       }
@@ -462,7 +514,7 @@ export function expand(
     return node.children.length > 0 ? nodeIndex : undefined
   }
 
-  visit(id, undefined, new Set(), undefined)
+  visit(id, undefined, new Set(), undefined, undefined)
   return { leaves: result, nodes }
 }
 

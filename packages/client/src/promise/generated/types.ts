@@ -760,6 +760,7 @@ export type ConfigModelRouteTarget =
       defaultVariant?: string
       variants?: { [x: string]: string }
       until?: number
+      limit?: { context: number }
       cache_format?: ModelCacheFormat
       window?: string | { name: string; invert?: boolean }
     }
