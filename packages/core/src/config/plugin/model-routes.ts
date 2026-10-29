@@ -496,7 +496,15 @@ export function retargetDefinition(
   for (const route of routes.values()) {
     for (const target of route.targets) {
       const ref = targetRef(targetSpec(target).model)
-      if (ref.providerID !== ModelRoute.PROVIDER_ID) targeted.add(ref.providerID)
+      // A door-set target (`*`, #869) names no single provider: every concrete
+      // door is targeted, so transform-created models are merged from each
+      // door's editor exactly as an explicitly enumerated provider's are.
+      // Excluded doors are merged too and stay excluded in expand().
+      if (ref.providerID === "*") {
+        for (const providerID of definitions.keys()) {
+          if (providerID !== ModelRoute.PROVIDER_ID) targeted.add(providerID)
+        }
+      } else if (ref.providerID !== ModelRoute.PROVIDER_ID) targeted.add(ref.providerID)
     }
   }
   for (const providerID of targeted) {

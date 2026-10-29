@@ -482,6 +482,55 @@ describe("ModelGovernance.assertAllowed", () => {
     await run({ all: [parent], parent, configInput, catalogInput, model: ref("opencode-route/main") })
   })
 
+  test("a door-set target pinned to a variant is judged at its remapped variant (#869)", async () => {
+    const configInput = {
+      experimental: { model_routes: { main: { targets: [{ model: "*/a#low", variants: { low: "high" } }] } } },
+    }
+    const catalogInput = { test: { a: { variants: ["high"] } }, other: { a: { variants: ["low", "high"] } } }
+    // Both doors run the target at #high: the test door offers only #high, so judging
+    // the pinned #low literally would drop that door from the judged set entirely and
+    // judge the other door at a variant it never runs.
+    const excluding = info("ses_excluding", { subagentPolicy: { excludedModels: ["test/a#high"] } })
+    const message = await runDenied({
+      all: [excluding],
+      parent: excluding,
+      configInput,
+      catalogInput,
+      model: ref("opencode-route/main"),
+    })
+    expect(message).toContain("test/a#high")
+    // An allowed list naming the remapped variant on both doors passes.
+    const allowing = info("ses_allowing", { subagentPolicy: { models: ["test/a#high", "other/a#high"] } })
+    await run({ all: [allowing], parent: allowing, configInput, catalogInput, model: ref("opencode-route/main") })
+  })
+
+  test("a leaf that cannot produce the requested variant is pruned from governance, as in expansion (#869)", async () => {
+    const configInput = {
+      experimental: { model_routes: { main: { targets: ["test/a", "test/b"] } } },
+    }
+    const catalogInput = { test: { a: { variants: ["low"] }, b: { variants: ["max"] } } }
+    // Requested at #max, test/a offers only #low, so expansion prunes it: excluding
+    // the bare test/a must not deny the route through a leaf that never runs.
+    const excluding = info("ses_excluding", { subagentPolicy: { excludedModels: ["test/a"] } })
+    await run({
+      all: [excluding],
+      parent: excluding,
+      configInput,
+      catalogInput,
+      model: ref("opencode-route/main#max"),
+    })
+    // The surviving leaf is judged at the requested variant.
+    const surviving = info("ses_surviving", { subagentPolicy: { excludedModels: ["test/b#max"] } })
+    const message = await runDenied({
+      all: [surviving],
+      parent: surviving,
+      configInput,
+      catalogInput,
+      model: ref("opencode-route/main#max"),
+    })
+    expect(message).toContain("test/b#max")
+  })
+
   test("a wildcard route target expanding only to allowed models passes (#530b)", async () => {
     const parent = info("ses_parent", { subagentPolicy: { models: ["test/a", "test/b"] } })
     const configInput = { experimental: { model_routes: { main: { targets: [{ model: "test/*" }] } } } }

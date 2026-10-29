@@ -78,6 +78,51 @@ describe("retargetDefinition (#236)", () => {
     expect(next?.targets.map((target) => String(target.id))).toEqual(["gpt-5-base", "prod-mini"])
   })
 
+  test("a */* door-set target picks up transform-created models from every concrete door (#869)", () => {
+    const other = Provider.ID.make("other")
+    const otherCatalog = new Map<string, Model.Info>([["x", Model.Info.default(other, Model.ID.make("x"))]])
+    // A provider-aware editor: ids/get answer only for the provider asked, so a
+    // literal "*" lookup finds nothing \u2014 the retarget must ask each door.
+    const awareEditor = {
+      provider: {
+        list: () => [
+          { provider: Provider.Info.empty(azure), models: catalog },
+          { provider: Provider.Info.empty(other), models: otherCatalog },
+        ],
+        get: () => undefined,
+      },
+      ids: (providerID: Provider.ID) =>
+        providerID === azure ? Array.from(current.keys()).map((id) => Model.ID.make(id)) : [],
+      get: (providerID: Provider.ID, modelID: Model.ID) =>
+        providerID === azure ? current.get(String(modelID)) : undefined,
+    } as unknown as Parameters<typeof retargetDefinition>[2]
+    const routeMap = new Map<string, ConfigModelRoutes.Route>([
+      ["r", { targets: [{ providerID: "*", model: "*" }] } as unknown as ConfigModelRoutes.Route],
+    ])
+    const definitions = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>([
+      [azure, catalog],
+      [other, otherCatalog],
+    ])
+    const { leaves, nodes } = expand("r", routeMap, definitions)
+    const before = {
+      id: Model.ID.make("r"),
+      targets: leaves.map((leaf) => leaf.ref),
+      targetVariants: leaves.map(() => ({})),
+      health: ModelRoute.policy(),
+      budgets: leaves.map(() => ({})),
+      nodes,
+    } satisfies ModelRoute.Definition
+    expect(before.targets.map((target) => `${target.providerID}/${target.id}`)).toEqual(["azure/gpt-5-base", "other/x"])
+    const next = retargetDefinition(before, routeMap, awareEditor)
+    // The transform-created azure/prod-mini joins the */* pool exactly as it does
+    // for an explicitly enumerated azure/* target.
+    expect(next?.targets.map((target) => `${target.providerID}/${target.id}`)).toEqual([
+      "azure/gpt-5-base",
+      "azure/prod-mini",
+      "other/x",
+    ])
+  })
+
   test("a route whose targets are unchanged is left alone", () => {
     const routeMap = routes(["azure/gpt-5-base"])
     expect(retargetDefinition(stored(routeMap), routeMap, editor)).toBeUndefined()
