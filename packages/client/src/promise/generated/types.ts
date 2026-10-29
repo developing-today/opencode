@@ -1738,6 +1738,15 @@ export type FilesystemChanged = {
   data: { file: string; event: "add" | "change" | "unlink" }
 }
 
+export type FilesystemWatcherDegraded = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "filesystem.watcher-degraded"
+  location?: LocationRef
+  data: { directory: string; cause: "timeout" | "inotify-limit" | "unsupported" | "error" }
+}
+
 export type ReferenceUpdated = {
   id: EventID
   created: number
@@ -3075,6 +3084,7 @@ export type V2Event =
   | SessionRevertCleared
   | SessionRevertCommitted
   | FilesystemChanged
+  | FilesystemWatcherDegraded
   | ReferenceUpdated
   | PermissionAsked
   | PermissionReplied

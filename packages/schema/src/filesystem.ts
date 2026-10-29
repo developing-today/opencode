@@ -12,7 +12,15 @@ const Changed = ephemeral({
     event: Schema.Literals(["add", "change", "unlink"]),
   },
 })
-export const Event = { Changed, Definitions: inventory(Changed) }
+
+const WatcherDegraded = ephemeral({
+  type: "filesystem.watcher-degraded",
+  schema: {
+    directory: Schema.String,
+    cause: Schema.Literals(["timeout", "inotify-limit", "unsupported", "error"]),
+  },
+})
+export const Event = { Changed, WatcherDegraded, Definitions: inventory(Changed, WatcherDegraded) }
 
 export interface Entry extends Schema.Schema.Type<typeof Entry> {}
 export const Entry = Schema.Struct({

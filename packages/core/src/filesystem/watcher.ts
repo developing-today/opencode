@@ -13,7 +13,17 @@ import path from "path"
 import loadBinding from "./watcher-binding.js"
 
 const SUBSCRIBE_TIMEOUT_MS = 10_000
-export const Event = { Updated: FileSystem.Event.Changed }
+export const Event = { Updated: FileSystem.Event.Changed, Degraded: FileSystem.Event.WatcherDegraded }
+
+export type SubscribeFailureCause = "timeout" | "inotify-limit" | "unsupported" | "error"
+
+/** Classifies a native subscribe failure for the watcher-degraded signal (#797). */
+export function classifySubscribeCause(cause: Cause.Cause<unknown>): SubscribeFailureCause {
+  const pretty = Cause.pretty(cause)
+  if (pretty.includes("TimeoutException") || pretty.includes("timed out")) return "timeout"
+  if (/ENOSPC|inotify/i.test(pretty)) return "inotify-limit"
+  return "error"
+}
 
 const watcher = lazy((): typeof ParcelWatcher | undefined => {
   try {
@@ -113,6 +123,11 @@ export const layer = (options?: Options) =>
             )
             if (!subscription) {
               // Unsupported backend: end subscriber streams instead of hanging them.
+              yield* Effect.logError("watcher degraded: no watching established", {
+                path: key.target,
+                type: key.type,
+                degraded: true,
+              })
               yield* PubSub.shutdown(pubsub)
               return pubsub
             }
@@ -221,7 +236,7 @@ export const nativeLayer = Layer.succeed(
           return { unsubscribe: () => Promise.resolve(subscription.close()), backend: "node" }
         })
       }
-      return subscribeDirectory(watcher(), getBackend(), input.target, input.ignore, input.publish)
+      return subscribeDirectoryWithFallback(watcher(), getBackend(), input.target, input.ignore, input.publish)
     },
   }),
 )
@@ -234,12 +249,38 @@ export function configured(options?: Options) {
 
 export const node = configured()
 
-function subscribeDirectory(
+/** Attempts the node fs.watch fallback after a native subscribe failure (#797). */
+const attemptNodeFallback = (
+  directory: string,
+  ignore: readonly string[],
+  publish: (update: Update) => void,
+  failure: SubscribeFailureCause,
+  cause: Cause.Cause<unknown>,
+): Effect.Effect<Subscription | undefined> =>
+  Effect.sync(() => subscribeDirectoryWithNode(directory, ignore, publish)).pipe(
+    Effect.flatMap((fallback) =>
+      fallback
+        ? Effect.logWarning("native watcher subscribe failed; fell back to node fs.watch", {
+            directory,
+            cause: failure,
+            error: Cause.pretty(cause),
+          }).pipe(Effect.as(fallback))
+        : Effect.logError("watcher degraded: no watching established", {
+            directory,
+            cause: failure,
+            degraded: true,
+            error: Cause.pretty(cause),
+          }).pipe(Effect.as(undefined)),
+    ),
+  )
+
+export function subscribeDirectoryWithFallback(
   native: typeof ParcelWatcher | undefined,
   backend: ParcelWatcher.BackendType | undefined,
   directory: string,
   ignore: readonly string[],
   publish: (update: Update) => void,
+  timeoutMs: number = SUBSCRIBE_TIMEOUT_MS,
 ): Effect.Effect<Subscription | undefined> {
   if (!native || !backend) {
     // The Parcel binding can be unavailable even on supported platforms
@@ -250,9 +291,13 @@ function subscribeDirectory(
       catch: (cause) => cause,
     }).pipe(
       Effect.catchCause((cause) =>
-        Effect.logError("watcher backend not supported", { directory, platform: process.platform, cause }).pipe(
-          Effect.as(undefined),
-        ),
+        Effect.logError("watcher backend not supported", {
+          directory,
+          platform: process.platform,
+          cause: "unsupported" as SubscribeFailureCause,
+          degraded: true,
+          error: Cause.pretty(cause),
+        }).pipe(Effect.as(undefined)),
       ),
     )
   }
@@ -273,13 +318,12 @@ function subscribeDirectory(
         pending.then((subscription) => subscription.unsubscribe()).catch(() => {})
       }),
     ),
-    Effect.timeout(SUBSCRIBE_TIMEOUT_MS),
-    Effect.catchCause((cause) =>
-      Effect.logError("failed to subscribe", {
-        directory,
-        cause: Cause.pretty(cause),
-      }).pipe(Effect.as(undefined)),
-    ),
+    Effect.timeout(timeoutMs),
+    // A native subscribe that times out (very large trees, #797/#195) or
+    // fails (inotify ENOSPC) must not silently end the watch: attempt the
+    // node fs.watch fallback (#773) before giving up, and only then report
+    // the directory as degraded with its cause class.
+    Effect.catchCause((cause) => attemptNodeFallback(directory, ignore, publish, classifySubscribeCause(cause), cause)),
   )
 }
 

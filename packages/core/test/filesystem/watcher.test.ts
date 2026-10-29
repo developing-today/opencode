@@ -1,8 +1,8 @@
 import { $ } from "bun"
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
-import { Deferred, Duration, Effect, Fiber, Layer, Option, Schedule, Stream } from "effect"
+import { Cause, Deferred, Duration, Effect, Fiber, Layer, Option, Schedule, Stream } from "effect"
 import { Config } from "@opencode/core/config"
 import { ConfigLocationWatcherPlugin } from "@opencode/core/config/plugin/location-watcher"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
@@ -684,4 +684,68 @@ describeNative("LocationWatcher", () => {
       )
     }),
   )
+})
+
+describe("Watcher subscribe fallback (#797)", () => {
+  const fakeNative = (subscribe: () => Promise<never>) =>
+    ({ subscribe }) as unknown as Parameters<typeof Watcher.subscribeDirectoryWithFallback>[0]
+
+  test("classifies subscribe failure causes", async () => {
+    const timedOut = await Effect.runPromise(Effect.flip(Effect.timeout(Effect.never, "1 millis")))
+    expect(Watcher.classifySubscribeCause(Cause.fail(timedOut))).toBe("timeout")
+    expect(
+      Watcher.classifySubscribeCause(
+        Cause.fail(new Error("ENOSPC: System limit for number of file watchers reached")),
+      ),
+    ).toBe("inotify-limit")
+    expect(Watcher.classifySubscribeCause(Cause.fail(new Error("boom")))).toBe("error")
+  })
+
+  test("falls back to node fs.watch when the native subscribe times out", async () => {
+    const directory = (await tmpdir()).path
+    const updates: Watcher.Update[] = []
+    const subscription = await Effect.runPromise(
+      Watcher.subscribeDirectoryWithFallback(
+        fakeNative(() => new Promise<never>(() => {})),
+        "inotify",
+        directory,
+        [],
+        (update) => updates.push(update),
+        50,
+      ),
+    )
+    expect(subscription?.backend).toBe("node")
+    await fs.writeFile(path.join(directory, "fresh.txt"), "x")
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(updates.some((update) => update.path === path.join(directory, "fresh.txt"))).toBe(true)
+    await subscription?.unsubscribe()
+  })
+
+  test("falls back to node fs.watch when the native subscribe fails with ENOSPC", async () => {
+    const directory = (await tmpdir()).path
+    const subscription = await Effect.runPromise(
+      Watcher.subscribeDirectoryWithFallback(
+        fakeNative(() => Promise.reject(new Error("ENOSPC: System limit for number of file watchers reached"))),
+        "inotify",
+        directory,
+        [],
+        () => {},
+      ),
+    )
+    expect(subscription?.backend).toBe("node")
+    await subscription?.unsubscribe()
+  })
+
+  test("gives up (undefined) when the node fallback cannot watch either", async () => {
+    const subscription = await Effect.runPromise(
+      Watcher.subscribeDirectoryWithFallback(
+        fakeNative(() => Promise.reject(new Error("ENOSPC"))),
+        "inotify",
+        path.join((await tmpdir()).path, "does-not-exist"),
+        [],
+        () => {},
+      ),
+    )
+    expect(subscription).toBeUndefined()
+  })
 })
