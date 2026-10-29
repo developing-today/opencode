@@ -4,6 +4,7 @@ import { Effect, Ref, Schema } from "effect"
 import { FileSystem } from "effect"
 import { HttpClientRequest } from "effect/http"
 import { AIError, Media, Message } from "../src/index.js"
+import { fileMediaType, mediaTypeExtension } from "../src/utils/media-type.js"
 import { it } from "./lib/effect.js"
 import { dynamicResponse, scriptedResponses } from "./lib/http.js"
 
@@ -73,6 +74,19 @@ describe("Media", () => {
       expect(Media.bytes(PNG).mediaType).toBe("image/png")
       expect(Media.bytes(Uint8Array.from([1, 2, 3])).mediaType).toBe("application/octet-stream")
       expect(Media.bytes(Uint8Array.from([1, 2, 3]), "image/x-custom").mediaType).toBe("image/x-custom")
+    }),
+  )
+
+  it.effect("does not read media-type lookups through the prototype chain", () =>
+    Effect.sync(() => {
+      for (const name of ["constructor", "__proto__", "toString"]) {
+        expect(mediaTypeExtension(name)).toBeUndefined()
+        expect(fileMediaType(Uint8Array.from([1, 2, 3]), `file.${name}`)).toBeUndefined()
+      }
+      expect(mediaTypeExtension("audio/mp3")).toBe("mp3")
+      expect(mediaTypeExtension("audio/wav")).toBe("wav")
+      expect(mediaTypeExtension("image/png")).toBe("png")
+      expect(fileMediaType(Uint8Array.from([1, 2, 3]), "notes.txt")).toBe("text/plain")
     }),
   )
 
