@@ -39,6 +39,12 @@ import { PluginHooks } from "./hooks.js"
 import type { Interface } from "../plugin.js"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 
+/** Provider.Info plus its resolved models — the InfoWithModels HTTP/domain shape (#560). */
+const embedModels = (definition: Provider.Definition) => ({
+  ...definition.provider,
+  models: Array.from(definition.models.values()),
+})
+
 const mutable = <T>(value: T) => value as DeepMutable<T>
 type RpcEvent = Event.Payload & {
   readonly type: `rpc.${string}`
@@ -191,17 +197,24 @@ export const make = Effect.fn("PluginHost.make")(function* (
       },
     },
     provider: {
-      list: () => response(providers.available()),
+      // The provider domain serves the InfoWithModels shape (#560), composed from the
+      // snapshot exactly as the HTTP handler does (handlers/provider.ts): get serves
+      // precisely the set list serves (#661).
+      list: () =>
+        response(
+          providers
+            .snapshot()
+            .pipe(Effect.map((snapshot) => snapshot.available.map((definition) => embedModels(definition)))),
+        ),
       get: (input) =>
-        providers
-          .get(Provider.ID.make(input.providerID))
-          .pipe(
-            Effect.flatMap((provider) =>
-              provider === undefined
-                ? Effect.fail(new Error(`Provider not found: ${input.providerID}`))
-                : response(Effect.succeed(provider)),
-            ),
-          ),
+        providers.snapshot().pipe(
+          Effect.flatMap((snapshot) => {
+            const definition = snapshot.available.find((item) => item.provider.id === input.providerID)
+            return definition === undefined
+              ? Effect.fail(new Error(`Provider not found: ${input.providerID}`))
+              : response(Effect.succeed(embedModels(definition)))
+          }),
+        ),
       reload: providers.reload,
       transform: (callback) =>
         providers.transform((editor) => {
