@@ -714,8 +714,8 @@ A window is a recurring local-time period. Define windows once under `model_rout
 
 Every field is optional:
 
-- `daysOfWeek` - weekday names (`"mon"`, `"monday"`, and so on) or numbers from 0 (Sunday) to 6 (Saturday). Empty or unset means every day.
-- `daysOfMonth` - days from 1 to 31, or `-1` for the last day of the month. Empty or unset means every day. When both day fields are set, both have to match, so `daysOfMonth: [1, 2, 3, 4, 5, 6, 7]` with `daysOfWeek: ["mon"]` is the first Monday of the month.
+- `daysOfWeek` - weekday names (`"mon"`, `"monday"`, and so on) or numbers from 0 (Sunday) to 6 (Saturday). Omit the field to mean every day. An empty array is not the same as omitting it: an empty array makes the whole window invalid, so any schedule or gate that uses it is dropped.
+- `daysOfMonth` - days from 1 to 31, or `-1` for the last day of the month. Omit the field to mean every day; an empty array invalidates the window, as above. When both day fields are set, both have to match, so `daysOfMonth: [1, 2, 3, 4, 5, 6, 7]` with `daysOfWeek: ["mon"]` is the first Monday of the month.
 - `start` and `end` - the daily bounds as `"HH:mm"` local time. `end` is exclusive. Unset means the start or end of the day, and a `start` later than the `end` runs past midnight into the following morning.
 - `timezone` - an IANA timezone such as `"America/Chicago"`. Unset means the host's local timezone.
 - `from` and `until` - epoch milliseconds before or after which the window never applies.
@@ -730,7 +730,7 @@ A target can gate its eligibility on a window with its `window` option, either a
       "workhorse": {
         "targets": [
           { "model": "deepseek/deepseek-chat", "window": { "name": "deepseek-peak", "invert": true } },
-          { "model": "deepseek/deepseek-chat", "window": "deepseek-peak" }
+          { "model": "deepseek/deepseek-reasoner", "window": "deepseek-peak" }
         ]
       }
     }
@@ -738,7 +738,7 @@ A target can gate its eligibility on a window with its `window` option, either a
 }
 ```
 
-The first target above is a candidate only off-peak (while the window is **not** active); the second is a candidate only during the peak window itself. An unknown window name drops the gate, leaving the target always eligible - check window names carefully, because the mistake is silent.
+The first target above is a candidate only off-peak (while the window is **not** active); the second is a candidate only during the peak window itself. The two targets must be distinct: targets are deduplicated within a route by provider, model, and variant, so repeating the same model with a different gate keeps only the first entry and discards the second gate. To gate the same model two ways, use distinct targets (as above) or separate nested routes. An unknown window name drops the gate, leaving the target always eligible - check window names carefully, because the mistake is silent.
 
 #### Schedules
 
@@ -779,7 +779,7 @@ Use `model_route_tuning` to review routing history on a schedule and put the res
       "enabled": true,
       "intervalMinutes": 15,
       "windowHours": 24,
-      "notes": ["deepseek: back in 3 hours"]
+      "notes": ["deepseek: skip until 2027-01-01T06:00:00Z"]
     }
   }
 }
@@ -788,7 +788,7 @@ Use `model_route_tuning` to review routing history on a schedule and put the res
 - `enabled` - turn the scheduled review on. It applies to every route that uses `rules`, as well as routes at `adaptive` or higher. Defaults to `false`.
 - `intervalMinutes` - minutes between reviews, up to 1440. Defaults to 15.
 - `windowHours` - how much history each review looks at, up to 336. Defaults to 24.
-- `notes` - what the history cannot say, one note per entry, in the form `match: text`, where `match` is a case-insensitive substring of provider/model. A text that states when a limit returns, such as `reset at 2026-01-01` or `back in 3 hours`, skips the matching targets until then; the rest is shown to the agent by `route_stats`. A note that does not match this form is dropped when the config loads, so keep the `match: text` shape exact - one note per entry, with a non-empty match and non-empty text.
+- `notes` - what the history cannot say, one note per entry, in the form `match: text`, where `match` is a case-insensitive substring of provider/model. A text that states when a limit returns, such as `reset at 2027-01-01` or `skip until 2027-01-01T06:00:00Z`, skips the matching targets until then. Prefer an absolute time like those examples: a relative text such as `back in 3 hours` is re-read at every review, so its reset is recalculated as three hours from that review and keeps renewing for as long as the note stays configured and reviews keep running; the rest is shown to the agent by `route_stats`. A note that does not match this form is dropped when the config loads, so keep the `match: text` shape exact - one note per entry, with a non-empty match and non-empty text.
 
 #### Routing log
 
