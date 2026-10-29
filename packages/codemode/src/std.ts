@@ -147,7 +147,17 @@ async function sleep(ms) {
   if (typeof hostSleep !== "function") {
     throw new Error("std.sleep is unavailable: this execution has no sleep host primitive.");
   }
-  return hostSleep(ms);
+  // A host primitive may cap a single wait (core caps one call at 30s), so a
+  // single call can return before the requested time has elapsed. Measure
+  // against Date.now and keep waiting out the remainder instead of silently
+  // shortening the sleep: deadlines built on sleep (withTimeout, retry
+  // delays) must fire at the requested time, not at the host cap.
+  const start = Date.now();
+  let remaining = ms;
+  while (remaining > 0) {
+    await hostSleep(remaining);
+    remaining = ms - (Date.now() - start);
+  }
 }
 
 async function mapLimit(items, limit, fn) {

@@ -166,6 +166,44 @@ describe("std async helpers (#803)", () => {
     if (!result.ok) expect(result.error.kind).toBe("TimeoutExceeded")
   })
 
+  test("std.sleep waits out the full request when the host primitive caps a single wait", async () => {
+    // A host primitive that caps one wait at 10ms, the way core caps one wait
+    // at 30s: a 35ms sleep must be re-waited in segments, never shortened to
+    // the cap, and a withTimeout deadline must fire at its requested time.
+    const clampedCalls: Array<number> = []
+    const clamped = Extension.make({
+      name: "sleep",
+      globals: {
+        [Std.sleepHostGlobal]: async (ms: number) => {
+          clampedCalls.push(ms)
+          await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 10)))
+        },
+      },
+    })
+    const runClamped = (code: string) =>
+      Effect.runPromise(CodeMode.make({ extensions: [clamped], libraries: [Std.library] }).execute(code))
+    const slept = await runClamped("const start = Date.now(); await std.sleep(35); return Date.now() - start")
+    expect(slept.ok).toBe(true)
+    if (slept.ok) expect(slept.value as number).toBeGreaterThanOrEqual(30)
+    expect(clampedCalls.length).toBeGreaterThanOrEqual(3)
+    const timed = await runClamped(`
+      const start = Date.now();
+      let rejectedAt = -1;
+      const slow = (async () => { await std.sleep(45); return "slow"; })();
+      try {
+        await std.withTimeout(slow, 25);
+      } catch {
+        rejectedAt = Date.now() - start;
+      }
+      return rejectedAt;
+    `)
+    expect(timed.ok).toBe(true)
+    if (timed.ok) {
+      expect(timed.value as number).toBeGreaterThanOrEqual(20)
+      expect(timed.value as number).toBeLessThan(45)
+    }
+  })
+
   test("std.mapLimit bounds concurrency, preserves order, and stops starting after a rejection", async () => {
     const outcome = await valueAsync(`
       let active = 0;

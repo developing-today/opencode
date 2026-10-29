@@ -2,7 +2,9 @@ export * as CodeModeSleep from "./sleep.js"
 
 import { Extension, Std } from "@opencode/codemode"
 
-/** One sleep may not exceed this cap, however much budget the execution has left. */
+/** One host wait may not exceed this cap. std.sleep measures elapsed time and
+ * re-waits the remainder, so the cap segments long sleeps instead of
+ * shortening them; the execution's own timeout still bounds the total. */
 const MAX_SLEEP_MS = 30_000
 
 const sleep = async (ms: unknown) => {
