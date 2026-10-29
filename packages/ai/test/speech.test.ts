@@ -186,6 +186,20 @@ describe("Speech", () => {
     }).pipe(Effect.provide(layer(() => Effect.die("an unsupported request reached the network")))),
   )
 
+  it.effect("rejects prototype-named speech formats before sending anything", () =>
+    Effect.gen(function* () {
+      const attempts = ["constructor", "__proto__", "toString"].flatMap((format) => [
+        Speech.generate({ model: deepgram, text: "Hi", format }),
+        Speech.generate({ model: cartesia, text: "Hi", voice, format }),
+        Speech.generate({ model: elevenlabs, text: "Hi", voice, format }),
+      ])
+      const errors = yield* Effect.all(attempts.map((effect) => Effect.flip(effect)))
+      expect(errors.map((error) => [error.reason._tag, "operation" in error.reason && error.reason.operation])).toEqual(
+        attempts.map(() => ["UnsupportedOperation", "media.format"]),
+      )
+    }).pipe(Effect.provide(layer(() => Effect.die("a prototype-named format reached the network")))),
+  )
+
   it.effect("treats timestamps: false as not asking for timestamps on routes that cannot return them", () =>
     Effect.gen(function* () {
       const bytes = Uint8Array.from([1, 2, 3])

@@ -96,7 +96,10 @@ const OUTPUT_FORMATS: Readonly<Record<string, string>> = {
 
 /** WAV is served only by the non-streaming endpoints. */
 const outputFormat = Effect.fnUntraced(function* (request: MediaProtocol.Addressed<Request>) {
-  const format = request.providerOptions?.outputFormat ?? OUTPUT_FORMATS[request.format ?? "mp3"]
+  const requested = request.format ?? "mp3"
+  const format =
+    request.providerOptions?.outputFormat ??
+    (Object.hasOwn(OUTPUT_FORMATS, requested) ? OUTPUT_FORMATS[requested] : undefined)
   if (format === undefined)
     return yield* route.unsupported(
       "media.format",
