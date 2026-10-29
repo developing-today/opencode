@@ -8,6 +8,23 @@ test("truncates text from the right by terminal width", () => {
   expect(Locale.truncateWidth("abcdefgh", 0)).toBe("")
 })
 
+test("truncators never exceed the requested length at lengths 0-2", () => {
+  const str = "abcdefghijklmnop"
+  expect(Locale.truncate(str, 0)).toBe("")
+  expect(Locale.truncate(str, 1)).toBe("…")
+  expect(Locale.truncate(str, 2)).toBe("a…")
+  expect(Locale.truncate(str, 5)).toBe("abcd…")
+  expect(Locale.truncateLeft(str, 0)).toBe("")
+  expect(Locale.truncateLeft(str, 1)).toBe("…")
+  expect(Locale.truncateLeft(str, 2)).toBe("…p")
+  expect(Locale.truncateLeft(str, 5)).toBe("…mnop")
+  expect(Locale.truncateMiddle(str, 0)).toBe("")
+  expect(Locale.truncateMiddle(str, 1)).toBe("…")
+  expect(Locale.truncateMiddle(str, 2)).toBe("a…")
+  expect(Locale.truncateMiddle(str, 3)).toBe("a…p")
+  expect(Locale.truncateMiddle(str, 9)).toBe("abcd…mnop")
+})
+
 test("takes whole graphemes within terminal width", () => {
   expect(Locale.takeWidth("ab界cd", 4)).toBe("ab界")
   expect(Locale.graphemes("a👨‍👩‍👧‍👦b")).toEqual(["a", "👨‍👩‍👧‍👦", "b"])

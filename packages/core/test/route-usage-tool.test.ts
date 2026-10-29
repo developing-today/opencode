@@ -41,6 +41,39 @@ describe("route_usage without a history database", () => {
     ])
   })
 
+  test("a quota window without windowHours is listed with its limit and reset rule, usage unknown", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "route-usage-"))
+    const { store } = ModelPlan.upsertPlan(
+      ModelPlan.emptyStore(),
+      {
+        providerID: "openai",
+        plan: "Plus",
+        quotas: [
+          { name: "5-hour", unit: "requests", limit: 100, windowHours: 5 },
+          { name: "monthly", unit: "requests", limit: 1000, resetRule: "resets on the 1st" },
+        ],
+      },
+      "2026-10-14T09:00:00.000Z",
+    )
+    ModelPlan.writeStore(store, dataDir)
+    const report = await Effect.runPromise(
+      RouteUsageTool.collect({ hours: 24 }, undefined, { dataDir, now: () => NOW }),
+    )
+    expect(report.plans).toMatchObject([
+      { plan: "openai-plus", window: "5-hour", windowHours: 5, used: null, limit: 100 },
+      {
+        plan: "openai-plus",
+        window: "monthly",
+        windowHours: null,
+        used: null,
+        percent: null,
+        remaining: null,
+        limit: 1000,
+        resetRule: "resets on the 1st",
+      },
+    ])
+  })
+
   test("a damaged plan file is reported, and usage still comes back", async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "route-usage-"))
     fs.writeFileSync(path.join(dataDir, "plans.json"), "{")

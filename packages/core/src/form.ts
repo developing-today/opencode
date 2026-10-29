@@ -269,18 +269,76 @@ function matches(when: Form.When, value: Form.Value | undefined) {
   return when.op === "eq" ? hit : !hit
 }
 
-// Create-time validation of `when` references: each condition must point at an earlier field,
+// Create-time validation of field definitions and `when` references: a field's own bounds must
+// be satisfiable (min <= max, enough options for minItems, an integer inside an integer range)
+// and a string pattern must compile, and each `when` condition must point at an earlier field,
 // carry a value matching that field's type, and use a declared option when the field's options
 // are closed. Rejecting these at creation surfaces authoring mistakes to the caller instead of
 // silently never matching.
 export function validateFields(fields: ReadonlyArray<Form.Field>) {
   if (fields.length === 0) return "Form must have at least one field"
-  const earlier = new Map<string, InputField>()
+  const earlier = new Map<string, Form.Field>()
   const keys = new Set<string>()
   for (const field of fields) {
     if (keys.has(field.key)) return `Duplicate form field key: ${field.key}`
     keys.add(field.key)
-    if (field.type === "external") continue
+    // External fields count as defined for `when` references too (as they already do for
+    // duplicate keys): an acknowledgement is a boolean answer, so a field may gate on it.
+    if (field.type === "external") {
+      earlier.set(field.key, field)
+      continue
+    }
+    if (field.type === "string") {
+      if (field.minLength !== undefined && field.maxLength !== undefined && field.minLength > field.maxLength)
+        return `Form field has minLength greater than maxLength: ${field.key}`
+      // A required string needs at least one character: with maxLength 0 the
+      // empty answer is missing-required and any non-empty answer is too long.
+      if (field.required && field.maxLength === 0)
+        return `Form field has maxLength 0 but is required: ${field.key}`
+      // A required string with a closed empty options list has no valid
+      // answer: the empty answer is missing-required and any other value is
+      // not one of the (zero) declared options.
+      if (field.required && field.options !== undefined && !field.custom && field.options.length === 0)
+        return `Form field has no options but is required: ${field.key}`
+      if (field.pattern !== undefined) {
+        try {
+          new RegExp(field.pattern)
+        } catch {
+          return `Form field has invalid pattern: ${field.key}`
+        }
+      }
+    }
+    if (field.type === "number" || field.type === "integer") {
+      if (field.minimum !== undefined && field.maximum !== undefined && field.minimum > field.maximum)
+        return `Form field has minimum greater than maximum: ${field.key}`
+      // An integer range that contains no integer (1.2..1.8) passes the pairwise check
+      // but no answer can ever satisfy it: integers below the range are too small,
+      // integers above it are too large, and non-integers are rejected outright.
+      if (
+        field.type === "integer" &&
+        field.minimum !== undefined &&
+        field.maximum !== undefined &&
+        Math.ceil(field.minimum) > Math.floor(field.maximum)
+      )
+        return `Form field range contains no integer: ${field.key}`
+    }
+    if (field.type === "multiselect") {
+      if (field.minItems !== undefined && field.maxItems !== undefined && field.minItems > field.maxItems)
+        return `Form field has minItems greater than maxItems: ${field.key}`
+      // A closed multiselect's answers may only contain declared options, so asking
+      // for more selections than there are options can never be satisfied.
+      if (!field.custom && field.minItems !== undefined && field.minItems > field.options.length)
+        return `Form field has minItems greater than its number of options: ${field.key}`
+      // A required multiselect needs at least one selection: with maxItems 0
+      // the empty answer is missing-required and any selection is too many.
+      if (field.required && field.maxItems === 0)
+        return `Form field has maxItems 0 but is required: ${field.key}`
+      // A required closed multiselect with no options has no valid answer:
+      // the empty answer is missing-required and any selection is not one of
+      // the (zero) declared options.
+      if (field.required && !field.custom && field.options.length === 0)
+        return `Form field has no options but is required: ${field.key}`
+    }
     for (const when of field.when ?? []) {
       const target = earlier.get(when.key)
       if (!target) return `Form field condition must reference an earlier field: ${field.key} -> ${when.key}`
@@ -291,21 +349,56 @@ export function validateFields(fields: ReadonlyArray<Form.Field>) {
   }
 }
 
-function validateWhen(when: Form.When, target: InputField) {
-  if (target.type === "boolean") {
+function validateWhen(when: Form.When, target: Form.Field) {
+  // External targets are boolean too, but their only answerable value is the `true`
+  // acknowledgement (validateAnswer rejects everything else), so `eq`/`false` and
+  // `neq`/`true` are constant-false in `matches` and the gated field could never
+  // activate — the same never-answerable class as #705, #708 and #712.
+  if (target.type === "boolean" || target.type === "external") {
     if (typeof when.value !== "boolean") return "Form field condition value must be a boolean"
+    if (target.type === "external" && (when.op === "eq" ? when.value === false : when.value === true))
+      return "Form field condition can never match the external field's acknowledgement"
     return
   }
   if (target.type === "number" || target.type === "integer") {
     if (typeof when.value !== "number") return "Form field condition value must be a number"
+    if (target.type === "integer" && !Number.isInteger(when.value))
+      return "Form field condition value must be an integer"
+    if (
+      (target.minimum !== undefined && when.value < target.minimum) ||
+      (target.maximum !== undefined && when.value > target.maximum)
+    )
+      return "Form field condition value must be within the field's declared bounds"
     return
   }
   // string and multiselect targets both compare against string values
   if (typeof when.value !== "string") return "Form field condition value must be a string"
   const closed = target.type === "multiselect" ? !target.custom : target.options !== undefined && !target.custom
-  if (closed && !target.options?.some((option) => option.value === when.value)) {
-    return "Form field condition value must be one of the field's options"
+  if (closed) {
+    if (!target.options?.some((option) => option.value === when.value)) {
+      return "Form field condition value must be one of the field's options"
+    }
+    return
   }
+  if (target.type !== "string") return
+  // A non-closed string target's answers must still satisfy its own length,
+  // pattern, and format constraints (the checks validateField makes), so a
+  // condition value violating them can never be answered and the gate would
+  // silently never match (eq) or always match (neq) — #708. The predicates
+  // are validateField's own: the email regex, URL.canParse, isDate, and
+  // isDateTime.
+  if (target.minLength !== undefined && when.value.length < target.minLength)
+    return `Form field condition value must be at least ${target.minLength} characters`
+  if (target.maxLength !== undefined && when.value.length > target.maxLength)
+    return `Form field condition value must be at most ${target.maxLength} characters`
+  if (target.pattern !== undefined && !new RegExp(target.pattern).test(when.value))
+    return "Form field condition value must match the field's pattern"
+  if (target.format === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(when.value))
+    return "Form field condition value must be an email"
+  if (target.format === "uri" && !URL.canParse(when.value)) return "Form field condition value must be a URI"
+  if (target.format === "date" && !isDate(when.value)) return "Form field condition value must be a date"
+  if (target.format === "date-time" && !isDateTime(when.value))
+    return "Form field condition value must be a date-time"
 }
 
 function validateField(field: InputField, value: Form.Value): string | undefined {
@@ -345,6 +438,11 @@ function validateField(field: InputField, value: Form.Value): string | undefined
   if (field.type === "multiselect") {
     if (!isStringArray(value)) return `Expected string array for form field: ${field.key}`
     if (field.required && value.length === 0) return `Missing required form field: ${field.key}`
+    // Selections are distinct by definition — the create-time check for a closed
+    // multiselect counts declared options, not answer entries — so a repeated
+    // entry is rejected outright instead of being counted again toward
+    // minItems/maxItems or checked again against the declared options.
+    if (new Set(value).size !== value.length) return `Duplicate selection for form field: ${field.key}`
     if (field.minItems !== undefined && value.length < field.minItems)
       return `Too few selections for form field: ${field.key}`
     if (field.maxItems !== undefined && value.length > field.maxItems)
@@ -366,5 +464,24 @@ function isDate(value: string) {
 }
 
 function isDateTime(value: string) {
-  return !Number.isNaN(new Date(value).getTime())
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return false
+  // Date parsing rolls calendar-overflow days into the next month instead of failing, so an
+  // ISO date part must round-trip through a real calendar date (the same check isDate and
+  // ModelRouteLimits.parseAbsoluteTime make). Values without an ISO date part keep the
+  // existing lenient behaviour.
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
+  if (!iso) return true
+  const year = Number(iso[1])
+  const month = Number(iso[2])
+  const day = Number(iso[3])
+  const probe = new Date(0)
+  probe.setUTCFullYear(year, month - 1, day)
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day)
+    return false
+  // V8 rolls hour 24 into the next day instead of failing (minutes/seconds 60+ are Invalid),
+  // so an ISO time part must not carry hour > 23 (RFC 3339 time-hour is 00-23).
+  const time = /[T ](\d{2}):\d{2}/i.exec(value)
+  if (time && Number(time[1]) > 23) return false
+  return true
 }

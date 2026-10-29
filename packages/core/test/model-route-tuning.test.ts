@@ -148,8 +148,43 @@ describe("ModelRouteTuning.parseQuotaReset", () => {
     expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 45s", at)).toBe(at + 45_000)
     expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 45 sec", at)).toBe(at + 45_000)
     expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 45 seconds", at)).toBe(at + 45_000)
+    // Decimal and compound relative forms read as the total wait, like in ModelRouteLimits.
+    expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 1.5 hours", at)).toBe(at + 5_400_000)
+    expect(ModelRouteTuning.parseQuotaReset("quota exhausted, back in 1 hour 30 minutes", at)).toBe(at + 5_400_000)
+    // Paired with model-route-limits: every absolute-time keyword reads the same instant here.
+    const instant = Date.parse("2026-01-02T00:00:00Z")
+    for (const message of [
+      "quota expires at 2026-01-02T00:00:00Z",
+      "quota retry at 2026-01-02T00:00:00Z",
+      "quota wait until 2026-01-02T00:00:00Z",
+      "quota try again at 2026-01-02T00:00:00Z",
+      "quota available at 2026-01-02T00:00:00Z",
+      "quota resets at 2026-01-02T00:00:00Z",
+    ])
+      expect(ModelRouteTuning.parseQuotaReset(message, at)).toBe(instant)
+    // The quota gate is unchanged: the same keywords without a quota/limit mention read nothing.
+    expect(ModelRouteTuning.parseQuotaReset("available at 2026-01-02T00:00:00Z", at)).toBeUndefined()
     expect(ModelRouteTuning.parseQuotaReset("try in 5 minutes", at)).toBeUndefined()
     expect(ModelRouteTuning.parseQuotaReset(undefined, at)).toBeUndefined()
+  })
+
+  test("scans past an unparseable first date to a later valid reset", () => {
+    expect(
+      ModelRouteTuning.parseQuotaReset("quota reset at 2026-13-01, back at 2026-01-02T00:00:00Z", at),
+    ).toBe(Date.parse("2026-01-02T00:00:00Z"))
+    expect(ModelRouteTuning.parseQuotaReset("quota reset at not-a-date 2026-01-02T00:00:00Z", at)).toBe(
+      Date.parse("2026-01-02T00:00:00Z"),
+    )
+    // An invalid date alone still states no reset.
+    expect(ModelRouteTuning.parseQuotaReset("quota reset at 2026-13-01", at)).toBeUndefined()
+  })
+
+  test("treats calendar-invalid dates as unparseable, like ModelRouteLimits", () => {
+    expect(ModelRouteTuning.parseQuotaReset("quota reset at 2026-02-30", at)).toBeUndefined()
+    expect(
+      ModelRouteTuning.parseQuotaReset("quota reset at 2026-02-30, back at 2026-03-05T00:00:00Z", at),
+    ).toBe(Date.parse("2026-03-05T00:00:00Z"))
+    expect(ModelRouteTuning.parseQuotaReset("quota reset at 2024-02-29", at)).toBe(Date.parse("2024-02-29"))
   })
 })
 

@@ -15528,6 +15528,9 @@
                   "$ref": "#/components/schemas/Config.ModelRoute.GlobalScheduleEncoded"
                 }
               },
+              "model_route_windows": {
+                "$ref": "#/components/schemas/Config.ModelRoute.Windows"
+              },
               "model_route_tuning": {
                 "type": "object",
                 "properties": {
@@ -15958,7 +15961,15 @@
             "description": "Route IDs the change is limited to, including nested ones. Empty or unset means every route."
           },
           "when": {
-            "$ref": "#/components/schemas/Config.ModelRoute.WindowEncoded"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Config.ModelRoute.WindowEncoded"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "When the change is in force: a window object, or the name of a window from experimental.model_route_windows. An unknown name drops the rule."
           },
           "factor": {
             "type": "number",
@@ -15989,6 +16000,9 @@
               "$ref": "#/components/schemas/Config.ModelRoute.Target"
             },
             "description": "Ordered provider/model references. A route may include another route reference."
+          },
+          "cache_format": {
+            "$ref": "#/components/schemas/Model.CacheFormat"
           },
           "health": {
             "type": "object",
@@ -16066,24 +16080,28 @@
           },
           "autonomy": {
             "type": "string",
-            "enum": ["fixed", "rules", "adaptive", "predictive", "agent"]
+            "enum": ["fixed", "rules", "adaptive", "predictive", "agent"],
+            "description": "How much the route may decide for itself; each level includes the ones before it. fixed: configured order with failover only. rules: adds selection modes, weights, budgets and provider rate-limit holds. adaptive: adds the scheduled review that skips or down-weights targets from recent history. predictive: adds time-of-day and error-text prediction. agent: adds route_stats and route_adjust so the model can inspect and steer routing. Unset keeps the behavior from before levels existed."
           },
           "selection": {
             "type": "string",
-            "enum": ["ordered", "round-robin", "weighted"]
+            "enum": ["ordered", "round-robin", "weighted"],
+            "description": "How a session picks its target: ordered uses the configured order (default), round-robin rotates per new session, weighted draws by weights. Either way the choice is sticky for the session and failover falls through the remaining targets in order."
           },
           "weights": {
             "type": "object",
             "additionalProperties": {
               "type": "number",
               "exclusiveMinimum": 0
-            }
+            },
+            "description": "Relative ratios for the weighted selection mode, keyed by target model reference, e.g. { \"openai/gpt-6-luna\": 3, \"github-copilot/gpt-6-luna\": 1 } sends about 3/4 of new sessions to the first target. Targets without a weight count as 1. A nested route is keyed as \"opencode-route/<id>\" and is chosen as one unit by this route; it then picks among its own members using its own selection and weights."
           },
           "schedules": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Config.ModelRoute.ScheduleEncoded"
-            }
+            },
+            "description": "Time-bound weight changes for this route's targets, e.g. peak hours that make a provider lighter. Weights order every selection mode: inside an active window the targets are ranked by effective weight, and equal weights keep their configured order."
           },
           "limit": {
             "type": "object",
@@ -16095,7 +16113,8 @@
               }
             },
             "required": ["context"],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "Limits the route presents as its own, regardless of its targets' limits."
           }
         },
         "required": ["targets"],
@@ -16116,7 +16135,15 @@
             "description": "Target references this change covers, `*` allowed, e.g. [\"deepseek/*\", \"openai/gpt-6-*\"]. Empty or unset means every target of the route."
           },
           "when": {
-            "$ref": "#/components/schemas/Config.ModelRoute.WindowEncoded"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Config.ModelRoute.WindowEncoded"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "When the change is in force: a window object, or the name of a window from experimental.model_route_windows. An unknown name drops the rule."
           },
           "factor": {
             "type": "number",
@@ -16148,17 +16175,44 @@
                 "$ref": "#/components/schemas/Config.ModelSelectionEncoded"
               },
               "defaultVariant": {
-                "type": "string"
+                "type": "string",
+                "description": "Variant used when the route is selected without an explicit variant."
               },
               "variants": {
                 "type": "object",
                 "additionalProperties": {
                   "type": "string"
-                }
+                },
+                "description": "Remaps a route-level variant to this target's variant, e.g. { \"low\": \"high\" } runs this target at high when the route is selected at low."
               },
               "until": {
                 "type": "integer",
-                "exclusiveMinimum": 0
+                "exclusiveMinimum": 0,
+                "description": "Epoch milliseconds after which this target leaves the route. Used for time-limited pool membership; takes effect when the configuration reloads."
+              },
+              "cache_format": {
+                "$ref": "#/components/schemas/Model.CacheFormat"
+              },
+              "window": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "invert": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": ["name"],
+                    "additionalProperties": false
+                  }
+                ],
+                "description": "Eligibility gate: the name of a window defined in experimental.model_route_windows, or { \"name\": ..., \"invert\": true }. The target is only in the route while the named window is active, or while it is not active when inverted — e.g. a DeepSeek target gated on the inverse of \"deepseek-peak\" is a candidate off-peak only, and the same target gated on \"deepseek-peak\" itself is the peak fallback. An unknown window name drops the gate, leaving the target always eligible."
               }
             },
             "required": ["model"],
@@ -16247,6 +16301,15 @@
           }
         },
         "additionalProperties": false
+      },
+      "Config.ModelRoute.Windows": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {
+          "$ref": "#/components/schemas/Config.ModelRoute.WindowEncoded"
+        }
       },
       "Config.ModelRoutes": {
         "type": "object",
@@ -20035,7 +20098,8 @@
       },
       "Model.CacheFormat": {
         "type": "string",
-        "enum": ["anthropic", "alibaba"]
+        "enum": ["anthropic", "alibaba"],
+        "description": "Prompt-cache marker syntax the endpoint accepts. Overrides the route default; both send `cache_control`, and `alibaba` skips tool definitions. A model route may set it per route or per target; a target's own value overrides the route's and nested routes inherit it."
       },
       "Model.Capabilities": {
         "type": "object",

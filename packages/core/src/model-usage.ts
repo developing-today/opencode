@@ -128,6 +128,19 @@ export interface TargetReport extends Totals {
   readonly pools: readonly PoolState[]
 }
 
+/** A target string is "provider/model", split at the first slash (model ids may contain
+ * further slashes). A slash-less target — a bare or typo'd pool entry, exactly what the
+ * configured-not-reached report exists to surface — has no provider: the whole string is
+ * the model id and the provider is empty, instead of slice(0, -1) silently dropping the
+ * string's last character into a provider that does not exist. Shared with the route_usage
+ * tool's filtering so the two splits cannot drift. */
+export const splitTarget = (target: string): { providerID: string; modelID: string } => {
+  const slash = target.indexOf("/")
+  return slash === -1
+    ? { providerID: "", modelID: target }
+    : { providerID: target.slice(0, slash), modelID: target.slice(slash + 1) }
+}
+
 /** Every target that was used in the window, plus every configured target that was not, so an idle one shows. */
 export const targetReports = (
   rows: readonly TargetRow[],
@@ -139,11 +152,11 @@ export const targetReports = (
   const targets = [...new Set([...used.keys(), ...configuredTargets])]
   return targets.map((target) => {
     const row = used.get(target)
-    const slash = target.indexOf("/")
+    const { providerID, modelID } = splitTarget(target)
     return {
       target,
-      providerID: target.slice(0, slash),
-      modelID: target.slice(slash + 1),
+      providerID,
+      modelID,
       requests: row?.requests ?? 0,
       failures: row?.failures ?? 0,
       input: row?.input ?? 0,
@@ -182,7 +195,13 @@ export interface SessionReport extends SessionRow {
 export const sessionReports = (
   sessions: readonly SessionRow[],
   rows: readonly SessionTargetRow[],
-  windows: readonly { readonly plan: ModelPlan.Plan; readonly window: ModelPlan.QuotaWindow }[] = [],
+  windows: readonly {
+    readonly plan: ModelPlan.Plan
+    readonly window: ModelPlan.QuotaWindow
+    /** This session's per-target rows inside the plan window's own lookback, when the caller read them
+     * separately; the share is computed from these, not from the report window's rows. */
+    readonly rows?: readonly SessionTargetRow[]
+  }[] = [],
 ): SessionReport[] =>
   sessions.map((session) => {
     const own = rows.filter((row) => row.sessionID === session.sessionID)
@@ -196,8 +215,9 @@ export const sessionReports = (
         metered: metered(row),
         costUsd: row.costUsd,
       })),
-      windows: windows.map(({ plan, window }) => {
-        const used = usedOf(window.unit, sum(own.filter((row) => row.providerID === plan.providerID)))
+      windows: windows.map(({ plan, window, rows: windowRows }) => {
+        const scoped = (windowRows ?? own).filter((row) => row.sessionID === session.sessionID)
+        const used = usedOf(window.unit, sum(scoped.filter((row) => row.providerID === plan.providerID)))
         return {
           plan: plan.id,
           window: window.name,
@@ -223,17 +243,23 @@ export const dayReports = (rows: readonly DayRow[]): DayReport[] => {
   const days = new Map<string, DayRow[]>()
   for (const row of rows) days.set(row.day, [...(days.get(row.day) ?? []), row])
   return [...days].map(([day, dayRows]) => {
-    const providers: Record<string, { requests: number; metered: number; costUsd: number }> = {}
+    const providers = new Map<string, { requests: number; metered: number; costUsd: number }>()
     for (const row of dayRows) {
-      const current = providers[row.providerID] ?? { requests: 0, metered: 0, costUsd: 0 }
-      providers[row.providerID] = {
+      const current = providers.get(row.providerID) ?? { requests: 0, metered: 0, costUsd: 0 }
+      providers.set(row.providerID, {
         requests: current.requests + row.requests,
         metered: current.metered + metered(row),
         costUsd: current.costUsd + row.costUsd,
-      }
+      })
     }
     const total = sum(dayRows)
-    return { day, requests: total.requests, metered: metered(total), costUsd: total.costUsd, providers }
+    return {
+      day,
+      requests: total.requests,
+      metered: metered(total),
+      costUsd: total.costUsd,
+      providers: Object.fromEntries(providers),
+    }
   })
 }
 

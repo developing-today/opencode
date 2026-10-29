@@ -295,6 +295,14 @@ provider at `high` and another at `low`. The route advertises the union of each
 target's native variants and remap keys, and only offers what every target can
 produce.
 
+A route or a target object can declare `cache_format` to say which prompt-cache
+marker syntax that endpoint accepts. It takes the same values as
+`compatibility.cacheFormat`, `"anthropic"` or `"alibaba"`. A target's own value
+overrides the route's, a nested route inherits the enclosing route's value, and
+unset leaves every target's own compatibility unchanged. Give a pool whose
+members accept the same syntax one value so a session keeps its cache when
+failover moves it to another target.
+
 A target's model can contain `*` to match every model of its provider whose id
 fits, such as `"openai/gpt-6-*"`; matches follow the provider's order, and a model
 reached twice is used once, at its first place. `until` is an epoch time in

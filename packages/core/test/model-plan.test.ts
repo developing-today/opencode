@@ -124,6 +124,13 @@ describe("ModelPlan store", () => {
     expect(pooled.pools.hard).toMatchObject({ tier: "frontier", purpose: "debugging with an unknown cause" })
   })
 
+  test("slug never ends in a dash, including when the 64-char slice cuts after a separator", () => {
+    expect(ModelPlan.slug("a".repeat(63) + " b c")).toBe("a".repeat(63))
+    expect(ModelPlan.slug("a".repeat(64))).toBe("a".repeat(64))
+    expect(ModelPlan.slug("Claude Max 20x")).toBe("claude-max-20x")
+    expect(ModelPlan.slug("--weird--name--")).toBe("weird-name")
+  })
+
   test("notes are appended, filtered and kept in order, and a damaged line is skipped and counted", () => {
     const root = dir()
     ModelPlan.addNote(
@@ -148,12 +155,106 @@ describe("ModelPlan store", () => {
       "expectation",
     ])
     expect(ModelPlan.readNotes({ limit: 1 }, root).notes[0]?.kind).toBe("expectation")
+    expect(ModelPlan.readNotes({ limit: 0 }, root).notes).toEqual([])
+    expect(ModelPlan.readNotes({ limit: -1 }, root).notes).toEqual([])
+    expect(ModelPlan.readNotes({ limit: Number.NaN }, root).notes).toEqual([])
+    expect(ModelPlan.readNotes({ limit: Number.POSITIVE_INFINITY }, root).notes).toEqual([])
+    expect(ModelPlan.readNotes({ limit: 0 }, root).skipped).toBe(1)
   })
 
-  test("staleness counts whole days, and a blank note is refused", () => {
-    expect(ModelPlan.daysSince("2026-10-04", Date.parse(NOW))).toBe(10)
-    expect(ModelPlan.daysSince(undefined, Date.parse(NOW))).toBeNull()
+  test("staleness counts whole days without going negative, and a blank note is refused", () => {
+    const now = Date.parse(NOW)
+    expect(ModelPlan.daysSince("2026-10-04", now)).toBe(10)
+    expect(ModelPlan.daysSince(new Date(now - 60 * 60 * 1000).toISOString(), now)).toBe(0)
+    expect(ModelPlan.daysSince(new Date(now - 25 * 60 * 60 * 1000).toISOString(), now)).toBe(1)
+    expect(ModelPlan.daysSince(new Date(now + 60 * 60 * 1000).toISOString(), now)).toBe(0)
+    expect(ModelPlan.daysSince(new Date(now + 10 * 86_400_000).toISOString(), now)).toBe(0)
+    expect(ModelPlan.daysSince(undefined, now)).toBeNull()
+    expect(ModelPlan.daysSince("not a date", now)).toBeNull()
     expect(() => ModelPlan.addNote({ text: "   " }, NOW, dir())).toThrow("some text")
+  })
+
+  test("notes sort chronologically across timestamp formats and limits keep the newest", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "half second later" }, "2026-10-27T09:00:00.500Z", root)
+    ModelPlan.addNote({ text: "same time without milliseconds" }, "2026-10-27T09:00:00Z", root)
+    ModelPlan.addNote({ text: "offset, but earliest" }, "2026-10-27T10:30:00+02:00", root)
+
+    expect(ModelPlan.readNotes({}, root).notes.map((note) => note.text)).toEqual([
+      "offset, but earliest",
+      "same time without milliseconds",
+      "half second later",
+    ])
+    expect(ModelPlan.readNotes({ limit: 1 }, root).notes.map((note) => note.text)).toEqual(["half second later"])
+    expect(ModelPlan.readNotes({ limit: 2 }, root).notes.map((note) => note.text)).toEqual([
+      "same time without milliseconds",
+      "half second later",
+    ])
+  })
+
+  test("unparseable timestamps sort before parsed dates and equal instants stay stable", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "unparseable" }, "not-a-date", root)
+    ModelPlan.addNote({ text: "equal instant first" }, "2026-10-27T09:00:00Z", root)
+    ModelPlan.addNote({ text: "equal instant second" }, "2026-10-27T11:00:00+02:00", root)
+    ModelPlan.addNote({ text: "later" }, "2026-10-27T09:00:01Z", root)
+
+    expect(ModelPlan.readNotes({}, root).notes.map((note) => note.text)).toEqual([
+      "unparseable",
+      "equal instant first",
+      "equal instant second",
+      "later",
+    ])
+    expect(ModelPlan.readNotes({ limit: 1 }, root).notes.map((note) => note.text)).toEqual(["later"])
+  })
+
+  test("an unparseable since throws instead of silently returning no notes", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "a note" }, "2026-10-27T09:00:00Z", root)
+    expect(() => ModelPlan.readNotes({ since: "not-a-date" }, root)).toThrow("not-a-date")
+    expect(ModelPlan.readNotes({ since: "2026-12-01T00:00:00.000Z" }, root)).toEqual({ notes: [], skipped: 0 })
+  })
+
+  test("a note whose timestamp does not parse is counted skipped under a since filter", () => {
+    const root = dir()
+    ModelPlan.addNote({ text: "bad timestamp" }, "not-a-date", root)
+    ModelPlan.addNote({ text: "good timestamp" }, "2026-10-27T09:00:00Z", root)
+    const filtered = ModelPlan.readNotes({ since: "2026-01-01T00:00:00.000Z" }, root)
+    expect(filtered.notes.map((note) => note.text)).toEqual(["good timestamp"])
+    expect(filtered.skipped).toBe(1)
+    const unfiltered = ModelPlan.readNotes({}, root)
+    expect(unfiltered.notes.map((note) => note.text)).toEqual(["bad timestamp", "good timestamp"])
+    expect(unfiltered.skipped).toBe(0)
+  })
+
+
+  test("calendar-invalid dates are not silently rolled into the next month (#717)", () => {
+    const root = dir()
+    const now = Date.parse(NOW)
+    // A bare Date.parse rolls 2026-02-30 to Mar 2; every ModelPlan date site must
+    // treat it like an unparseable date instead of trusting the rolled instant.
+    expect(() => ModelPlan.readNotes({ since: "2026-02-30" }, root)).toThrow("2026-02-30")
+    expect(ModelPlan.daysSince("2026-02-30", now)).toBeNull()
+    expect(ModelPlan.daysSince("2026-02-30T00:00:00.000Z", now)).toBeNull()
+    // A note timestamped with a calendar-invalid date behaves like an unparseable
+    // one: counted skipped under a since filter, sorted first without one.
+    ModelPlan.addNote({ text: "rolled timestamp" }, "2026-02-30T00:00:00.000Z", root)
+    ModelPlan.addNote({ text: "good timestamp" }, "2026-10-27T09:00:00Z", root)
+    const filtered = ModelPlan.readNotes({ since: "2026-01-01T00:00:00.000Z" }, root)
+    expect(filtered.notes.map((note) => note.text)).toEqual(["good timestamp"])
+    expect(filtered.skipped).toBe(1)
+    expect(ModelPlan.readNotes({}, root).notes.map((note) => note.text)).toEqual([
+      "rolled timestamp",
+      "good timestamp",
+    ])
+    // addNote must not embed the rolled instant (Mar 2) in the note id.
+    const rolled = ModelPlan.addNote({ text: "bad date note" }, "2026-02-30T00:00:00.000Z", root)
+    expect(rolled.id).not.toContain(Date.parse("2026-02-30T00:00:00.000Z").toString(36))
+    // Valid dates keep working through the same paths.
+    expect(ModelPlan.daysSince("2026-02-28", now)).not.toBeNull()
+    expect(ModelPlan.readNotes({ since: "2026-02-28T00:00:00.000Z" }, root).notes.map((note) => note.text)).toEqual([
+      "good timestamp",
+    ])
   })
 
   test("guidance points OpenCode's own plans at the console and leaves other providers without it", () => {

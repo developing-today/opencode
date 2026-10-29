@@ -15,6 +15,9 @@ export function getDirectory(path: string | undefined) {
 export function getFilenameTruncated(path: string | undefined, maxLength = 20) {
   const filename = getFilename(path)
   if (filename.length <= maxLength) return filename
+  // slice(0, maxLength - 1) below is slice(0, -1) at maxLength 0: it keeps
+  // all but the last character instead of returning an empty string.
+  if (maxLength <= 0) return ""
   const lastDot = filename.lastIndexOf(".")
   const extension = lastDot <= 0 ? "" : filename.slice(lastDot)
   const available = maxLength - extension.length - 1
@@ -24,10 +27,13 @@ export function getFilenameTruncated(path: string | undefined, maxLength = 20) {
 
 export function truncateMiddle(text: string, maxLength = 20) {
   if (text.length <= maxLength) return text
+  if (maxLength <= 0) return ""
   const available = maxLength - 1
   const start = Math.ceil(available / 2)
   const end = Math.floor(available / 2)
-  return text.slice(0, start) + "…" + text.slice(-end)
+  // slice(-0) is slice(0): at maxLength 1-2 nothing is kept from the end, and
+  // slicing with it would return the whole string.
+  return text.slice(0, start) + "…" + (end > 0 ? text.slice(-end) : "")
 }
 
 const isDrive = (value: string) => {

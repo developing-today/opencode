@@ -12,7 +12,17 @@ describe("ModelRouteSchedule.parse", () => {
     ).toEqual({ daysOfWeek: [1, 5, 6], start: "09:05", end: "17:00" })
     expect(ModelRouteSchedule.parse({ daysOfMonth: ["1", 15, -1] })).toEqual({ daysOfMonth: [1, 15, -1] })
     expect(ModelRouteSchedule.parse({ start: "9:30:59" })).toEqual({ start: "09:30" })
+    // Single-digit seconds are accepted like single-digit hours and minutes (#528).
+    expect(ModelRouteSchedule.parse({ start: "9:30:5" })).toEqual({ start: "09:30" })
+    expect(ModelRouteSchedule.parse({ end: "17:00:9" })).toEqual({ end: "17:00" })
     expect(ModelRouteSchedule.parse({})).toEqual({})
+  })
+
+  test("sorts daysOfMonth to the same canonical order regardless of input order", () => {
+    expect(ModelRouteSchedule.parse({ daysOfMonth: [15, 1, 15] })).toEqual({ daysOfMonth: [1, 15] })
+    expect(ModelRouteSchedule.parse({ daysOfMonth: [1, 15] })).toEqual({ daysOfMonth: [1, 15] })
+    // The -1 "last day" sentinel stays last, not first as a numeric sort would put it.
+    expect(ModelRouteSchedule.parse({ daysOfMonth: [-1, 15, 1] })).toEqual({ daysOfMonth: [1, 15, -1] })
   })
 
   test("refuses a window it cannot read instead of guessing", () => {
@@ -30,6 +40,18 @@ describe("ModelRouteSchedule.parse", () => {
     expect(ModelRouteSchedule.parse({ daysOfMonth: [1, 32] })).toBeUndefined()
     expect(ModelRouteSchedule.parse({ daysOfMonth: [15, 0] })).toBeUndefined()
     expect(ModelRouteSchedule.parse({ from: 100, until: 100 })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ start: "09:00", end: "09:00" })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ start: "9:00", end: "09:00:00" })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ start: "09:00" })).toEqual({ start: "09:00" })
+    expect(ModelRouteSchedule.parse({ end: "09:00" })).toEqual({ end: "09:00" })
+  })
+
+  test("accepts zero-padded weekday strings like days of month", () => {
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["06"] })).toEqual({ daysOfWeek: [6] })
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["00", "01", 2] })).toEqual({ daysOfWeek: [0, 1, 2] })
+    // Padding does not widen the range, and a mixed list is still rejected whole.
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["07"] })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["06", "frieday"] })).toBeUndefined()
   })
 
   test("keeps named days from every conventional spelling", () => {
@@ -75,6 +97,48 @@ describe("ModelRouteSchedule.active", () => {
     expect(ModelRouteSchedule.active(window, monday - 2 * HOUR)).toBe(false) // Sun 13:00
   })
 
+  test("a wrapping window's tail belongs to the previous day on the DST fall-back night", () => {
+    // DST ends in Chicago on Sun 2026-11-01: 02:00 CDT falls back to 01:00 CST, so 01:30 occurs twice.
+    const saturday = ModelRouteSchedule.parse({
+      daysOfWeek: ["sat"],
+      start: "22:00",
+      end: "02:00",
+      timezone: "America/Chicago",
+    })!
+    const sunday = ModelRouteSchedule.parse({
+      daysOfWeek: ["sun"],
+      start: "22:00",
+      end: "02:00",
+      timezone: "America/Chicago",
+    })!
+    const first = Date.UTC(2026, 10, 1, 6, 30) // Sun 01:30 CDT, first occurrence
+    const repeated = Date.UTC(2026, 10, 1, 7, 30) // Sun 01:30 CST, repeated hour
+    expect(ModelRouteSchedule.active(saturday, first)).toBe(true)
+    expect(ModelRouteSchedule.active(saturday, repeated)).toBe(true)
+    expect(ModelRouteSchedule.active(saturday, Date.UTC(2026, 10, 1, 7, 59))).toBe(true) // 01:59 CST
+    expect(ModelRouteSchedule.active(sunday, repeated)).toBe(false)
+    // Normal week control: Sun 2026-11-08 01:30 CST is Saturday Nov 7's tail.
+    expect(ModelRouteSchedule.active(saturday, Date.UTC(2026, 10, 8, 7, 30))).toBe(true)
+  })
+
+  test("a wrapping window's tail judges days of month on the previous day", () => {
+    // Oct 31 2026 is the last day of October; its 22:00-02:00 window runs into Nov 1.
+    const window = ModelRouteSchedule.parse({
+      daysOfMonth: [-1],
+      start: "22:00",
+      end: "02:00",
+      timezone: "America/Chicago",
+    })!
+    expect(ModelRouteSchedule.active(window, Date.UTC(2026, 10, 1, 7, 30))).toBe(true) // Nov 1 01:30 CST, repeated hour
+    const first = ModelRouteSchedule.parse({
+      daysOfMonth: [1],
+      start: "22:00",
+      end: "02:00",
+      timezone: "America/Chicago",
+    })!
+    expect(ModelRouteSchedule.active(first, Date.UTC(2026, 10, 1, 7, 30))).toBe(false)
+  })
+
   test("an end with no start means until that time, and a start with no end means from it", () => {
     const morning = ModelRouteSchedule.parse({ daysOfWeek: ["mon"], end: "09:00", timezone: "UTC" })!
     expect(ModelRouteSchedule.active(morning, monday - 7 * HOUR)).toBe(true) // Mon 08:00
@@ -102,7 +166,9 @@ describe("ModelRouteSchedule.active", () => {
   })
 
   test("an equal start and end is an empty window, not a full day", () => {
-    const window = ModelRouteSchedule.parse({ start: "09:00", end: "09:00" })!
+    // parse rejects this shape (see the parse tests), so construct it directly:
+    // active must still treat a hand-built equal window as empty, never a full day.
+    const window = { start: "09:00", end: "09:00" }
     expect(ModelRouteSchedule.active(window, monday)).toBe(false)
   })
 })

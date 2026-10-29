@@ -349,6 +349,31 @@ describe("Session.create", () => {
     }),
   )
 
+  it.effect("stores the governance-checked model on a model-less child", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Service
+      const model = Model.Ref.make({
+        id: Model.ID.make("sonnet"),
+        providerID: Provider.ID.anthropic,
+      })
+      const parent = yield* session.create({ location, model })
+      // No explicit model: governance checks the child against the parent's
+      // model, so creation stores that checked model on the child — the
+      // runner must not fall back to the global default for it (#507).
+      const child = yield* session.create({ parentID: parent.id })
+      expect(child.model).toMatchObject(model)
+      expect(child.model?.id).toBe(model.id)
+      expect(child.model?.providerID).toBe(model.providerID)
+      // An explicit child model still wins over the inherited checked model.
+      const explicit = Model.Ref.make({
+        id: Model.ID.make("haiku"),
+        providerID: Provider.ID.anthropic,
+      })
+      const chosen = yield* session.create({ parentID: parent.id, model: explicit })
+      expect(chosen.model).toMatchObject(explicit)
+    }),
+  )
+
   it.effect("stores creation metadata and inherits it through children and forks", () =>
     Effect.gen(function* () {
       const session = yield* Session.Service

@@ -161,21 +161,27 @@ export const parseQuotaReset = (message: string | undefined, now: number): numbe
   if (!/(?:quota|limit|rate limit)/.test(text)) return undefined
   // The zone designator stays in the capture so Date.parse honours it instead of reading the
   // timestamp as local time (see ModelRouteLimits.resetAtFromMessage).
-  const absolute =
-    /(?:reset|resume|back|available|return)[a-z ]{0,20}(?:at|on)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?)/.exec(
-      text,
-    )?.[1]
-  if (absolute) {
-    const date = Date.parse(absolute)
-    if (!Number.isNaN(date)) return date
+  // The absolute branch shares ModelRouteLimits.ABSOLUTE_TIME so the two parsers cannot
+  // drift apart on keywords again; the quota gate above stays local to this parser.
+  // Scan every absolute candidate: an unparseable first date (e.g. month 13) must not shadow
+  // a later valid reset stated in the same message.
+  for (const [, absolute] of text.matchAll(new RegExp(ModelRouteLimits.ABSOLUTE_TIME.source, "g"))) {
+    const date = ModelRouteLimits.parseAbsoluteTime(absolute)
+    if (date !== undefined) return date
   }
-  const relative = /in\s+(\d+)\s*(second|minute|hour|day|sec|s)s?(?![a-z])/.exec(text)
-  if (relative) {
+  // The relative form mirrors ModelRouteLimits: decimal amounts ("in 1.5 hours") and compound
+  // sequences ("in 1 hour 30 minutes", summed) both read as the total wait.
+  const part = String.raw`\d+(?:\.\d+)?\s*(?:second|minute|hour|day|sec|s)s?(?![a-z])`
+  const sequence = new RegExp(String.raw`in\s+(${part}(?:[\s,]+(?:and\s+)?${part})*)`).exec(text)?.[1]
+  if (sequence) {
     const unit = { second: 1_000, sec: 1_000, s: 1_000, minute: 60_000, hour: 3_600_000, day: 86_400_000 } as Record<
       string,
       number
     >
-    return now + Number(relative[1]) * (unit[relative[2]] ?? 1_000)
+    let total = 0
+    for (const [, amount, name] of sequence.matchAll(/(\d+(?:\.\d+)?)\s*(second|minute|hour|day|sec|s)s?(?![a-z])/g))
+      total += Number(amount) * (unit[name] ?? 1_000)
+    return now + total
   }
   return undefined
 }

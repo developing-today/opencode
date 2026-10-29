@@ -164,6 +164,10 @@ const describeMember = (member: ModelRouteReview.Member) => {
     parts.push(
       `won ${member.drawsWon} of ${member.draws} new-session draws (${Math.round(member.takeRate * 100)}%, weight promised ${member.expectedShare === null ? "n/a" : `${Math.round(member.expectedShare * 100)}%`})`,
     )
+  if (member.weightLayers)
+    parts.push(
+      `weight layers: base ${member.weightLayers.base}, scheduled ${member.weightLayers.scheduled}, prefer ${member.weightLayers.prefer}, adjustment ${member.weightLayers.adjustment}, final ${member.weightLayers.demotion}${member.weightLayers.gate ? `, gate: ${member.weightLayers.gate}` : ""}`,
+    )
   if (Object.keys(member.excluded).length > 0) parts.push(`excluded: ${counts(member.excluded)}`)
   if (Object.keys(member.errorTags).length > 0) parts.push(`errors: ${counts(member.errorTags)}`)
   return `  ${member.target}: ${parts.join(", ")}`

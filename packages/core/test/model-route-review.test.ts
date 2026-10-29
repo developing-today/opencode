@@ -44,6 +44,32 @@ const pool = (
 ): ModelRouteReview.Configured => ({ selection, targets, weights })
 
 describe("ModelRouteReview.summarize", () => {
+  test("member speed median counts completed attempts only, as its doc states", () => {
+    const [summary] = ModelRouteReview.summarize({
+      attempts: [
+        attempt("cheap", "a/x", { outcome: "success", tokensPerSecond: 10 }),
+        attempt("cheap", "a/x", { outcome: "failure", tokensPerSecond: 1000 }),
+        attempt("cheap", "a/x", { outcome: "timeout", tokensPerSecond: 2000 }),
+        attempt("cheap", "a/x", { outcome: "interrupted", tokensPerSecond: 3000 }),
+      ],
+      decisions: [],
+      configured: new Map([["cheap", pool("weighted", ["a/x"])]]),
+    })
+    // The failed, timed-out and interrupted attempts did produce output, so the writers record a
+    // speed for them — but the median is documented as completed attempts only: the lone success.
+    expect(summary?.members[0]?.tokensPerSecond).toBe(10)
+    expect(summary?.members[0]?.attempts).toBe(4)
+  })
+
+  test("member speed is null when no attempt completed", () => {
+    const [summary] = ModelRouteReview.summarize({
+      attempts: [attempt("cheap", "a/x", { outcome: "failure", tokensPerSecond: 1000 })],
+      decisions: [],
+      configured: new Map([["cheap", pool("weighted", ["a/x"])]]),
+    })
+    expect(summary?.members[0]?.tokensPerSecond).toBeNull()
+  })
+
   test("judges a weighted pool by its new-session draws, not by sticky turns", () => {
     const weights = { "a/x": 2, "b/y": 1 }
     const decisions = [
@@ -147,5 +173,43 @@ describe("ModelRouteReview.summarize", () => {
     })
     expect(summaries.map((summary) => summary.id)).toEqual(["cheap", "other", "third"])
     expect(summaries[1]?.configured).toBeNull()
+  })
+
+  test("surfaces the per-layer weight attribution of the most recent decision (#589)", () => {
+    const layers = { base: 2, scheduled: 2, prefer: 6, adjustment: 6, demotion: 6, gate: null }
+    const recorded: ModelRouteReview.Decision = {
+      routeID: "cheap",
+      sessionID: "s1",
+      candidates: ["a/x", "b/y"],
+      chosen: "a/x",
+      reason: "adjusted",
+      detail: { weights: { "a/x": 6, "b/y": 1 }, layers: { "a/x": layers }, excluded: [] },
+    }
+    const [summary] = ModelRouteReview.summarize({ attempts: [], decisions: [recorded], configured: new Map() })
+    const members = Object.fromEntries((summary?.members ?? []).map((member) => [member.target, member]))
+    expect(members["a/x"]?.weightLayers).toEqual(layers)
+    expect(members["b/y"]?.weightLayers).toBeNull()
+    expect(ModelRouteReview.layersOf(recorded.detail)).toEqual({ "a/x": layers })
+    expect(ModelRouteReview.layersOf(null)).toEqual({})
+    expect(ModelRouteReview.layersOf({ layers: { "a/x": { base: "heavy" } } })).toEqual({})
+  })
+
+  test("weightLayers comes from the newest decision that carries layers, not the oldest (#628)", () => {
+    const newest = { base: 99, scheduled: 99, prefer: 99, adjustment: 99, demotion: 99, gate: null }
+    const oldest = { base: 1, scheduled: 1, prefer: 1, adjustment: 1, demotion: 1, gate: null }
+    const decision = (layers: unknown): ModelRouteReview.Decision => ({
+      routeID: "cheap",
+      sessionID: "s1",
+      candidates: ["a/x"],
+      chosen: "a/x",
+      reason: "adjusted",
+      detail: { weights: { "a/x": 1 }, ...(layers === undefined ? {} : { layers: { "a/x": layers } }), excluded: [] },
+    })
+    const layersOfSummary = (decisions: ModelRouteReview.Decision[]) =>
+      ModelRouteReview.summarize({ attempts: [], decisions, configured: new Map() })[0]?.members[0]?.weightLayers
+    // Production order is newest-first: the oldest decision must not overwrite the newest.
+    expect(layersOfSummary([decision(newest), decision(oldest)])).toEqual(newest)
+    // A newest decision without layers falls through to the next one that carries them.
+    expect(layersOfSummary([decision(undefined), decision(newest), decision(oldest)])).toEqual(newest)
   })
 })

@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { expand, routeVariants, routeWeightRules, weightRulesAcross } from "@opencode/core/config/plugin/model-routes"
+import {
+  configuredWindows,
+  expand,
+  routeVariants,
+  routeWeightRules,
+  weightRulesAcross,
+} from "@opencode/core/config/plugin/model-routes"
+import type { Entry } from "@opencode/schema/config"
 import { Model } from "@opencode/core/model"
 import { Provider } from "@opencode/core/provider"
 import type { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
@@ -20,7 +27,19 @@ const selection = (reference: string) => {
   const [providerID, model] = reference.split("/")
   return { providerID, model }
 }
-const route = (targets: (string | { model: string; until?: number; variants?: Record<string, string> })[], extra: object = {}) =>
+const route = (
+  targets: (
+    | string
+    | {
+        model: string
+        until?: number
+        variants?: Record<string, string>
+        cache_format?: string
+        window?: string | { name: string; invert?: boolean }
+      }
+  )[],
+  extra: object = {},
+) =>
   new Map<string, ConfigModelRoutes.Route>([
     [
       "r",
@@ -37,6 +56,31 @@ describe("pool targets", () => {
   test("a glob target joins every matching model of its provider, in provider order", () => {
     const { leaves } = expand("r", route(["anthropic/*sonnet*", "anthropic/*opus*"]), definitions)
     expect(leaves.map((leaf) => String(leaf.ref.id))).toEqual(["claude-sonnet-4-5", "claude-opus-4-1"])
+  })
+
+  test("a time-limited nested-route target is dropped when expired and expanded while live (#580)", () => {
+    const nested = (until: number) =>
+      new Map<string, ConfigModelRoutes.Route>([
+        [
+          "pool",
+          {
+            targets: [{ model: { providerID: "anthropic", model: "claude-opus-4-1" } }],
+          } as unknown as ConfigModelRoutes.Route,
+        ],
+        [
+          "r",
+          {
+            targets: [
+              { model: { providerID: "opencode-route", model: "pool" }, until },
+              { model: { providerID: "openai", model: "gpt-6-luna" } },
+            ],
+          } as unknown as ConfigModelRoutes.Route,
+        ],
+      ])
+    const expired = expand("r", nested(now - 1), definitions)
+    expect(expired.leaves.map((leaf) => String(leaf.ref.id))).toEqual(["gpt-6-luna"])
+    const live = expand("r", nested(now + 60_000), definitions)
+    expect(live.leaves.map((leaf) => String(leaf.ref.id))).toEqual(["claude-opus-4-1", "gpt-6-luna"])
   })
 
   test("a glob that matches nothing contributes nothing and does not fail the route", () => {
@@ -240,5 +284,240 @@ describe("pool weight schedules", () => {
       { when: { daysOfWeek: [0], start: "09:00" }, factor: 0.5 },
     ] as unknown as ConfigModelRoutes.GlobalSchedule[])
     expect(rule.window).toEqual({ daysOfWeek: [0], start: "09:00" })
+  })
+})
+
+/** Runs `run` with console.warn captured, returning the warning messages (#734). */
+const warnings = (run: () => void) => {
+  const original = console.warn
+  const messages: string[] = []
+  console.warn = (...args: unknown[]) => {
+    messages.push(args.map(String).join(" "))
+  }
+  try {
+    run()
+  } finally {
+    console.warn = original
+  }
+  return messages
+}
+
+describe("named windows", () => {
+  const windows = new Map([["peak", { daysOfWeek: [1, 5], start: "09:00", end: "17:00" }]])
+
+  test("routeWeightRules resolves a schedule's window by name and drops an unknown name", () => {
+    expect(
+      routeWeightRules(
+        {
+          targets: [],
+          schedules: [
+            { targets: ["*"], when: "peak", factor: 2 },
+            { targets: ["*"], when: "nope", factor: 3 },
+          ],
+        } as unknown as ConfigModelRoutes.Route,
+        windows,
+      ),
+    ).toEqual([{ match: { targets: ["*"] }, window: { daysOfWeek: [1, 5], start: "09:00", end: "17:00" }, factor: 2 }])
+  })
+
+  test("weightRulesAcross resolves a schedule's window by name and drops an unknown name", () => {
+    expect(
+      weightRulesAcross(
+        [
+          { when: "peak", factor: 2 },
+          { when: "nope", factor: 3 },
+        ] as unknown as ConfigModelRoutes.GlobalSchedule[],
+        windows,
+      ),
+    ).toEqual([{ window: { daysOfWeek: [1, 5], start: "09:00", end: "17:00" }, factor: 2 }])
+  })
+
+  test("expand attaches a resolved gate to a target, including the inverted form", () => {
+    const { nodes } = expand(
+      "r",
+      route([
+        { model: "anthropic/claude-opus-4-1", window: "peak" },
+        { model: "openai/gpt-6-luna", window: { name: "peak", invert: true } },
+        "anthropic/claude-sonnet-4-5",
+      ]),
+      definitions,
+      windows,
+    )
+    expect(nodes[0].children[0].gate).toEqual({
+      name: "peak",
+      window: { daysOfWeek: [1, 5], start: "09:00", end: "17:00" },
+    })
+    expect(nodes[0].children[1].gate).toEqual({
+      name: "peak",
+      window: { daysOfWeek: [1, 5], start: "09:00", end: "17:00" },
+      invert: true,
+    })
+    expect(nodes[0].children[2].gate).toBeUndefined()
+  })
+
+  test("expand attaches a resolved gate to a nested-route target", () => {
+    const routes = new Map<string, ConfigModelRoutes.Route>([
+      [
+        "pool",
+        {
+          targets: [{ model: { providerID: "anthropic", model: "claude-opus-4-1" } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+      [
+        "r",
+        {
+          targets: [{ model: { providerID: "opencode-route", model: "pool" }, window: "peak" }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+    ])
+    const { nodes } = expand("r", routes, definitions, windows)
+    expect(nodes[0].children[0].gate).toEqual({
+      name: "peak",
+      window: { daysOfWeek: [1, 5], start: "09:00", end: "17:00" },
+    })
+  })
+
+  test("expand with an unknown window name leaves the target ungated", () => {
+    const { nodes, leaves } = expand(
+      "r",
+      route([{ model: "anthropic/claude-opus-4-1", window: "nope" }]),
+      definitions,
+      windows,
+    )
+    expect(leaves).toHaveLength(1)
+    expect(nodes[0].children[0].gate).toBeUndefined()
+  })
+
+  test("an unknown window name in a schedule or gate warns, naming the window and the site (#734)", () => {
+    const scheduleWarnings = warnings(() =>
+      routeWeightRules(
+        {
+          targets: [],
+          schedules: [{ id: "peak-rule", targets: ["*"], when: "nope", factor: 3 }],
+        } as unknown as ConfigModelRoutes.Route,
+        windows,
+      ),
+    )
+    expect(scheduleWarnings).toHaveLength(1)
+    expect(scheduleWarnings[0]).toContain('"nope"')
+    expect(scheduleWarnings[0]).toContain("peak-rule")
+
+    const gateWarnings = warnings(() =>
+      expand("r", route([{ model: "anthropic/claude-opus-4-1", window: "nope" }]), definitions, windows),
+    )
+    expect(gateWarnings).toHaveLength(1)
+    expect(gateWarnings[0]).toContain('"nope"')
+    expect(gateWarnings[0]).toContain('"r"')
+  })
+
+  test("configuredWindows drops a defined-but-unparseable window with a warning naming it (#734)", () => {
+    const entries = [
+      {
+        type: "document",
+        info: {
+          experimental: {
+            model_route_windows: {
+              bad: { start: "25:99", end: "17:00" },
+              peak: { daysOfWeek: [1, 5], start: "09:00", end: "17:00" },
+            },
+          },
+        },
+      },
+    ] as unknown as Entry[]
+    let parsed: ReturnType<typeof configuredWindows> | undefined
+    const messages = warnings(() => {
+      parsed = configuredWindows(entries)
+    })
+    expect(parsed?.has("bad")).toBe(false)
+    expect(parsed?.has("peak")).toBe(true)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toContain('"bad"')
+    expect(messages[0]).toContain("model_route_windows")
+  })
+
+  test("a route referenced twice by one parent keeps both group nodes, sharing leaf indexes", () => {
+    const routes = new Map<string, ConfigModelRoutes.Route>([
+      [
+        "flash-plan",
+        {
+          targets: [{ model: { providerID: "anthropic", model: "claude-sonnet-4-5" } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+      [
+        "mimo-plan",
+        {
+          targets: [{ model: { providerID: "openai", model: "gpt-6-luna" } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+      [
+        "background",
+        {
+          targets: [
+            { model: { providerID: "opencode-route", model: "flash-plan" } },
+            { model: { providerID: "opencode-route", model: "mimo-plan" } },
+            { model: { providerID: "opencode-route", model: "flash-plan" } },
+          ],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+    ])
+    const { leaves, nodes } = expand("background", routes, definitions)
+    expect(leaves).toHaveLength(2)
+    expect(nodes).toHaveLength(4)
+    expect(nodes[0].children).toEqual([{ node: 1 }, { node: 2 }, { node: 3 }])
+    expect(nodes[1].children).toEqual([{ leaf: 0 }])
+    expect(nodes[2].children).toEqual([{ leaf: 1 }])
+    expect(nodes[3].children).toEqual([{ leaf: 0 }])
+  })
+})
+
+describe("cache formats", () => {
+  test("a route-level cache_format reaches every leaf", () => {
+    const { leaves } = expand(
+      "r",
+      route(["anthropic/claude-opus-4-1", "openai/gpt-6-luna"], { cache_format: "anthropic" }),
+      definitions,
+    )
+    expect(leaves.map((leaf) => leaf.cacheFormat)).toEqual(["anthropic", "anthropic"])
+  })
+
+  test("a target-level cache_format overrides the route-level one", () => {
+    const { leaves } = expand(
+      "r",
+      route(
+        [{ model: "anthropic/claude-opus-4-1", cache_format: "alibaba" }, "openai/gpt-6-luna"],
+        { cache_format: "anthropic" },
+      ),
+      definitions,
+    )
+    expect(leaves.map((leaf) => leaf.cacheFormat)).toEqual(["alibaba", "anthropic"])
+  })
+
+  test("a nested route's own cache_format wins over the one it inherits", () => {
+    const routes = new Map<string, ConfigModelRoutes.Route>([
+      [
+        "inner",
+        {
+          cache_format: "alibaba",
+          targets: [{ model: { providerID: "anthropic", model: "claude-opus-4-1" } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+      [
+        "r",
+        {
+          cache_format: "anthropic",
+          targets: [
+            { model: { providerID: "opencode-route", model: "inner" } },
+            { model: { providerID: "openai", model: "gpt-6-luna" } },
+          ],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+    ])
+    const { leaves } = expand("r", routes, definitions)
+    expect(leaves.map((leaf) => leaf.cacheFormat)).toEqual(["alibaba", "anthropic"])
+  })
+
+  test("leaves carry no cache format when neither the route nor the target declares one", () => {
+    const { leaves } = expand("r", route(["anthropic/claude-opus-4-1", "openai/gpt-6-luna"]), definitions)
+    expect(leaves.every((leaf) => leaf.cacheFormat === undefined)).toBe(true)
   })
 })

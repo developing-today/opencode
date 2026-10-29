@@ -61,7 +61,7 @@ const dayOfWeek = (value: unknown): number | undefined => {
   if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 6) return value
   if (typeof value !== "string") return undefined
   const text = value.trim().toLowerCase()
-  if (/^[0-6]$/.test(text)) return Number(text)
+  if (/^0?[0-6]$/.test(text)) return Number(text)
   return DAY_NAMES[text]
 }
 
@@ -76,9 +76,9 @@ const dayOfMonth = (value: unknown): number | undefined => {
 export const isDayOfWeek = (value: unknown): value is number | string => dayOfWeek(value) !== undefined
 export const isDayOfMonth = (value: unknown): value is number | string => dayOfMonth(value) !== undefined
 
-/** "9:30", "09:30", "23:59", "9:5" or "9:30:15" as minutes since local midnight. Seconds round down. */
+/** "9:30", "09:30", "23:59", "9:5", "9:30:15" or "9:30:5" as minutes since local midnight. Seconds round down. */
 export const minutesOf = (value: string): number | undefined => {
-  const match = /^(\d{1,2}):(\d{1,2})(?::(\d{2}))?$/.exec(value.trim())
+  const match = /^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/.exec(value.trim())
   if (!match) return undefined
   const hours = Number(match[1])
   const minutes = Number(match[2])
@@ -175,6 +175,20 @@ const daysInMonth = (parts: Pick<LocalParts, "year" | "month">) =>
   // Day 0 of the following month is the last day of this one.
   new Date(Date.UTC(parts.year, parts.month, 0)).getUTCDate()
 
+/** The local calendar day before `parts`, derived from the date itself. Subtracting the day's
+ * elapsed wall-clock minutes from the absolute instant is not equivalent: on the DST fall-back
+ * night the repeated hour makes that subtraction land on the same local day (#585). */
+const previousDay = (parts: LocalParts): LocalParts => {
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.dayOfMonth) - 86_400_000)
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    dayOfMonth: date.getUTCDate(),
+    dayOfWeek: date.getUTCDay(),
+    minutes: 0,
+  }
+}
+
 /**
  * Reads a window from user input. Returns undefined when the object is not a window at all (an
  * invalid timezone, an unreadable day list or time), and an always-active window for `{}`. Fields
@@ -209,7 +223,13 @@ export const parse = (value: unknown): Window | undefined => {
     if (!Array.isArray(rawDaysOfMonth)) return undefined
     const parsed = rawDaysOfMonth.map(dayOfMonth)
     if (parsed.length === 0 || parsed.some((day) => day === undefined)) return undefined
-    const days = [...new Set(parsed as number[])]
+    // Canonical order, like daysOfWeek: numeric days ascending, with the -1 "last day"
+    // sentinel last — a raw numeric sort would put the sentinel first.
+    const days = [...new Set(parsed as number[])].sort((left, right) => {
+      if (left === -1) return 1
+      if (right === -1) return -1
+      return left - right
+    })
     result.daysOfMonth = days
   }
 
@@ -246,6 +266,9 @@ export const parse = (value: unknown): Window | undefined => {
     result[key] = raw
   }
   if (result.from !== undefined && result.until !== undefined && result.from >= result.until) return undefined
+  // Equal start/end is the same empty range: minuteMatches can never activate it, so the rule would
+  // silently never fire. An all-day window is expressed by omitting both fields.
+  if (result.start !== undefined && result.start === result.end) return undefined
 
   return result
 }
@@ -282,7 +305,7 @@ export const active = (window: Window, now = Date.now()): boolean => {
     window.start !== undefined && window.end !== undefined && minutesOf(window.start)! > minutesOf(window.end)!
   if (wraps && current.minutes < minutesOf(window.end)!)
     // Before the end of a wrapping window means it began on the previous local day.
-    return dayMatches(window, partsAt(format, now - (current.minutes + 1) * 60_000))
+    return dayMatches(window, previousDay(current))
   return dayMatches(window, current)
 }
 

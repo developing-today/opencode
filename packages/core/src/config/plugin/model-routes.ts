@@ -4,6 +4,7 @@ import { define } from "@opencode/plugin/effect/plugin"
 import { Document, type Entry } from "@opencode/schema/config"
 import { ConfigModel } from "@opencode/schema/config/model"
 import { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
+import { CacheFormat } from "@opencode/schema/model-compatibility"
 import { Effect } from "effect"
 import { Config } from "../../config.js"
 import { Model } from "../../model.js"
@@ -29,6 +30,8 @@ type SourceModel = {
   /** Route-level variant → this target's variant. */
   readonly budget?: ModelRoute.Budget
   readonly variantMap?: Readonly<Record<string, Model.VariantID>>
+  /** Prompt-cache format in force for this leaf: its own declaration, else the route's. */
+  readonly cacheFormat?: CacheFormat
 }
 
 export const Plugin = define({
@@ -68,16 +71,20 @@ export const Plugin = define({
       if (providers.get(ModelRoute.PROVIDER_ID)) return
       const routes = configuredRoutes(loaded.entries)
       if (routes.size === 0) return
-      const globalSchedules = weightRulesAcross(configuredSchedules(loaded.entries))
+      const windows = configuredWindows(loaded.entries)
+      const globalSchedules = weightRulesAcross(configuredSchedules(loaded.entries), windows)
       const definitions = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>(
         providers.list().map((record) => [record.provider.id, record.models] as const),
       )
       const models = Array.from(routes, ([id, route]) => {
-        const { leaves: expanded, nodes } = expand(id, routes, definitions)
+        const { leaves: expanded, nodes } = expand(id, routes, definitions, windows)
         if (expanded.length === 0) return undefined
         const first = expanded[0].model
         const leafContext = Math.min(...expanded.map((target) => target.model.limit.context))
         const health = ModelRoute.policy(route.health)
+        const targetCacheFormats = expanded.map((target) =>
+          target.cacheFormat ? { cacheFormat: target.cacheFormat } : {},
+        )
         const info = Model.Info.make({
           ...Model.Info.default(ModelRoute.PROVIDER_ID, Model.ID.make(id)),
           name: route.name?.trim() || id,
@@ -89,6 +96,8 @@ export const Plugin = define({
                 ...(target.defaultVariant ? { default: target.defaultVariant } : {}),
                 ...(target.variantMap ? { map: target.variantMap } : {}),
               })),
+              // Routes that declare no cache format keep their stored settings unchanged.
+              ...(targetCacheFormats.some((item) => item.cacheFormat !== undefined) ? { targetCacheFormats } : {}),
               health,
               nodes,
               ...(route.attempts !== undefined ? { attempts: route.attempts } : {}),
@@ -110,7 +119,15 @@ export const Plugin = define({
             context: route.limit?.context !== undefined ? Math.min(route.limit.context, leafContext) : leafContext,
             output: Math.min(...expanded.map((target) => target.model.limit.output)),
             ...(expanded.every((target) => target.model.limit.input !== undefined)
-              ? { input: Math.min(...expanded.map((target) => target.model.limit.input!)) }
+              ? {
+                  // The context cap applies to the presented input limit too: compaction
+                  // prefers limit.input over limit.context (calculateCeiling), so an uncapped
+                  // input would silently bypass the cap whenever targets define one.
+                  input:
+                    route.limit?.context !== undefined
+                      ? Math.min(route.limit.context, ...expanded.map((target) => target.model.limit.input!))
+                      : Math.min(...expanded.map((target) => target.model.limit.input!)),
+                }
               : {}),
           },
         })
@@ -162,12 +179,74 @@ function configuredSchedules(entries: readonly Entry[]) {
     .flatMap((entry) => entry.info.experimental?.model_route_schedules ?? [])
 }
 
+/** A named window that cannot be applied is dropped, but never silently (#734): a typo'd or
+ * unreadable window name would otherwise remove a target's eligibility gate or a schedule rule
+ * with no signal anywhere. The warning names the window and where it was referenced. */
+const warnDroppedWindow = (name: string, site: string, reason: string) =>
+  console.warn(`model-route window ${JSON.stringify(name)} ${reason} (${site}); it is dropped, not applied`)
+
+/** The named windows defined in config, parsed once so schedules and target gates can reference
+ * them by name. An entry with an unreadable window is dropped rather than applied. */
+export function configuredWindows(entries: readonly Entry[]) {
+  const windows = new Map<string, ModelRouteSchedule.Window>()
+  entries
+    .filter((entry): entry is Document => entry.type === "document")
+    .forEach((entry) => {
+      Object.entries(entry.info.experimental?.model_route_windows ?? {}).forEach(([name, window]) => {
+        const parsed = ModelRouteSchedule.parse(window)
+        if (parsed) {
+          windows.set(name, parsed)
+          return
+        }
+        warnDroppedWindow(name, "experimental.model_route_windows", "is defined but cannot be parsed")
+      })
+    })
+  return windows
+}
+
+/** A schedule's window: inline (parsed as before), or the name of a configured window.
+ * An unknown name resolves to undefined, which drops the rule — with a warning naming it. */
+const resolveWindow = (
+  when: ConfigModelRoutes.Schedule["when"] | ConfigModelRoutes.GlobalSchedule["when"],
+  windows: ReadonlyMap<string, ModelRouteSchedule.Window>,
+  site: string,
+): ModelRouteSchedule.Window | undefined => {
+  if (typeof when !== "string") return ModelRouteSchedule.parse(when)
+  const window = windows.get(when)
+  if (!window) warnDroppedWindow(when, site, "is not a defined window")
+  return window
+}
+
+/** A target's eligibility gate, resolved from its `window` against the configured windows.
+ * An unknown name drops the gate, leaving the target always eligible — with a warning naming it. */
+const gateFor = (
+  window: string | { name: string; invert?: boolean } | undefined,
+  windows: ReadonlyMap<string, ModelRouteSchedule.Window>,
+  site: string,
+): ModelRoute.Gate | undefined => {
+  if (window === undefined) return undefined
+  const name = typeof window === "string" ? window : window.name
+  const parsed = windows.get(name)
+  if (!parsed) {
+    warnDroppedWindow(name, site, "is not a defined window")
+    return undefined
+  }
+  return { name, window: parsed, ...(typeof window !== "string" && window.invert ? { invert: true } : {}) }
+}
+
 /** The schedule rules a route declares for its own targets, in a shape the runtime can judge. An
  * entry with an unreadable window, or with nothing to change, is dropped rather than applied. */
-export function routeWeightRules(route: ConfigModelRoutes.Route): ModelRoute.WeightRule[] {
+export function routeWeightRules(
+  route: ConfigModelRoutes.Route,
+  windows: ReadonlyMap<string, ModelRouteSchedule.Window> = new Map(),
+): ModelRoute.WeightRule[] {
   return (route.schedules ?? []).flatMap((schedule) => {
     if (schedule.factor === undefined && schedule.weight === undefined) return []
-    const window = ModelRouteSchedule.parse(schedule.when)
+    const window = resolveWindow(
+      schedule.when,
+      windows,
+      schedule.id ? `route schedule ${JSON.stringify(schedule.id)}` : "a route schedule",
+    )
     if (!window) return []
     const targets = (schedule.targets ?? []).map((target) => target.trim()).filter(Boolean)
     return [
@@ -185,10 +264,17 @@ export function routeWeightRules(route: ConfigModelRoutes.Route): ModelRoute.Wei
 
 /** The global schedule rules in a shape the runtime can judge. The route filter stays in the match,
  * so one list serves every route and nested route. An entry with nothing to change is dropped. */
-export function weightRulesAcross(schedules: readonly ConfigModelRoutes.GlobalSchedule[]): ModelRoute.WeightRule[] {
+export function weightRulesAcross(
+  schedules: readonly ConfigModelRoutes.GlobalSchedule[],
+  windows: ReadonlyMap<string, ModelRouteSchedule.Window> = new Map(),
+): ModelRoute.WeightRule[] {
   return schedules.flatMap((schedule) => {
     if (schedule.factor === undefined && schedule.weight === undefined) return []
-    const window = ModelRouteSchedule.parse(schedule.when)
+    const window = resolveWindow(
+      schedule.when,
+      windows,
+      schedule.id ? `global schedule ${JSON.stringify(schedule.id)}` : "a global schedule",
+    )
     if (!window) return []
     const targets = (schedule.targets ?? []).map((target) => target.trim()).filter(Boolean)
     const providers = (schedule.providers ?? []).map((provider) => provider.trim()).filter(Boolean)
@@ -217,10 +303,11 @@ export function expand(
   id: string,
   routes: ReadonlyMap<string, ConfigModelRoutes.Route>,
   definitions: ReadonlyMap<Provider.ID, ReadonlyMap<string, Model.Info>>,
+  windows: ReadonlyMap<string, ModelRouteSchedule.Window> = new Map(),
 ) {
   const result: SourceModel[] = []
   const nodes: ModelRoute.Node[] = []
-  const seen = new Set<string>()
+  const leafByKey = new Map<string, number>()
 
   // Each route becomes a group node with its own selection mode and weights, so a weighted route
   // nested in another is chosen as one unit and then splits among its own members.
@@ -228,6 +315,7 @@ export function expand(
     routeID: string,
     inheritedVariant: Model.VariantID | undefined,
     trail: ReadonlySet<string>,
+    inheritedCacheFormat: CacheFormat | undefined,
   ): number | undefined => {
     if (trail.has(routeID)) return
     const current = routes.get(routeID)
@@ -244,10 +332,11 @@ export function expand(
       routeID,
       selection: ModelRouteAutonomy.usesRules(current.autonomy) ? (current.selection ?? "ordered") : "ordered",
       weights: [],
-      schedules: routeWeightRules(current),
+      schedules: routeWeightRules(current, windows),
       children: [],
     }
     nodes.push(node)
+    const attached = new Set<string>()
     const attach = (child: ModelRoute.Node["children"][number], key: string) => {
       node.children.push(child)
       node.weights.push(ModelRouteAutonomy.usesRules(current.autonomy) ? (current.weights?.[key] ?? 1) : 1)
@@ -255,12 +344,20 @@ export function expand(
     for (const target of current.targets) {
       const spec = targetSpec(target)
       const ref = targetRef(spec.model)
+      if (spec.until !== undefined && Date.now() >= spec.until) continue
       if (ref.providerID === ModelRoute.PROVIDER_ID) {
-        const child = visit(ref.id, ref.variant ?? inheritedVariant, nextTrail)
-        if (child !== undefined) attach({ node: child }, `${ModelRoute.PROVIDER_ID}/${ref.id}`)
+        const child = visit(
+          ref.id,
+          ref.variant ?? inheritedVariant,
+          nextTrail,
+          spec.cache_format ?? current.cache_format ?? inheritedCacheFormat,
+        )
+        if (child !== undefined) {
+          const gate = gateFor("window" in spec ? spec.window : undefined, windows, `route ${JSON.stringify(routeID)}`)
+          attach({ node: child, ...(gate ? { gate } : {}) }, `${ModelRoute.PROVIDER_ID}/${ref.id}`)
+        }
         continue
       }
-      if (spec.until !== undefined && Date.now() >= spec.until) continue
       for (const [id, model] of ModelRouteExpansion.matchingModels(ref.id, definitions.get(ref.providerID))) {
         if (!model.enabled) continue
         const requested = ref.variant ?? inheritedVariant
@@ -283,8 +380,16 @@ export function expand(
           ...(variant ? { variant } : {}),
         })
         const key = `${resolved.providerID}/${resolved.id}${resolved.variant ? `#${resolved.variant}` : ""}`
-        if (seen.has(key)) continue
-        seen.add(key)
+        if (attached.has(key)) continue
+        attached.add(key)
+        const gate = gateFor("window" in spec ? spec.window : undefined, windows, `route ${JSON.stringify(routeID)}`)
+        const leafKey = `${resolved.providerID}/${resolved.id}`
+        const existing = leafByKey.get(key)
+        if (existing !== undefined) {
+          // First reach wins for the leaf itself; a different node re-attaches it by index.
+          attach({ leaf: existing, ...(gate ? { gate } : {}) }, leafKey)
+          continue
+        }
         const defaultVariant =
           spec.defaultVariant && model.variants.some((item) => item.id === spec.defaultVariant)
             ? Model.VariantID.make(spec.defaultVariant)
@@ -294,8 +399,11 @@ export function expand(
             model.variants.some((item) => item.id === to) ? [[from, Model.VariantID.make(to)] as const] : [],
           ),
         )
-        const leafKey = `${resolved.providerID}/${resolved.id}`
-        attach({ leaf: result.length }, leafKey)
+        leafByKey.set(key, result.length)
+        attach({ leaf: result.length, ...(gate ? { gate } : {}) }, leafKey)
+        // A leaf's own cache_format wins, then the route that declared it, then an enclosing
+        // route's. The first route to reach a shared model fixes it for that leaf.
+        const cacheFormat = spec.cache_format ?? current.cache_format ?? inheritedCacheFormat
         // Budgets belong to the target: the outermost route that declares one wins, wherever the
         // target was first reached.
         const budget = plainBudget(
@@ -311,13 +419,14 @@ export function expand(
           fixedVariant: ref.variant !== undefined || inheritedVariant !== undefined,
           ...(defaultVariant ? { defaultVariant } : {}),
           ...(Object.keys(variantMap).length ? { variantMap } : {}),
+          ...(cacheFormat ? { cacheFormat } : {}),
         })
       }
     }
     return node.children.length > 0 ? nodeIndex : undefined
   }
 
-  visit(id, undefined, new Set())
+  visit(id, undefined, new Set(), undefined)
   return { leaves: result, nodes }
 }
 

@@ -1,6 +1,7 @@
 export * as ConfigModelRoutes from "./model-routes.js"
 
 import { Schema } from "effect"
+import { CacheFormat } from "../model-compatibility.js"
 import { ConfigModel } from "./model.js"
 import { optional, PositiveInt } from "../schema.js"
 
@@ -19,17 +20,30 @@ const TargetObject = Schema.Struct({
   model: ConfigModel.Selection.annotate({
     description: "Provider/model reference. A route may reference another route.",
   }),
-  defaultVariant: Schema.String.pipe(optional).annotate({
+  defaultVariant: Schema.String.annotate({
     description: "Variant used when the route is selected without an explicit variant.",
-  }),
-  variants: Schema.Record(Schema.String, Schema.String).pipe(optional).annotate({
+  }).pipe(optional),
+  variants: Schema.Record(Schema.String, Schema.String).annotate({
     description:
       'Remaps a route-level variant to this target\'s variant, e.g. { "low": "high" } runs this target at high when the route is selected at low.',
-  }),
-  until: PositiveInt.pipe(optional).annotate({
+  }).pipe(optional),
+  until: PositiveInt.annotate({
     description:
       "Epoch milliseconds after which this target leaves the route. Used for time-limited pool membership; takes effect when the configuration reloads.",
-  }),
+  }).pipe(optional),
+  cache_format: CacheFormat.pipe(optional),
+  window: Schema.Union([
+    Schema.String,
+    Schema.Struct({
+      name: Schema.String,
+      invert: Schema.Boolean.pipe(optional),
+    }),
+  ])
+    .annotate({
+      description:
+        'Eligibility gate: the name of a window defined in experimental.model_route_windows, or { "name": ..., "invert": true }. The target is only in the route while the named window is active, or while it is not active when inverted — e.g. a DeepSeek target gated on the inverse of "deepseek-peak" is a candidate off-peak only, and the same target gated on "deepseek-peak" itself is the peak fallback. An unknown window name drops the gate, leaving the target always eligible.',
+    })
+    .pipe(optional),
 })
 export const Target = Schema.Union([ConfigModel.Selection, TargetObject]).annotate({
   identifier: "Config.ModelRoute.Target",
@@ -142,6 +156,13 @@ export class Window extends Schema.Class<Window>("Config.ModelRoute.Window")({
   }).pipe(optional),
 }) {}
 
+/** A schedule's window: inline, or the name of a window defined once in
+ * experimental.model_route_windows and reused by every rule that shares the meter's clock. */
+const ScheduleWindow = Schema.Union([Window, Schema.String]).annotate({
+  description:
+    "When the change is in force: a window object, or the name of a window from experimental.model_route_windows. An unknown name drops the rule.",
+})
+
 /** A time-bound weight change inside one route. `factor` scales a target's weight; `weight` replaces
  * it. Everything is unchanged outside the window. */
 export class Schedule extends Schema.Class<Schedule>("Config.ModelRoute.Schedule")({
@@ -152,7 +173,7 @@ export class Schedule extends Schema.Class<Schedule>("Config.ModelRoute.Schedule
         'Target references this change covers, `*` allowed, e.g. ["deepseek/*", "openai/gpt-6-*"]. Empty or unset means every target of the route.',
     })
     .pipe(optional),
-  when: Window,
+  when: ScheduleWindow,
   factor: PositiveFinite.annotate({
     description:
       "Multiplies the target's configured weight while the window is active. 0.8 makes a weight of 2 become 1.6; 1.2 makes it 2.4. Exactly one of factor and weight is expected.",
@@ -187,7 +208,7 @@ export class GlobalSchedule extends Schema.Class<GlobalSchedule>("Config.ModelRo
       description: "Route IDs the change is limited to, including nested ones. Empty or unset means every route.",
     })
     .pipe(optional),
-  when: Window,
+  when: ScheduleWindow,
   factor: PositiveFinite.annotate({
     description: "Multiplies the target's configured weight while the window is active.",
   }).pipe(optional),
@@ -202,6 +223,7 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
   targets: Schema.Array(Target).annotate({
     description: "Ordered provider/model references. A route may include another route reference.",
   }),
+  cache_format: CacheFormat.pipe(optional),
   health: Health.pipe(optional),
   budgets: Schema.Record(Schema.String, Budget)
     .annotate({
@@ -217,34 +239,33 @@ export class Route extends Schema.Class<Route>("Config.ModelRoute.Route")({
     description:
       "Total requests to make against one target before failing over to the next, so 2 allows one retry. Defaults to 2. Retries only happen before any response output, so no tool call ever runs twice.",
   }).pipe(optional),
-  autonomy: Schema.Literals(["fixed", "rules", "adaptive", "predictive", "agent"]).pipe(optional).annotate({
+  autonomy: Schema.Literals(["fixed", "rules", "adaptive", "predictive", "agent"]).annotate({
     description:
       "How much the route may decide for itself; each level includes the ones before it. fixed: configured order with failover only. rules: adds selection modes, weights, budgets and provider rate-limit holds. adaptive: adds the scheduled review that skips or down-weights targets from recent history. predictive: adds time-of-day and error-text prediction. agent: adds route_stats and route_adjust so the model can inspect and steer routing. Unset keeps the behavior from before levels existed.",
-  }),
-  selection: Schema.Literals(["ordered", "round-robin", "weighted"]).pipe(optional).annotate({
+  }).pipe(optional),
+  selection: Schema.Literals(["ordered", "round-robin", "weighted"]).annotate({
     description:
       "How a session picks its target: ordered uses the configured order (default), round-robin rotates per new session, weighted draws by weights. Either way the choice is sticky for the session and failover falls through the remaining targets in order.",
-  }),
+  }).pipe(optional),
   weights: Schema.Record(Schema.String, Schema.Finite.check(Schema.isGreaterThan(0)))
-    .pipe(optional)
     .annotate({
       description:
         'Relative ratios for the weighted selection mode, keyed by target model reference, e.g. { "openai/gpt-6-luna": 3, "github-copilot/gpt-6-luna": 1 } sends about 3/4 of new sessions to the first target. Targets without a weight count as 1. A nested route is keyed as "opencode-route/<id>" and is chosen as one unit by this route; it then picks among its own members using its own selection and weights.',
-    }),
-  schedules: Schema.Array(Schedule).pipe(optional).annotate({
+    }).pipe(optional),
+  schedules: Schema.Array(Schedule).annotate({
     description:
       "Time-bound weight changes for this route's targets, e.g. peak hours that make a provider lighter. Weights order every selection mode: inside an active window the targets are ranked by effective weight, and equal weights keep their configured order.",
-  }),
+  }).pipe(optional),
   limit: Schema.Struct({
     context: PositiveInt.annotate({
       description:
         "Caps the context limit the route presents, below every target's own limit — e.g. 100000 keeps sessions on this route inside a pricing tier that ends at 100k context, or compacts them earlier than the targets would. The effective limit is the smaller of this cap and the targets' minimum, so a cap can never raise a route above what its targets support.",
     }),
   })
-    .pipe(optional)
     .annotate({
       description: "Limits the route presents as its own, regardless of its targets' limits.",
-    }),
+    })
+    .pipe(optional),
 }) {}
 
 /** Periodic, automatic use of the routing history. Off by default. */
@@ -283,3 +304,11 @@ const RouteID = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]
 
 export const Info = Schema.Record(RouteID, Route).annotate({ identifier: "Config.ModelRoutes" })
 export type Info = typeof Info.Type
+
+const WindowName = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/))
+
+/** Named, reusable time windows, defined once and referenced by schedules and target gates.
+ * Windows belong to the meter, not the model: `deepseek-peak` is defined here a single time and
+ * every rule that follows DeepSeek's clock names it. */
+export const Windows = Schema.Record(WindowName, Window).annotate({ identifier: "Config.ModelRoute.Windows" })
+export type Windows = typeof Windows.Type

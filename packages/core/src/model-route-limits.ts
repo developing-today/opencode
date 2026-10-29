@@ -45,6 +45,30 @@ const UNITS: Readonly<Record<string, number>> = {
   d: 86_400_000,
 }
 
+/** Date.parse with a calendar check, shared by every quota-reset parser in this surface
+ * (resetMs, resetAtFromMessage here, ModelRouteTuning.parseQuotaReset): Date.parse silently
+ * rolls overflow days such as Feb 30 into the next month instead of returning NaN, so an
+ * ISO date's components must round-trip through a real calendar date (the same check
+ * Model.parseReleaseDate makes) before the parsed instant is trusted. */
+export const parseAbsoluteTime = (text: string): number | undefined => {
+  const date = Date.parse(text)
+  if (Number.isNaN(date)) return undefined
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text)
+  if (!iso) return date
+  const year = Number(iso[1])
+  const month = Number(iso[2])
+  const day = Number(iso[3])
+  const probe = new Date(0)
+  probe.setUTCFullYear(year, month - 1, day)
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day)
+    return undefined
+  // V8 rolls hour 24 into the next day instead of returning NaN (minutes/seconds 60+ are
+  // Invalid), so an ISO time part must not carry hour > 23 (RFC 3339 time-hour is 00-23).
+  const time = /[T ](\d{2}):\d{2}/i.exec(text)
+  if (time && Number(time[1]) > 23) return undefined
+  return date
+}
+
 /** Milliseconds until a reset, from the forms providers use: a duration ("1s", "6m0s", "250ms",
  * "1h2m3.5s"), plain seconds, or a timestamp. Undefined when the value is none of those. */
 export const resetMs = (value: string, at: number): number | undefined => {
@@ -56,19 +80,39 @@ export const resetMs = (value: string, at: number): number | undefined => {
     for (const [, amount, unit] of text.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h|d)/g)) total += Number(amount) * UNITS[unit]
     return total
   }
-  const date = Date.parse(text)
-  return Number.isNaN(date) ? undefined : Math.max(0, date - at)
+  const date = parseAbsoluteTime(text)
+  return date === undefined ? undefined : Math.max(0, date - at)
 }
 
 // The zone designator is part of the capture: dropping it would make Date.parse read a
 // "…T00:00:00Z" timestamp as local time, shifting the instant by the reader's UTC offset.
-const ABSOLUTE_TIME =
-  /(?:retry|try again|wait|back|resume|reset|returns?|until|expires?(?: at)?)[a-z ]{0,20}(?:after|at|on|by)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?)/
-const RELATIVE_TIME = /in\s+(\d+)\s*(second|minute|hour|day|sec|s)s?(?![a-z])/
+// The one absolute-time keyword set both quota-reset parsers accept (this parser and
+// ModelRouteTuning.parseQuotaReset, which shares this pattern): a message honoured by one
+// door must be honoured by the other. The filler between the keyword and the date also
+// allows hyphens, so a hyphenated non-date word ("reset at not-a-date 2026-01-02...") does
+// not break the match before the real date.
+export const ABSOLUTE_TIME =
+  /(?:retry|try again|wait|back|resume|reset|returns?|available|until|expires?(?: at)?)[-a-z ]{0,20}(?:after|at|on|by)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?)/
+
+// A relative wait is one amount+unit part or a compound sequence of them ("in 1 hour 30
+// minutes"), and an amount may be decimal ("in 1.5 hours") — providers phrase resets both ways.
+const RELATIVE_PART = String.raw`\d+(?:\.\d+)?\s*(?:second|minute|hour|day|sec|s)s?(?![a-z])`
+const RELATIVE_TIME = new RegExp(String.raw`in\s+(${RELATIVE_PART}(?:[\s,]+(?:and\s+)?${RELATIVE_PART})*)`)
+const RELATIVE_PARTS = /(\d+(?:\.\d+)?)\s*(second|minute|hour|day|sec|s)s?(?![a-z])/g
 const RELATIVE_UNITS = { second: 1_000, sec: 1_000, s: 1_000, minute: 60_000, hour: 3_600_000, day: 86_400_000 } as Record<
   string,
   number
 >
+
+/** The total wait a relative phrase states, summed over its parts; undefined when it states none. */
+const relativeMs = (message: string): number | undefined => {
+  const sequence = RELATIVE_TIME.exec(message)?.[1]
+  if (!sequence) return undefined
+  let total = 0
+  for (const [, amount, unit] of sequence.matchAll(RELATIVE_PARTS))
+    total += Number(amount) * (RELATIVE_UNITS[unit] ?? 1_000)
+  return total
+}
 
 /**
  * The instant a provider said a limit returns, from the text of its error or a user's note: an
@@ -77,13 +121,14 @@ const RELATIVE_UNITS = { second: 1_000, sec: 1_000, s: 1_000, minute: 60_000, ho
  */
 export const resetAtFromMessage = (message: string | undefined, now: number): number | undefined => {
   if (!message) return undefined
-  const absolute = ABSOLUTE_TIME.exec(message.toLowerCase())?.[1]
-  if (absolute) {
-    const date = Date.parse(absolute)
-    if (!Number.isNaN(date)) return date
+  // Scan every absolute candidate: an unparseable first date (e.g. month 13) must not shadow
+  // a later valid reset stated in the same message.
+  for (const [, absolute] of message.toLowerCase().matchAll(new RegExp(ABSOLUTE_TIME.source, "g"))) {
+    const date = parseAbsoluteTime(absolute)
+    if (date !== undefined) return date
   }
-  const relative = RELATIVE_TIME.exec(message.toLowerCase())
-  return relative ? now + Number(relative[1]) * (RELATIVE_UNITS[relative[2]] ?? 1_000) : undefined
+  const relative = relativeMs(message.toLowerCase())
+  return relative === undefined ? undefined : now + relative
 }
 
 /**
@@ -109,12 +154,28 @@ export interface Window {
   readonly resetAt: number | undefined
 }
 
+// Counts are plain unsigned decimals — digits with an optional fraction, the
+// grammar the sibling numeric-header parsers already enforce (the ai
+// executor's retry-after grammars, SpeechStream.headerUsage). Bare Number()
+// also reinterprets hex/binary/octal/exponent/signed spellings (#711):
+// "0x0" would read as a spent window and bench the target, "1e3" and "0x64"
+// would fabricate the near-empty fraction. A non-plain spelling is
+// unparseable here, exactly like "lots": the window drops / the limit is
+// undefined.
+const PLAIN_COUNT = /^\d+(?:\.\d+)?$/
+const plainCount = (raw: string | undefined): number => {
+  if (raw === undefined) return Number.NaN
+  const text = raw.trim()
+  return PLAIN_COUNT.test(text) ? Number(text) : Number.NaN
+}
+
 /** The windows a snapshot describes, with numbers parsed. */
 export const windows = (value: Snapshot): Window[] =>
   Object.entries(value.remaining ?? {}).flatMap(([name, raw]) => {
-    const remaining = Number(raw)
+    if (raw.trim() === "") return []
+    const remaining = plainCount(raw)
     if (!Number.isFinite(remaining)) return []
-    const limit = Number(value.limit?.[name])
+    const limit = plainCount(value.limit?.[name])
     const reset = value.reset?.[name] === undefined ? undefined : resetMs(value.reset[name], value.at)
     return [
       {

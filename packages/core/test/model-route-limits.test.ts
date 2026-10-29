@@ -85,6 +85,46 @@ describe("ModelRouteLimits.holdUntil", () => {
   test("skips values that are not numbers", () => {
     expect(ModelRouteLimits.holdUntil(snap({ remaining: { requests: "lots" }, reset: { requests: "1s" } }), at)).toBe(0)
   })
+
+  test("skips non-decimal remaining and limit spellings instead of reinterpreting them (#711)", () => {
+    for (const spelling of ["0x0", "0b0", "0o0", "1e3", "+5", "-5", "0x64"]) {
+      expect(ModelRouteLimits.windows(snap({ remaining: { requests: spelling } }))).toEqual([])
+      expect(ModelRouteLimits.holdUntil(snap({ remaining: { requests: spelling } }), at)).toBe(0)
+    }
+    // The #672 failure through another spelling: "0x0" must not bench a target as a spent window.
+    expect(
+      ModelRouteLimits.holdUntil(
+        snap({ limit: { requests: "100" }, remaining: { requests: "0x0" }, reset: { requests: "60s" } }),
+        at,
+      ),
+    ).toBe(0)
+    // A non-decimal limit yields an undefined limit, so no near-empty fraction is fabricated:
+    // remaining 3 of "0x64" (100 if reinterpreted) would otherwise hold until the reset.
+    const badLimit = snap({
+      limit: { requests: "0x64" },
+      remaining: { requests: "3" },
+      reset: { requests: "60s" },
+    })
+    expect(ModelRouteLimits.windows(badLimit)).toEqual([
+      { name: "requests", remaining: 3, limit: undefined, resetAt: at + 60_000 },
+    ])
+    expect(ModelRouteLimits.holdUntil(badLimit, at)).toBe(0)
+    // Plain decimals are unchanged.
+    expect(ModelRouteLimits.windows(snap({ limit: { requests: "100" }, remaining: { requests: "3.5" } }))).toEqual([
+      { name: "requests", remaining: 3.5, limit: 100, resetAt: undefined },
+    ])
+    expect(ModelRouteLimits.holdUntil(snap({ remaining: { requests: "0" } }), at)).toBe(at + 60_000)
+  })
+
+  test("skips blank remaining values instead of reading them as zero", () => {
+    const blank = snap({ limit: { requests: "100" }, remaining: { requests: "" }, reset: { requests: "60s" } })
+    expect(ModelRouteLimits.windows(blank)).toEqual([])
+    expect(ModelRouteLimits.holdUntil(blank, at)).toBe(0)
+    const whitespace = snap({ remaining: { requests: "  " } })
+    expect(ModelRouteLimits.windows(whitespace)).toEqual([])
+    expect(ModelRouteLimits.holdUntil(whitespace, at)).toBe(0)
+    expect(ModelRouteLimits.holdUntil(snap({ remaining: { requests: "0" } }), at)).toBe(at + 60_000)
+  })
 })
 
 describe("ModelRouteLimits.retryHintFromMessage", () => {
@@ -102,6 +142,74 @@ describe("ModelRouteLimits.retryHintFromMessage", () => {
     expect(ModelRouteLimits.retryHintFromMessage("try again in 45s", at)).toBe(45_000)
     expect(ModelRouteLimits.retryHintFromMessage("try again in 45 sec", at)).toBe(45_000)
     expect(ModelRouteLimits.retryHintFromMessage("wait in 2 hours", at)).toBe(7_200_000)
+  })
+
+  test("scans past an unparseable first date to a later valid reset", () => {
+    expect(
+      ModelRouteLimits.resetAtFromMessage("quota reset at 2026-13-01, back at 2026-01-02T00:00:00Z", at),
+    ).toBe(Date.parse("2026-01-02T00:00:00Z"))
+    expect(ModelRouteLimits.resetAtFromMessage("quota reset at not-a-date 2026-01-02T00:00:00Z", at)).toBe(
+      Date.parse("2026-01-02T00:00:00Z"),
+    )
+    // An invalid date alone still states no reset.
+    expect(ModelRouteLimits.resetAtFromMessage("quota reset at 2026-13-01", at)).toBeUndefined()
+  })
+
+  test("treats calendar-invalid dates as unparseable instead of rolling them forward", () => {
+    // Date.parse rolls Feb 30 to Mar 2 and Apr 31 to May 1; neither states a reset.
+    expect(ModelRouteLimits.resetAtFromMessage("quota reset at 2026-02-30", at)).toBeUndefined()
+    expect(ModelRouteLimits.resetAtFromMessage("quota reset at 2026-04-31T00:00:00Z", at)).toBeUndefined()
+    expect(ModelRouteLimits.resetAtFromMessage("quota reset at 2026-02-29", at)).toBeUndefined()
+    // Scanning continues past the rolled date to the valid reset stated after it.
+    expect(
+      ModelRouteLimits.resetAtFromMessage("quota reset at 2026-02-30, back at 2026-03-05T00:00:00Z", at),
+    ).toBe(Date.parse("2026-03-05T00:00:00Z"))
+    // Valid dates parse exactly as before, Feb 29 on a leap year included.
+    expect(ModelRouteLimits.resetAtFromMessage("quota reset at 2024-02-29", at)).toBe(Date.parse("2024-02-29"))
+    expect(ModelRouteLimits.resetAtFromMessage("quota reset at 2026-02-28", at)).toBe(Date.parse("2026-02-28"))
+    // The header form agrees: a calendar-invalid timestamp states no reset.
+    expect(ModelRouteLimits.resetMs("2026-04-31", at)).toBeUndefined()
+    expect(ModelRouteLimits.resetMs("2026-02-30", at)).toBeUndefined()
+  })
+
+  test("treats hour-24 ISO date-times as unparseable instead of rolling into the next day", () => {
+    // V8 parses hour 24 as midnight of the following day; RFC 3339 time-hour is 00-23.
+    for (const value of [
+      "2026-01-01T24:00:00Z",
+      "2026-01-01T24:00:00.000Z",
+      "2026-01-01T24:00:00+05:00",
+      "2025-12-31T24:00:00Z",
+    ]) {
+      expect(ModelRouteLimits.parseAbsoluteTime(value)).toBeUndefined()
+      expect(ModelRouteLimits.resetMs(value, at)).toBeUndefined()
+      expect(ModelRouteLimits.resetAtFromMessage(`quota reset at ${value}`, at)).toBeUndefined()
+    }
+    // Valid boundary times still parse exactly as before.
+    for (const value of ["2026-01-01T23:59:59Z", "2026-01-01T00:00:00Z", "2024-02-29T23:59:59Z"]) {
+      expect(ModelRouteLimits.parseAbsoluteTime(value)).toBe(Date.parse(value))
+    }
+  })
+
+  test("reads decimal and compound relative waits as the total", () => {
+    expect(ModelRouteLimits.retryHintFromMessage("try again in 1.5 hours", at)).toBe(5_400_000)
+    expect(ModelRouteLimits.resetAtFromMessage("try again in 1.5 hours", at)).toBe(at + 5_400_000)
+    expect(ModelRouteLimits.retryHintFromMessage("try again in 1 hour 30 minutes", at)).toBe(5_400_000)
+    expect(ModelRouteLimits.resetAtFromMessage("try again in 1 hour 30 minutes", at)).toBe(at + 5_400_000)
+    expect(ModelRouteLimits.retryHintFromMessage("try again in 1 hour and 30 minutes", at)).toBe(5_400_000)
+    expect(ModelRouteLimits.retryHintFromMessage("try again in 2.5 minutes", at)).toBe(150_000)
+  })
+
+  test("reads every absolute-time keyword parseQuotaReset reads (paired with model-route-tuning)", () => {
+    const instant = Date.parse("2026-01-02T00:00:00Z")
+    for (const message of [
+      "quota expires at 2026-01-02T00:00:00Z",
+      "quota retry at 2026-01-02T00:00:00Z",
+      "quota wait until 2026-01-02T00:00:00Z",
+      "quota try again at 2026-01-02T00:00:00Z",
+      "quota available at 2026-01-02T00:00:00Z",
+      "quota resets at 2026-01-02T00:00:00Z",
+    ])
+      expect(ModelRouteLimits.resetAtFromMessage(message, at)).toBe(instant)
   })
 
   test("does not guess at anything else", () => {

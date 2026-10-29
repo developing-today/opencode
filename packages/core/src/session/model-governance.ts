@@ -207,9 +207,9 @@ function routeTargets(
       selection.variant === undefined || selection.variant === "default"
         ? undefined
         : Model.VariantID.make(selection.variant)
+    if (object?.until !== undefined && Date.now() >= object.until) return []
     if (selection.providerID === "opencode-route")
       return routeTargets(entries, selection.model, seen, selectionVariant ?? requested, catalog)
-    if (object?.until !== undefined && Date.now() >= object.until) return []
     const rawVariant =
       selectionVariant ??
       (requested === undefined
@@ -279,6 +279,22 @@ export type Input = {
 }
 
 /**
+ * The model governance judges for `input`, in precedence order: the explicit
+ * choice, the per-call override's model, the session policy's per-agent
+ * override, the child agent's configured default, then the parent's model.
+ * Session creation stores this model on a model-less child so the model that
+ * is checked is the model that runs (#507): the runner otherwise resolves a
+ * model-less session against the global default, which governance never saw.
+ */
+export function checkedModel(entries: readonly Entry[], input: Input): Model.Ref | undefined {
+  const definitions = agentDefinitions(entries)
+  const policyOverride =
+    input.agent === undefined ? undefined : input.parent.subagentPolicy?.agentOverrides?.[input.agent]
+  const definition = input.agent === undefined ? undefined : definitions.get(input.agent)
+  return input.model ?? input.override?.model ?? policyOverride?.model ?? definition?.model ?? input.parent.model
+}
+
+/**
  * Answers whether a child of `input.parent`, running `input.agent`, may run its
  * would-be model: the explicit choice, then the (possibly overridden) agent
  * default, then the parent's model. Restrictions compose by intersection down
@@ -302,15 +318,20 @@ export const assertAllowed = Effect.fn("ModelGovernance.assertAllowed")(function
   const chain: SessionSchema.Info[] = [input.parent]
   const seen = new Set([input.parent.id])
   let current = input.parent
-  while (current.parentID) {
-    if (seen.has(current.parentID))
-      return yield* new DeniedError({ message: `Session parent cycle: ${current.parentID}` })
-    seen.add(current.parentID)
-    const parentID = current.parentID
+  // A fork is projected top-level (no parentID) but is a child of its source
+  // for governance (spec §6.2): follow the fork link when there is no parent
+  // link, so a fork cannot escape the policies above its source (#505).
+  let governanceParentID = current.parentID ?? current.fork?.sessionID
+  while (governanceParentID) {
+    if (seen.has(governanceParentID))
+      return yield* new DeniedError({ message: `Session parent cycle: ${governanceParentID}` })
+    seen.add(governanceParentID)
+    const parentID = governanceParentID
     current = yield* sessions
       .get(parentID)
       .pipe(Effect.mapError(() => new DeniedError({ message: `Parent session not found: ${parentID}` })))
     chain.push(current)
+    governanceParentID = current.parentID ?? current.fork?.sessionID
   }
 
   // Layer 1: ancestor session policies, hard at every level.
@@ -364,12 +385,7 @@ export const assertAllowed = Effect.fn("ModelGovernance.assertAllowed")(function
     excluded = unionExcluded(excluded, overridden.excluded, layer)
   }
 
-  const model =
-    input.model ??
-    input.override?.model ??
-    policyOverride?.model ??
-    definition?.model ??
-    input.parent.model
+  const model = checkedModel(entries, input)
   if (model === undefined) return
 
   const targets =

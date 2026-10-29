@@ -567,6 +567,20 @@ function normalizeExperimental(
         if (value.length || Array.isArray(experimental.model_route_schedules))
           result.model_route_schedules = value
       }
+      if (own(experimental, "model_route_windows")) {
+        const value = decodeMap(
+          experimental.model_route_windows,
+          ConfigModelRoutes.Window,
+          ["experimental", "model_route_windows"],
+          diagnostics,
+          decodeEncoded,
+        )
+        if (
+          Object.keys(value).length ||
+          (isRecord(experimental.model_route_windows) && !Object.keys(experimental.model_route_windows).length)
+        )
+          result.model_route_windows = value
+      }
     }
   }
   if (Object.keys(result).length || (isRecord(input.experimental) && !Object.keys(input.experimental).length))

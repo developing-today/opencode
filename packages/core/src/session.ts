@@ -1,7 +1,7 @@
 export * as Session from "./session.js"
 export * from "./session/schema.js"
 
-import { Effect, Layer, Schema, Context, Option, Stream } from "effect"
+import { Effect, Layer, Schema, Context, Stream } from "effect"
 import { LLMClient } from "@opencode/ai"
 import { ListAnchor } from "@opencode/schema/session"
 import { and, desc, eq } from "drizzle-orm"
@@ -57,9 +57,7 @@ import { llmClient } from "./effect/app-node-platform.js"
 import { Snapshot } from "./snapshot.js"
 import { Session } from "./session/session.js"
 import { ModelGovernance } from "./session/model-governance.js"
-import { Config } from "./config.js"
-import { Provider } from "./provider.js"
-import type { Entry } from "@opencode/schema/config"
+import { GovernanceConfig } from "./session/governance-config.js"
 import { SessionDiff, TurnRangeError } from "./session/diff.js"
 import { LocationServiceMap } from "./location-service-map.js"
 import { FSUtil } from "@opencode/util/fs-util"
@@ -280,42 +278,8 @@ const layer = Layer.effect(
     const locations = yield* LocationServiceMap.Service
     const sessions = yield* Session.make()
     const isDurableSessionEvent = Schema.is(SessionEvent.Durable)
-    // Governance reads agent definitions from the location's config entries,
-    // but only when the location's services are already initialized: session
-    // operations never initialize a location just to read them. An
-    // uninitialized location has no definition layer; session policies,
-    // which are read from the session store, still apply.
-    // Governance also judges route targets against the location's provider
-    // catalog (#530), read from the same already-initialized context: the
-    // snapshot's per-model enabled flag and offered variants. A location
-    // with no provider service supplies no catalog and route targets are
-    // judged literally, as before.
-    const governanceConfig = (location: Location.Ref) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const context = yield* locations.contextEffectOption(location)
-          if (Option.isNone(context)) return { entries: [] as Entry[], catalog: undefined as ModelGovernance.Catalog | undefined }
-          const config = Context.getOption(context.value, Config.Service)
-          const entries = config._tag === "Some" ? yield* config.value.entries() : ([] as Entry[])
-          const provider = Context.getOption(context.value, Provider.Service)
-          if (provider._tag === "None") return { entries, catalog: undefined }
-          const snapshot = yield* provider.value.snapshot()
-          const catalog: ModelGovernance.Catalog = new Map(
-            Array.from(snapshot.records, ([providerID, record]) => [
-              providerID as string,
-              new Map(
-                Array.from(record.models, ([id, model]) => [
-                  id as string,
-                  { enabled: model.enabled, variants: model.variants },
-                ]),
-              ),
-            ]),
-          )
-          return { entries, catalog }
-        }),
-      ).pipe(
-        Effect.orElseSucceed(() => ({ entries: [] as Entry[], catalog: undefined as ModelGovernance.Catalog | undefined })),
-      )
+    // Governance inputs (config entries + provider catalog) come from the one
+    // shared construction in session/governance-config.ts: GovernanceConfig.load.
     const assertModelAllowed = (input: {
       location: Location.Ref
       parent: SessionSchema.Info
@@ -323,7 +287,7 @@ const layer = Layer.effect(
       model?: Model.Ref
       override?: SessionSchema.AgentOverride
     }) =>
-      governanceConfig(input.location).pipe(
+      GovernanceConfig.load(locations, input.location).pipe(
         Effect.flatMap(({ entries, catalog }) =>
           ModelGovernance.assertAllowed(
             { get: (sessionID) => result.get(sessionID) },
@@ -346,7 +310,8 @@ const layer = Layer.effect(
         const project = yield* projects.resolve(location.directory)
         // Governance is enforced before anything is created: a denied child
         // fails here and no `session.created` is ever published for it.
-        if (parent !== undefined)
+        let storedModel = input.model
+        if (parent !== undefined) {
           yield* assertModelAllowed({
             location,
             parent,
@@ -354,6 +319,23 @@ const layer = Layer.effect(
             model: input.model,
             override: input.subagentOverride,
           })
+          // A model-less child is checked against the governance chain
+          // (the child agent's configured default, then the parent's model),
+          // but the runner resolves a model-less session against the global
+          // default — a model governance never saw. Store the checked model
+          // on the child so the checked model is the model that runs (#507).
+          // switchAgent stays consistent the same way: its check receives
+          // the child's now-stored model explicitly.
+          if (storedModel === undefined) {
+            const { entries } = yield* GovernanceConfig.load(locations, location)
+            storedModel = ModelGovernance.checkedModel(entries, {
+              parent,
+              agent: input.agent,
+              model: input.model,
+              override: input.subagentOverride,
+            })
+          }
+        }
         const projected = yield* bus
           .publish(
             SessionEvent.Created,
@@ -372,11 +354,11 @@ const layer = Layer.effect(
               metadata: input.metadata ?? parent?.metadata,
               subagentPolicy: input.subagentPolicy,
               permissions: input.permissions ?? parent?.permissions,
-              model: input.model
+              model: storedModel
                 ? {
-                    id: Model.ID.make(input.model.id),
-                    providerID: input.model.providerID,
-                    variant: input.model.variant,
+                    id: Model.ID.make(storedModel.id),
+                    providerID: storedModel.providerID,
+                    variant: storedModel.variant,
                   }
                 : undefined,
             },

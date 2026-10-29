@@ -1,8 +1,9 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Stream } from "effect"
 import { Base64 } from "effect/encoding"
 import { Speech, SpeechClient, SpeechEvent } from "../src/index.js"
 import { Cartesia, Deepgram, ElevenLabs, Google, OpenAI } from "../src/providers.js"
+import { SpeechStream } from "../src/protocols/utils/speech-stream.js"
 import { it } from "./lib/effect.js"
 import { dynamicResponse } from "./lib/http.js"
 import { sseEvents } from "./lib/sse.js"
@@ -74,6 +75,51 @@ describe("Speech", () => {
       expect(pcm.audio.info).toEqual({ format: "pcm", encoding: "pcm_s16le", sampleRate: 24000, channels: 1 })
       expect(wav.audio.mediaType).toBe("audio/wav")
       expect(wav.audio.info?.format).toBe("wav")
+    }),
+  )
+
+  it.effect("ignores a zero rate in Google's mime type so the default sample rate wins", () =>
+    Effect.gen(function* () {
+      const response = yield* Speech.generate({ model: google38, text: "Hi" }).pipe(
+        Effect.provide(
+          respond(
+            JSON.stringify({
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        inlineData: {
+                          mimeType: "audio/L16;codec=pcm;rate=0",
+                          data: Base64.encode(new TextEncoder().encode("\u0001\u0002")),
+                        },
+                      },
+                    ],
+                  },
+                  finishReason: "STOP",
+                },
+              ],
+            }),
+            "application/json",
+          ),
+        ),
+      )
+      expect(response.audio.info).toEqual({ format: "pcm", encoding: "pcm_s16le", sampleRate: 24000, channels: 1 })
+    }),
+  )
+
+  it.effect("ignores a zero rate in Deepgram's content type so the configured sample rate still wins", () =>
+    Effect.gen(function* () {
+      const [requested, defaulted] = yield* Effect.all([
+        Speech.generate({
+          model: deepgram,
+          text: "Hi",
+          providerOptions: { encoding: "mulaw", container: "none", sampleRate: 16000 },
+        }),
+        Speech.generate({ model: deepgram, text: "Hi", providerOptions: { encoding: "alaw", container: "none" } }),
+      ]).pipe(Effect.provide(respond("\u0001\u0002", "audio/pcm;rate=0")))
+      expect(requested.audio.info).toEqual({ format: "pcm", encoding: "pcm_mulaw", sampleRate: 16000, channels: 1 })
+      expect(defaulted.audio.info).toEqual({ format: "pcm", encoding: "pcm_alaw", sampleRate: 8000, channels: 1 })
     }),
   )
 
@@ -282,4 +328,85 @@ describe("Speech", () => {
       expect(yield* finish!.audio.bytes()).toEqual(Uint8Array.from([1, 2, 3]))
     }),
   )
+
+  it.effect("does not manufacture ElevenLabs sample rates from malformed output formats", () =>
+    Effect.gen(function* () {
+      const generate = (outputFormat: string) =>
+        Speech.generate({ model: elevenlabs, text: "Hi", voice, providerOptions: { outputFormat } }).pipe(
+          Effect.provide(respond("\u0001\u0002", "application/octet-stream")),
+        )
+      for (const format of ["pcm_abc", "pcm_44.1k", "pcm_-44100", "pcm_0", "pcm_0x10", "pcm_1e5"]) {
+        const response = yield* generate(format)
+        expect(response.audio.info).toEqual({
+          format: "pcm",
+          encoding: "pcm_s16le",
+          sampleRate: undefined,
+          channels: 1,
+        })
+      }
+      for (const format of ["wav_abc", "wav_-44100", "wav_0", "wav_0x10", "wav_1e5", "mp3_abc", "opus_0"]) {
+        const response = yield* generate(format)
+        expect(response.audio.info?.sampleRate).toBeUndefined()
+      }
+      const controls: Array<[string, number | undefined]> = [
+        ["pcm_44100", 44100],
+        ["ulaw_8000", 8000],
+        ["mp3_44100_128", 44100],
+        ["opus_48000_32", 48000],
+        ["pcm", undefined],
+      ]
+      for (const [format, sampleRate] of controls) {
+        const response = yield* generate(format)
+        expect(response.audio.info?.sampleRate).toBe(sampleRate)
+      }
+    }),
+  )
+})
+
+describe("SpeechStream.sampleRate", () => {
+  test("returns undefined for a non-positive rate so callers can fall back", () => {
+    expect(SpeechStream.sampleRate("audio/L16;codec=pcm;rate=0")).toBeUndefined()
+    expect(SpeechStream.sampleRate("audio/L16;codec=pcm;rate=0000")).toBeUndefined()
+  })
+
+  test("keeps positive rates unchanged", () => {
+    expect(SpeechStream.sampleRate("audio/L16;codec=pcm;rate=44100")).toBe(44100)
+    expect(SpeechStream.sampleRate("audio/pcm;rate=8000")).toBe(8000)
+  })
+
+  test("returns undefined when the media type has no usable rate", () => {
+    expect(SpeechStream.sampleRate("audio/L16;codec=pcm")).toBeUndefined()
+    expect(SpeechStream.sampleRate("audio/pcm;rate=abc")).toBeUndefined()
+    expect(SpeechStream.sampleRate(undefined)).toBeUndefined()
+  })
+})
+
+describe("SpeechStream.headerUsage", () => {
+  test("returns undefined for blank or whitespace-only header values", () => {
+    expect(SpeechStream.headerUsage("characters", "")).toBeUndefined()
+    expect(SpeechStream.headerUsage("characters", "   ")).toBeUndefined()
+    expect(SpeechStream.headerUsage("credits", "")).toBeUndefined()
+    expect(SpeechStream.headerUsage("credits", "   ")).toBeUndefined()
+    expect(SpeechStream.headerUsage("characters", undefined)).toBeUndefined()
+  })
+
+  test("returns undefined for negative amounts", () => {
+    expect(SpeechStream.headerUsage("characters", "-5")).toBeUndefined()
+    expect(SpeechStream.headerUsage("credits", "-5")).toBeUndefined()
+  })
+
+  test("returns undefined for non-plain spellings instead of reinterpreting them", () => {
+    expect(SpeechStream.headerUsage("characters", "0x10")).toBeUndefined()
+    expect(SpeechStream.headerUsage("characters", "1e3")).toBeUndefined()
+    expect(SpeechStream.headerUsage("credits", "0x10")).toBeUndefined()
+    expect(SpeechStream.headerUsage("credits", "1e3")).toBeUndefined()
+    expect(SpeechStream.headerUsage("characters", "abc")).toBeUndefined()
+  })
+
+  test("keeps plain values unchanged, including an authored zero", () => {
+    expect(SpeechStream.headerUsage("characters", "42")).toEqual({ type: "characters", characters: 42 })
+    expect(SpeechStream.headerUsage("characters", "0")).toEqual({ type: "characters", characters: 0 })
+    expect(SpeechStream.headerUsage("credits", "42")).toEqual({ type: "credits", credits: 42 })
+    expect(SpeechStream.headerUsage("credits", "0")).toEqual({ type: "credits", credits: 0 })
+  })
 })

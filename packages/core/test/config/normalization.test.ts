@@ -910,3 +910,48 @@ describe("model route tuning and log settings", () => {
     })
   })
 })
+
+describe("model route cache formats", () => {
+  const routesOf = (encoded: Readonly<Record<string, unknown>>) =>
+    (encoded.experimental as { model_routes?: Record<string, unknown> } | undefined)?.model_routes
+
+  test("a route and a target decode the compatibility cache format values", () => {
+    const value = decoded({
+      experimental: {
+        model_routes: {
+          pool: {
+            cache_format: "anthropic",
+            targets: ["openai/gpt-6-luna", { model: "anthropic/claude-sonnet-5", cache_format: "alibaba" }],
+          },
+        },
+      },
+    })
+    const pool = value.experimental?.model_routes?.pool
+    expect(pool?.cache_format).toBe("anthropic")
+    expect(JSON.parse(JSON.stringify(pool?.targets))).toEqual([
+      { providerID: "openai", model: "gpt-6-luna" },
+      { model: { providerID: "anthropic", model: "claude-sonnet-5" }, cache_format: "alibaba" },
+    ])
+  })
+
+  test("an unknown cache_format rejects the route at decode instead of being dropped", () => {
+    const result = ConfigNormalize.normalize({
+      experimental: {
+        model_routes: {
+          badRoute: { cache_format: "bedrock-converse", targets: ["openai/gpt-6-luna"] },
+          badTarget: { targets: [{ model: "openai/gpt-6-luna", cache_format: "anthropic-breakpoints" }] },
+          good: { cache_format: "alibaba", targets: ["openai/gpt-6-luna"] },
+        },
+      },
+    })
+    expect(result.type).toBe("normalized")
+    if (result.type !== "normalized") return
+    expect(result.diagnostics.map((diagnostic) => diagnostic.path)).toEqual([
+      ["experimental", "model_routes", "badRoute"],
+      ["experimental", "model_routes", "badTarget"],
+    ])
+    expect(routesOf(result.encoded)).toEqual({
+      good: { cache_format: "alibaba", targets: [{ providerID: "openai", model: "gpt-6-luna" }] },
+    })
+  })
+})

@@ -682,3 +682,121 @@ describe("ModelRoute scheduled weights", () => {
     expect(ModelRoute.orderTargets(decoded!, ready(2), undefined, false)).toEqual([0, 1])
   })
 })
+
+describe("ModelRoute window gates", () => {
+  const flash = ModelRoute.ref({ providerID: "p", model: "flash" })
+  const mimo = ModelRoute.ref({ providerID: "p", model: "mimo" })
+  const always = { timezone: "UTC" as const }
+  // A window active only tomorrow (UTC), following the scheduled-weights tests above.
+  const tomorrow = { daysOfWeek: [(new Date().getUTCDay() + 1) % 7], timezone: "UTC" }
+  const ready = new Set([0, 1])
+
+  test("gateOpen is open with no gate, follows the window, and invert flips it", () => {
+    // January 5, 2026 is a Monday; 15:00 UTC is inside 09:00-17:00.
+    const monday = Date.UTC(2026, 0, 5, 15, 0)
+    const peak = { daysOfWeek: [1], start: "09:00", end: "17:00", timezone: "UTC" }
+    expect(ModelRoute.gateOpen(undefined, monday)).toBe(true)
+    expect(ModelRoute.gateOpen({ name: "peak", window: peak }, monday)).toBe(true)
+    expect(ModelRoute.gateOpen({ name: "peak", window: peak, invert: true }, monday)).toBe(false)
+    expect(ModelRoute.gateOpen({ name: "peak", window: { daysOfWeek: [2], timezone: "UTC" } }, monday)).toBe(false)
+    expect(ModelRoute.gateOpen({ name: "peak", window: { daysOfWeek: [2], timezone: "UTC" }, invert: true }, monday)).toBe(
+      true,
+    )
+  })
+
+  test("an ordered route resolves flash then mimo off-peak and mimo then flash at peak", () => {
+    const gated = (peak: ModelRoute.ScheduleWindow) =>
+      ({
+        id: "r",
+        targets: [flash, mimo],
+        targetVariants: [],
+        health: ModelRoute.policy(),
+        nodes: [
+          {
+            routeID: "r",
+            selection: "ordered",
+            weights: [1, 1, 1],
+            children: [
+              { node: 1, gate: { name: "peak", window: peak, invert: true } },
+              { node: 2 },
+              { node: 3, gate: { name: "peak", window: peak } },
+            ],
+          },
+          { routeID: "flash-plan", selection: "ordered", weights: [1], children: [{ leaf: 0 }] },
+          { routeID: "mimo-plan", selection: "ordered", weights: [1], children: [{ leaf: 1 }] },
+          { routeID: "flash-peak", selection: "ordered", weights: [1], children: [{ leaf: 0 }] },
+        ],
+      }) as unknown as ModelRoute.Definition
+    // Peak window inactive (tomorrow only): the inverted gate is open, the peak gate is closed.
+    expect(ModelRoute.orderTargets(gated(tomorrow), ready, undefined, false)).toEqual([0, 1])
+    // Peak window active (always): the inverted gate is closed, the peak gate is open.
+    expect(ModelRoute.orderTargets(gated(always), ready, undefined, false)).toEqual([1, 0])
+  })
+
+  test("a gate-closed leaf inside an ungated nested group does not strand its ready sibling", () => {
+    const nested = (gate: ModelRoute.Gate) =>
+      ({
+        id: "r",
+        targets: [flash, mimo],
+        targetVariants: [],
+        health: ModelRoute.policy(),
+        nodes: [
+          {
+            selection: "ordered",
+            weights: [1, 1],
+            children: [{ node: 1 }, { leaf: 1 }],
+          },
+          { selection: "ordered", weights: [1], children: [{ leaf: 0, gate }] },
+        ],
+      }) as unknown as ModelRoute.Definition
+    const closed = nested({ name: "peak", window: tomorrow })
+    expect(ModelRoute.nextTarget(closed, ready, new Set(), undefined, false)).toBe(1)
+    expect(ModelRoute.orderTargets(closed, ready, undefined, false)).toEqual([1])
+    // The same shape with the inner gate open resolves the inner leaf first.
+    expect(ModelRoute.orderTargets(nested({ name: "peak", window: always }), ready, undefined, false)).toEqual([0, 1])
+    // An inverted gate on an always-active window is closed at every depth too.
+    expect(
+      ModelRoute.orderTargets(nested({ name: "peak", window: always, invert: true }), ready, undefined, false),
+    ).toEqual([1])
+  })
+
+  test("a fully gate-closed route still returns no target", () => {
+    const route = {
+      id: "r",
+      targets: [flash, mimo],
+      targetVariants: [],
+      health: ModelRoute.policy(),
+      nodes: [
+        {
+          selection: "ordered",
+          weights: [1, 1],
+          children: [{ node: 1 }, { leaf: 1, gate: { name: "peak", window: tomorrow } }],
+        },
+        {
+          selection: "ordered",
+          weights: [1],
+          children: [{ leaf: 0, gate: { name: "peak", window: tomorrow } }],
+        },
+      ],
+    } as unknown as ModelRoute.Definition
+    expect(ModelRoute.nextTarget(route, ready, new Set(), undefined, false)).toBeUndefined()
+    expect(ModelRoute.orderTargets(route, ready, undefined, false)).toEqual([])
+  })
+
+  test("a closed gate on a leaf removes only that leaf", () => {
+    const route = {
+      id: "r",
+      targets: [flash, mimo],
+      targetVariants: [],
+      health: ModelRoute.policy(),
+      nodes: [
+        {
+          selection: "ordered",
+          weights: [1, 1],
+          children: [{ leaf: 0, gate: { name: "peak", window: tomorrow } }, { leaf: 1 }],
+        },
+      ],
+    } as unknown as ModelRoute.Definition
+    expect(ModelRoute.orderTargets(route, ready, undefined, false)).toEqual([1])
+  })
+})

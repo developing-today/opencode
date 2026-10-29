@@ -372,6 +372,19 @@ describe("WebFetchTool helpers", () => {
     )
   })
 
+  test("parses ordered list start and value with HTML integer grammar, not radix auto-detection", () => {
+    expect(WebFetchTool.convertHTMLToMarkdown(`<ol start="0x10"><li>a</li><li>b</li></ol>`)).toBe(`0. a\n\n1. b`)
+    expect(WebFetchTool.convertHTMLToMarkdown(`<ol start="-0x10"><li>a</li><li>b</li></ol>`)).toBe(`0. a\n\n1. b`)
+    expect(WebFetchTool.convertHTMLToMarkdown(`<ol><li value="0x20">a</li><li>b</li></ol>`)).toBe(`0. a\n\n1. b`)
+    expect(WebFetchTool.convertHTMLToMarkdown(`<ol start="3"><li>a</li><li>b</li></ol>`)).toBe(`3. a\n\n4. b`)
+    expect(WebFetchTool.convertHTMLToMarkdown(`<ol start="08"><li>a</li></ol>`)).toBe(`8. a`)
+    expect(WebFetchTool.convertHTMLToMarkdown(`<ol start="1e2"><li>a</li></ol>`)).toBe(`1. a`)
+    expect(WebFetchTool.convertHTMLToMarkdown(`<ol start="-2"><li>a</li><li>b</li></ol>`)).toBe(`-2. a\n\n-1. b`)
+    expect(WebFetchTool.convertHTMLToMarkdown(`<ol><li>a</li></ol>`)).toBe(`1. a`)
+    expect(WebFetchTool.convertHTMLToMarkdown(`<ol start="x"><li>a</li></ol>`)).toBe(`1. a`)
+    expect(WebFetchTool.convertHTMLToMarkdown(`<ol><li value="x">a</li><li>b</li></ol>`)).toBe(`1. a\n\n2. b`)
+  })
+
   test("indents child lists from the actual parent marker width", () => {
     expect(WebFetchTool.convertHTMLToMarkdown(`<ol start="100"><li>outer<ul><li>inner</li></ul></li></ol>`)).toBe(
       `100. outer\n\n     - inner`,

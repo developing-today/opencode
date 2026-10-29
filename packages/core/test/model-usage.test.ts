@@ -68,6 +68,15 @@ describe("ModelUsage", () => {
     })
   })
 
+  test("slash-less targets split as model with an empty provider, never a mangled provider", () => {
+    expect(ModelUsage.splitTarget("openai/gpt-6-luna")).toEqual({ providerID: "openai", modelID: "gpt-6-luna" })
+    // First slash wins: model ids may contain further slashes.
+    expect(ModelUsage.splitTarget("openai/org/gpt-6")).toEqual({ providerID: "openai", modelID: "org/gpt-6" })
+    expect(ModelUsage.splitTarget("gpt-5")).toEqual({ providerID: "", modelID: "gpt-5" })
+    const reports = ModelUsage.targetReports([], ["gpt-5"], [], new Map())
+    expect(reports).toMatchObject([{ target: "gpt-5", providerID: "", modelID: "gpt-5", requests: 0 }])
+  })
+
   test("a session lists the pools and models it used, with their requests", () => {
     const sessions = [{ sessionID: "s1", first: 1, last: 9, ...totals({ requests: 3 }) }]
     const rows = [
@@ -121,6 +130,56 @@ describe("ModelUsage", () => {
     ])
   })
 
+  test("a session's plan-window share counts only the rows inside the window's own lookback when given them", () => {
+    const plan = {
+      id: "anthropic-max",
+      providerID: "anthropic",
+      label: "Personal",
+      coverage: "subscription",
+      quotas: [],
+      status: "active",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    } as ModelPlan.Plan
+    const window = { name: "5-hour", unit: "messages", limit: 200, windowHours: 5 } as ModelPlan.QuotaWindow
+    const reportRows = [
+      {
+        sessionID: "s1",
+        routeID: "hard",
+        providerID: "anthropic",
+        modelID: "claude-opus-5",
+        ...totals({ requests: 50 }),
+      },
+    ]
+    const windowRows = [
+      {
+        sessionID: "s1",
+        routeID: "hard",
+        providerID: "anthropic",
+        modelID: "claude-opus-5",
+        ...totals({ requests: 20 }),
+      },
+      {
+        sessionID: "s2",
+        routeID: "hard",
+        providerID: "anthropic",
+        modelID: "claude-opus-5",
+        ...totals({ requests: 99 }),
+      },
+    ]
+    const [report] = ModelUsage.sessionReports(
+      [{ sessionID: "s1", first: 1, last: 2, ...totals({ requests: 60 }) }],
+      reportRows,
+      [{ plan, window, rows: windowRows }],
+    )
+    // 20 of the session's 50 anthropic requests fall inside the 5-hour lookback; s2's rows never count.
+    expect(report?.windows).toEqual([
+      { plan: "anthropic-max", window: "5-hour", unit: "messages", used: 20, percent: 10 },
+    ])
+    // The report-window targets still come from the report rows.
+    expect(report?.targets.map((item) => [item.target, item.requests])).toEqual([["anthropic/claude-opus-5", 50]])
+  })
+
   test("days group by date and keep each provider's share", () => {
     const days = ModelUsage.dayReports([
       { day: "2026-10-13", providerID: "openai", modelID: "a", ...totals({ requests: 2, costUsd: 0.5 }) },
@@ -133,6 +192,28 @@ describe("ModelUsage", () => {
       costUsd: 1.5,
       providers: { openai: { requests: 2, costUsd: 0.5 }, anthropic: { requests: 1, costUsd: 1 } },
     })
+  })
+
+  test("days keep providers whose id collides with Object.prototype members", () => {
+    const days = ModelUsage.dayReports([
+      { day: "2026-10-13", providerID: "__proto__", modelID: "a", ...totals({ requests: 7, costUsd: 1 }) },
+      { day: "2026-10-13", providerID: "__proto__", modelID: "a", ...totals({ requests: 1, costUsd: 0.5 }) },
+      { day: "2026-10-13", providerID: "constructor", modelID: "b", ...totals({ requests: 5, costUsd: 2 }) },
+      { day: "2026-10-13", providerID: "toString", modelID: "c", ...totals({ requests: 3, costUsd: 3 }) },
+      { day: "2026-10-13", providerID: "anthropic", modelID: "d", ...totals({ requests: 2, costUsd: 4 }) },
+    ])
+    const [day] = days
+    expect(day?.requests).toBe(18)
+    expect(Object.keys(day?.providers ?? {})).toEqual(["__proto__", "constructor", "toString", "anthropic"])
+    // Each default totals() row meters 150 (100 input + 50 output).
+    expect(day?.providers["__proto__"]).toEqual({ requests: 8, metered: 300, costUsd: 1.5 })
+    expect(day?.providers["constructor"]).toEqual({ requests: 5, metered: 150, costUsd: 2 })
+    expect(day?.providers["toString"]).toEqual({ requests: 3, metered: 150, costUsd: 3 })
+    expect(day?.providers["anthropic"]).toEqual({ requests: 2, metered: 150, costUsd: 4 })
+    const serialised = JSON.parse(JSON.stringify(day?.providers))
+    expect(Object.keys(serialised)).toEqual(["__proto__", "constructor", "toString", "anthropic"])
+    expect(serialised["__proto__"]).toEqual({ requests: 8, metered: 300, costUsd: 1.5 })
+    expect(serialised["constructor"]).toEqual({ requests: 5, metered: 150, costUsd: 2 })
   })
 
   test("a plan window reports what it has used, its percent and what remains", () => {

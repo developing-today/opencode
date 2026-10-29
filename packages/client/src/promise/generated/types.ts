@@ -378,7 +378,39 @@ export type ConfigModelRouteTarget =
       defaultVariant?: string
       variants?: { [x: string]: string }
       until?: number
+      window?: string | { name: string; invert?: boolean }
     }
+
+export type ConfigModelRouteWindows = {
+  [x: string]: {
+    daysOfWeek?: Array<
+      | "sun"
+      | "sunday"
+      | "mon"
+      | "monday"
+      | "tue"
+      | "tuesday"
+      | "tues"
+      | "wed"
+      | "wednesday"
+      | "thu"
+      | "thursday"
+      | "thur"
+      | "thurs"
+      | "fri"
+      | "friday"
+      | "sat"
+      | "saturday"
+      | number
+    >
+    daysOfMonth?: Array<-1 | number>
+    start?: string
+    end?: string
+    timezone?: string
+    from?: number
+    until?: number
+  }
+}
 
 export type ConfigShellOption = { path: string; name: string; acceptable: boolean }
 
@@ -1022,34 +1054,36 @@ export type ConfigModelRoutes = {
     schedules?: Array<{
       id?: string
       targets?: Array<string>
-      when: {
-        daysOfWeek?: Array<
-          | "sun"
-          | "sunday"
-          | "mon"
-          | "monday"
-          | "tue"
-          | "tuesday"
-          | "tues"
-          | "wed"
-          | "wednesday"
-          | "thu"
-          | "thursday"
-          | "thur"
-          | "thurs"
-          | "fri"
-          | "friday"
-          | "sat"
-          | "saturday"
-          | number
-        >
-        daysOfMonth?: Array<-1 | number>
-        start?: string
-        end?: string
-        timezone?: string
-        from?: number
-        until?: number
-      }
+      when:
+        | {
+            daysOfWeek?: Array<
+              | "sun"
+              | "sunday"
+              | "mon"
+              | "monday"
+              | "tue"
+              | "tuesday"
+              | "tues"
+              | "wed"
+              | "wednesday"
+              | "thu"
+              | "thursday"
+              | "thur"
+              | "thurs"
+              | "fri"
+              | "friday"
+              | "sat"
+              | "saturday"
+              | number
+            >
+            daysOfMonth?: Array<-1 | number>
+            start?: string
+            end?: string
+            timezone?: string
+            from?: number
+            until?: number
+          }
+        | string
       factor?: number
       weight?: number
       note?: string
@@ -2633,38 +2667,41 @@ export type ConfigEntry =
             models?: Array<string>
             targets?: Array<string>
             routes?: Array<string>
-            when: {
-              daysOfWeek?: Array<
-                | "sun"
-                | "sunday"
-                | "mon"
-                | "monday"
-                | "tue"
-                | "tuesday"
-                | "tues"
-                | "wed"
-                | "wednesday"
-                | "thu"
-                | "thursday"
-                | "thur"
-                | "thurs"
-                | "fri"
-                | "friday"
-                | "sat"
-                | "saturday"
-                | number
-              >
-              daysOfMonth?: Array<-1 | number>
-              start?: string
-              end?: string
-              timezone?: string
-              from?: number
-              until?: number
-            }
+            when:
+              | {
+                  daysOfWeek?: Array<
+                    | "sun"
+                    | "sunday"
+                    | "mon"
+                    | "monday"
+                    | "tue"
+                    | "tuesday"
+                    | "tues"
+                    | "wed"
+                    | "wednesday"
+                    | "thu"
+                    | "thursday"
+                    | "thur"
+                    | "thurs"
+                    | "fri"
+                    | "friday"
+                    | "sat"
+                    | "saturday"
+                    | number
+                  >
+                  daysOfMonth?: Array<-1 | number>
+                  start?: string
+                  end?: string
+                  timezone?: string
+                  from?: number
+                  until?: number
+                }
+              | string
             factor?: number
             weight?: number
             note?: string
           }>
+          model_route_windows?: ConfigModelRouteWindows
           model_route_tuning?: {
             enabled?: boolean
             intervalMinutes?: number

@@ -4,6 +4,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { Global } from "@opencode/util/global"
 import { Schema } from "effect"
+import { ModelRouteLimits } from "./model-route-limits.js"
 
 /**
  * The plan store: subscriptions and their quota windows, the cost tier of each model, what each pool is for,
@@ -171,6 +172,8 @@ export const slug = (value: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 64)
+    // The slice can cut right after a separator, leaving a trailing dash the trim above missed.
+    .replace(/-+$/, "")
 
 /** Fields to change on a plan. A field left out is kept; a field set to null is removed. */
 export interface PlanPatch {
@@ -261,8 +264,12 @@ const noteFile = (dataDir?: string) => path.join(directory(dataDir), "plan-notes
 export const addNote = (input: NoteInput, now: string, dataDir?: string): Note => {
   const text = input.text.trim()
   if (!text) throw new Error("A note needs some text.")
+  // Calendar check via ModelRouteLimits.parseAbsoluteTime (#609): a bare Date.parse silently
+  // rolls calendar-invalid dates such as 2026-02-30 into the next month, so the id must not
+  // embed the rolled instant; a date with no usable instant embeds NaN, as an unparseable
+  // date always has.
   const note = Schema.decodeUnknownSync(Note)({
-    id: `note_${Date.parse(now).toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    id: `note_${(ModelRouteLimits.parseAbsoluteTime(now) ?? Number.NaN).toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     at: now,
     kind: input.kind ?? "other",
     text,
@@ -288,8 +295,17 @@ export interface NoteFilter {
 }
 
 /** The notes that match, oldest first, keeping the newest `limit`. A line that does not parse is skipped and
- * counted, so one damaged line cannot hide the rest. */
+ * counted, so one damaged line cannot hide the rest. A `since` that does not parse is a caller error and
+ * throws, rather than silently matching nothing; a note whose own timestamp does not parse cannot be
+ * shown to be at or after `since`, so under a `since` filter it is skipped and counted too. */
 export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: Note[]; skipped: number } => {
+  // Calendar check via ModelRouteLimits.parseAbsoluteTime (#609): a bare Date.parse silently
+  // rolls a calendar-invalid since such as 2026-02-30 into Mar 2, so it would filter from
+  // the rolled instant instead of throwing the caller error below. Non-ISO parseable forms
+  // keep their current behaviour (parseAbsoluteTime only calendar-checks ISO-shaped dates).
+  const since = filter.since === undefined ? undefined : ModelRouteLimits.parseAbsoluteTime(filter.since)
+  if (filter.since !== undefined && since === undefined)
+    throw new Error(`The since filter "${filter.since}" is not a parseable date. Use an ISO timestamp, or omit it.`)
   const file = noteFile(dataDir)
   if (!fs.existsSync(file)) return { notes: [], skipped: 0 }
   let skipped = 0
@@ -302,23 +318,48 @@ export const readNotes = (filter: NoteFilter = {}, dataDir?: string): { notes: N
       skipped += 1
     }
   }
-  const since = filter.since === undefined ? undefined : Date.parse(filter.since)
-  const matching = parsed
+  const candidates = parsed
     .filter((note) => filter.providerID === undefined || note.providerID === filter.providerID)
     .filter((note) => filter.planID === undefined || note.planID === filter.planID)
     .filter((note) => filter.modelID === undefined || note.modelID === filter.modelID)
     .filter((note) => filter.poolID === undefined || note.poolID === filter.poolID)
     .filter((note) => filter.kind === undefined || note.kind === filter.kind)
-    .filter((note) => since === undefined || Date.parse(note.at) >= since)
-    .sort((left, right) => left.at.localeCompare(right.at))
-  return { notes: filter.limit === undefined ? matching : matching.slice(-filter.limit), skipped }
+  const matching: Note[] = []
+  for (const note of candidates) {
+    if (since === undefined) {
+      matching.push(note)
+      continue
+    }
+    const at = ModelRouteLimits.parseAbsoluteTime(note.at)
+    if (at === undefined) {
+      skipped += 1
+      continue
+    }
+    if (at >= since) matching.push(note)
+  }
+  matching
+    .sort((left, right) => {
+      const leftAt = ModelRouteLimits.parseAbsoluteTime(left.at)
+      const rightAt = ModelRouteLimits.parseAbsoluteTime(right.at)
+      if (leftAt === undefined) return rightAt === undefined ? 0 : -1
+      if (rightAt === undefined) return 1
+      return leftAt - rightAt
+    })
+  // slice(-0) is slice(0): a limit of 0 (or less) must keep no notes, not every note.
+  // A non-finite limit slips past that guard (NaN <= 0 is false, and slice(-Infinity) is
+  // also slice(0)), so it keeps no notes either (#733).
+  const limited =
+    filter.limit === undefined ? matching : !Number.isFinite(filter.limit) || filter.limit <= 0 ? [] : matching.slice(-filter.limit)
+  return { notes: limited, skipped }
 }
 
 /** Whole days since a date the user or the model recorded, or null when there is no usable date. */
 export const daysSince = (date: string | undefined, now: number) => {
   if (date === undefined) return null
-  const at = Date.parse(date)
-  return Number.isNaN(at) ? null : Math.floor((now - at) / 86_400_000)
+  // Calendar-invalid dates (2026-02-30) have no usable instant either: a bare Date.parse
+  // would count from the rolled instant (Mar 2) instead.
+  const at = ModelRouteLimits.parseAbsoluteTime(date)
+  return at === undefined ? null : Math.max(0, Math.floor((now - at) / 86_400_000))
 }
 
 const GENERAL_GUIDANCE = [
