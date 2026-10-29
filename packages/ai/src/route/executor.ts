@@ -96,7 +96,8 @@ const retryAfterMs = (headers: Record<string, string>) => {
 }
 
 const addRateLimitValue = (target: Record<string, string>, key: string, value: string) => {
-  if (key.length > 0) target[key] = value
+  if (key.length > 0)
+    Object.defineProperty(target, key, { value, enumerable: true, configurable: true, writable: true })
 }
 
 const rateLimitDetails = (headers: Record<string, string>, retryAfter: number | undefined) => {
