@@ -1,10 +1,10 @@
 import { parse, type Program } from "acorn"
 import { Cause, Effect, Scope } from "effect"
-import type { DataValue, Diagnostic, ResolvedExecutionLimits, Result } from "../codemode.js"
+import type { DataValue, Diagnostic, Library, ResolvedExecutionLimits, Result } from "../codemode.js"
 import { toBoundary } from "../data.js"
 import { ToolRuntime } from "../tool-runtime.js"
 import { normalizeError } from "./errors.js"
-import type { Value } from "./objects.js"
+import { Arr, Bytes, Obj, type Value } from "./objects.js"
 import { createBuiltins } from "./intrinsics.js"
 import { Pending } from "./promises.js"
 import { Interpreter } from "./interpreter.js"
@@ -15,6 +15,7 @@ export const executeProgram = <R>(
   limits: ResolvedExecutionLimits,
   hooks: ToolRuntime.Hooks<R>,
   globals?: (ctx: Interpreter<R>) => ReadonlyArray<readonly [string, Value]>,
+  libraries: ReadonlyArray<Library> = [],
 ): Effect.Effect<Result, never, R> => {
   if (code.trim().length === 0) {
     return Effect.succeed({
@@ -40,6 +41,10 @@ export const executeProgram = <R>(
           const program = parseProgram(code)
           const pending = new Pending<R>(scope, builtins.Promise)
           const ctx = new Interpreter<R>({ tools, pending, builtins, logs, globals })
+          for (const library of libraries) {
+            const exported = yield* ctx.run(parseProgram(library.source))
+            ctx.defineGlobal(library.name, freezeLibraryValue(exported))
+          }
           const result = (yield* toBoundary(ctx, yield* ctx.run(program))) ?? null
           returned = { value: result, pending }
           const warnings = yield* pending.interrupt()
@@ -114,6 +119,21 @@ const parseProgram = (code: string): Program => {
     allowAwaitOutsideFunction: true,
     locations: true,
   })
+}
+
+// SetIntegrityLevel(freeze) for one library namespace: shallow, like `Object.freeze`.
+const freezeLibraryValue = (value: Value): Value => {
+  if (!(value instanceof Obj)) return value
+  value.extensible = false
+  if (value instanceof Bytes && value.bytes.length > 0) {
+    throw new TypeError("Cannot freeze array buffer views with elements.")
+  }
+  for (const slot of value.props.values()) {
+    slot.configurable = false
+    if ("value" in slot) slot.writable = false
+  }
+  if (value instanceof Arr) value.elements = { writable: false, enumerable: true, configurable: false }
+  return value
 }
 
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).byteLength
