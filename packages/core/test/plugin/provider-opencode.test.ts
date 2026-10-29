@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { LLM } from "@opencode/ai"
 import { LLMClient, RequestExecutor } from "@opencode/ai/route"
 import { ConfigPolicy } from "@opencode/schema/config/policy"
@@ -20,7 +20,7 @@ import { ModelResolver } from "@opencode/core/model-resolver"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { PluginHost } from "@opencode/core/plugin/host"
-import { OpencodePlugin } from "@opencode/core/plugin/provider/opencode"
+import { deviceIntervalMs, OpencodePlugin } from "@opencode/core/plugin/provider/opencode"
 import { Provider } from "@opencode/core/provider"
 import { Session } from "@opencode/core/session"
 import { WebSearch } from "@opencode/core/websearch"
@@ -131,6 +131,19 @@ const cost = (input: number, output = 0) => [
 ]
 
 describe("OpencodePlugin", () => {
+  test("floors the device poll interval and falls back on unusable values (#880)", () => {
+    expect(deviceIntervalMs(5)).toBe(5000)
+    expect(deviceIntervalMs(10)).toBe(10_000)
+    expect(deviceIntervalMs(1)).toBe(1000)
+    // Sub-second values are floored to 1 second instead of flooding the
+    // token endpoint.
+    expect(deviceIntervalMs(0.1)).toBe(1000)
+    expect(deviceIntervalMs(0.5)).toBe(1000)
+    // Zero, negative, and non-finite values take the 5-second fallback
+    // instead of busy-polling.
+    for (const value of [0, -3, Number.NaN, Number.POSITIVE_INFINITY]) expect(deviceIntervalMs(value)).toBe(5000)
+  })
+
   it.effect("registers account and service account methods", () =>
     Effect.gen(function* () {
       yield* addPlugin()
