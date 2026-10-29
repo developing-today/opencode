@@ -11,6 +11,7 @@ import { Model } from "../../model.js"
 import { OauthCallbackPage } from "../../oauth/page.js"
 import { Provider } from "../../provider.js"
 import type { PluginInternal } from "../internal.js"
+import { MAX_EXPIRES_IN_SECONDS } from "./expires.js"
 
 const providerID = Provider.ID.make("digitalocean")
 const integrationID = Integration.ID.make("digitalocean")
@@ -40,10 +41,13 @@ const decodeCallback = Schema.decodeUnknownOption(
 /** Server-supplied `expires_in` seconds, restricted to a plain unsigned
  * decimal integer spelling (the #715/#724 grammar family): spellings like
  * "1e3", "0x10", "3600junk", or "3600.9" are not reinterpreted — they yield
- * NaN and the caller applies its 30-day fallback (#771). */
+ * NaN and the caller applies its 30-day fallback (#771). A well-spelled but
+ * implausibly large value — the classic millisecond-scale lifetime — is
+ * clamped to the shared sane bound (#899, expires.ts): stored verbatim it
+ * would fabricate an expiry the consumer trusts for weeks. */
 export const expiresInSeconds = (raw: string | undefined): number => {
   const text = (raw ?? "0").trim()
-  return /^\d+$/.test(text) ? Number.parseInt(text, 10) : Number.NaN
+  return /^\d+$/.test(text) ? Math.min(Number.parseInt(text, 10), MAX_EXPIRES_IN_SECONDS) : Number.NaN
 }
 
 const oauth = {
