@@ -70,6 +70,19 @@ describe("Form", () => {
     }),
   )
 
+  it.effect("rejects calendar-invalid non-ISO date-times while keeping valid ones (#798)", () =>
+    Effect.sync(() => {
+      const fields = [{ key: "at", type: "string", format: "date-time" }] satisfies ReadonlyArray<Form.Field>
+
+      for (const value of ["Feb 30 2026", "Feb 30, 2026", "30 Feb 2026", "2026/02/30", "Feb 30 2026 24:00"]) {
+        expect(Form.validateAnswer(fields, { at: value })).toBe("Expected date-time for form field: at")
+      }
+      for (const value of ["Jan 5 2026", "January 5, 2026", "5 Jan 2026", "Feb 29 2024"]) {
+        expect(Form.validateAnswer(fields, { at: value })).toBeUndefined()
+      }
+    }),
+  )
+
   it.effect("pins date format behaviour alongside date-time", () =>
     Effect.sync(() => {
       const fields = [{ key: "day", type: "string", format: "date" }] satisfies ReadonlyArray<Form.Field>
