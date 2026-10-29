@@ -4121,6 +4121,22 @@
               ]
             },
             "required": false
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": ["true", "false"]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "required": false
           }
         ],
         "security": [],
@@ -5428,7 +5444,7 @@
                     "data": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/Provider.Info"
+                        "$ref": "#/components/schemas/Provider.InfoWithModels"
                       }
                     }
                   },
@@ -5479,7 +5495,7 @@
             }
           }
         },
-        "description": "Retrieve active AI providers so clients can show provider availability and configuration.",
+        "description": "Retrieve active AI providers, each with its resolved models, so clients can show provider availability and configuration and discover models per provider.",
         "summary": "List providers"
       }
     },
@@ -5540,7 +5556,7 @@
                       "$ref": "#/components/schemas/Location.PublicRef"
                     },
                     "data": {
-                      "$ref": "#/components/schemas/Provider.Info"
+                      "$ref": "#/components/schemas/Provider.InfoWithModels"
                     }
                   },
                   "required": ["location", "data"],
@@ -5597,7 +5613,7 @@
             }
           }
         },
-        "description": "Retrieve a single AI provider so clients can inspect its availability and endpoint settings.",
+        "description": "Retrieve a single AI provider with its resolved models so clients can inspect its availability, endpoint settings, and model catalog.",
         "summary": "Get provider"
       }
     },
@@ -21269,7 +21285,7 @@
         "type": "string",
         "description": "Make this provider a copy of another provider with its own sign-in, such as `openai.work` with `openai`, so both accounts can be used at the same time"
       },
-      "Provider.Info": {
+      "Provider.InfoWithModels": {
         "type": "object",
         "properties": {
           "id": {
@@ -21308,9 +21324,15 @@
           },
           "body": {
             "type": "object"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Model.Info"
+            }
           }
         },
-        "required": ["id", "name", "activation", "package"],
+        "required": ["id", "name", "activation", "package", "models"],
         "additionalProperties": false
       },
       "Provider.Request": {
