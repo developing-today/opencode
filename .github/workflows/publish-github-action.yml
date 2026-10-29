@@ -1,4 +1,5 @@
 name: publish-github-action
+# CI tier policy: .github/ci-policy.md (fast PR tier, full main tier).
 # RUNNER-SWITCH (2026-10-18): runners in this workflow were switched from Blacksmith to
 # GitHub-hosted at Drew's direction. To switch back, grep the repo for RUNNER-SWITCH and
 # swap each commented Blacksmith line back in for the active line under it. To choose per
@@ -12,7 +13,13 @@ on:
       - "github-v*.*.*"
       - "!github-v1"
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+concurrency:
+  # Releases are never cancelled mid-publish: push-to-main, tag pushes and
+  # manual dispatches are keyed by run_id (unique group, cancel can never
+  # fire); branch pushes keep the ref-keyed group and cancel on supersede.
+  # Standard pattern: design ci-fast-pr-full-main §4 / .github/ci-policy.md.
+  group: ${{ github.workflow }}-${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'workflow_dispatch') && github.run_id || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
