@@ -129,7 +129,7 @@ export const estimate = (samples: readonly Sample[], query: Query, options: Opti
   }
 
   const priors = { ...DEFAULT_PRIORS, ...options.priors }
-  if (effort !== null && priors[effort] !== undefined) {
+  if (effort !== null && Object.hasOwn(priors, effort) && priors[effort] !== undefined) {
     return { ...base, percentPerSession: priors[effort], sessions: 0, source: "prior-effort" }
   }
   return { ...base, percentPerSession: options.defaultPrior ?? DEFAULT_PRIOR, sessions: 0, source: "prior-default" }
