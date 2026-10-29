@@ -23,6 +23,8 @@ import { SessionProviderContext } from "./provider-context.js"
 import { InstructionEntry } from "./instruction-entry.js"
 import { SessionMessage } from "./message.js"
 import { SessionModelRequest } from "./model-request.js"
+import { ModelRoute } from "../model-route.js"
+import { SessionCompaction } from "./compaction.js"
 import { SessionRunnerModel } from "./runner/model.js"
 import { SessionSchema } from "./schema.js"
 import { SessionStore } from "./store.js"
@@ -56,6 +58,7 @@ export interface Interface {
   readonly load: (selection: Selection) => Effect.Effect<Loaded, SessionRunnerModel.Error>
   readonly resolveModel: (
     session: SessionSchema.Info,
+    requestTokens?: number,
   ) => Effect.Effect<SessionRunnerModel.Resolved, SessionRunnerModel.Error>
   /** Selects auxiliary title capabilities without instruction or tool preflight. */
   readonly selectTitle: (session: SessionSchema.Info) => Effect.Effect<
@@ -92,7 +95,8 @@ const layer = Layer.effect(
     const registry = yield* Tool.Service
     const vars = yield* MessagingVars.Service
 
-    const resolveModel = (session: SessionSchema.Info) => models.resolve(session, model.available)
+    const resolveModel = (session: SessionSchema.Info, requestTokens?: number) =>
+      models.resolve(session, model.available, requestTokens)
 
     const selectTitle = Effect.fn("SessionContext.selectTitle")(function* (session: SessionSchema.Info) {
       const agent = yield* agents.get(Agent.ID.make("title"))
@@ -180,19 +184,49 @@ const layer = Layer.effect(
     })
 
     const load = Effect.fn("SessionContext.load")(function* (selection: Selection) {
-      const model = yield* resolveModel(selection.session)
-      const history = yield* SessionHistory.entriesForRunner(
-        db,
-        selection.session.id,
-        selection.instructions,
-        SessionProviderContext.provenance(model) ?? "local",
-      )
+      // A routed model resolves to a leaf whose per-target context ceiling can only filter
+      // live turns if resolution knows the request size (#891). Routed sessions always read
+      // the local transcript (a routed model's provenance is undefined), so for a route the
+      // history can be read first and sized with compaction's accounting, and that size is
+      // threaded into the single resolution. Every other selection keeps the original
+      // order and passes no size, so unknown sizes never filter and plain models are
+      // unaffected.
+      const selected = selection.session.model
+      const catalog = selected ? yield* model.get(selected.providerID, selected.id) : undefined
+      const route = catalog && ModelRoute.definition(catalog) !== undefined ? catalog : undefined
+      if (!route || !selected) {
+        const resolved = yield* resolveModel(selection.session)
+        const history = yield* SessionHistory.entriesForRunner(
+          db,
+          selection.session.id,
+          selection.instructions,
+          SessionProviderContext.provenance(resolved) ?? "local",
+        )
+        return {
+          session: selection.session,
+          agent: selection.agent,
+          model: resolved,
+          initial: history.initial,
+          messages: history.entries.map((entry) => entry.message),
+          tools: selection.tools,
+        }
+      }
+      const history = yield* SessionHistory.entriesForRunner(db, selection.session.id, selection.instructions, "local")
+      const messages = history.entries.map((entry) => entry.message)
+      const requestTokens = SessionCompaction.estimateHistoryRequest({
+        agent: selection.agent,
+        model: { ref: selected, capabilities: route.capabilities },
+        tools: selection.tools,
+        initial: history.initial,
+        messages,
+      })
+      const resolved = yield* resolveModel(selection.session, requestTokens)
       return {
         session: selection.session,
         agent: selection.agent,
-        model,
+        model: resolved,
         initial: history.initial,
-        messages: history.entries.map((entry) => entry.message),
+        messages,
         tools: selection.tools,
       }
     })

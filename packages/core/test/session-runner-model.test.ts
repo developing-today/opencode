@@ -147,3 +147,34 @@ describe("ModelResolver bare aliases", () => {
     }),
   )
 })
+
+describe("SessionRunnerModel requestTokens threading (#891)", () => {
+  const seen: Array<number | undefined> = []
+  const stub = SessionRunnerModel.resolved(runtime, {
+    capabilities: { tools: true, input: ["text"], output: ["text"] },
+    cost: [],
+    limit: { context: 100, output: 20 },
+  })
+  const mockResolver = Layer.mock(ModelResolver.Service)({
+    resolve: () => Effect.succeed(undefined),
+    resolveModel: (_selected, _variant, _sessionID, requestTokens) => {
+      seen.push(requestTokens)
+      return Effect.succeed(stub)
+    },
+  })
+  const itThreading = testEffect(SessionRunnerModel.layer.pipe(Layer.provide(Layer.mergeAll(mockResolver, config))))
+
+  itThreading.effect("passes the live request size through to the resolver, and undefined when unknown", () =>
+    Effect.gen(function* () {
+      const models = yield* SessionRunnerModel.Service
+      const ref = Ref.make({ providerID: Provider.ID.make("deepseek"), id: ID.make("deepseek-chat") })
+      const sized = yield* models.resolve(session(ref), () => Effect.succeed([catalog]), 123_456)
+      expect(sized).toBe(stub)
+      const unsized = yield* models.resolve(session(ref), () => Effect.succeed([catalog]))
+      expect(unsized).toBe(stub)
+      // The known size reaches route resolution, where per-target ceilings can skip
+      // over-limit leaves; an unknown size stays undefined so it never filters.
+      expect(seen).toEqual([123_456, undefined])
+    }),
+  )
+})
