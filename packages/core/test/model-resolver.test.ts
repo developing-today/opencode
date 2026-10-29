@@ -2010,6 +2010,59 @@ describe("ModelResolver routes", () => {
     )
   })
 
+  it.effect("credentialFallback excludes the serving credential, not one another session activated (#6)", () => {
+    ModelRoute.resetHealth()
+    const a = leaf("pa")
+    const route = routed([a], { ...single })
+    const activated: string[] = []
+    let activeID = "cred-a"
+    const conn = (id: string) => ({
+      type: "credential" as const,
+      id: Credential.ID.make(id),
+      label: id,
+      method: "key" as const,
+    })
+    const integration = {
+      revision: () => 0,
+      get: (id: Integration.ID) => Effect.succeed({ id, connections: [conn("cred-a"), conn("cred-b")] }),
+      connection: {
+        active: () => Effect.succeed(conn(activeID)),
+        resolve: () => Effect.succeed(Credential.Key.make({ type: "key", key: "secret" })),
+        activate: (id: Credential.ID) =>
+          Effect.sync(() => {
+            activated.push(String(id))
+            activeID = String(id)
+          }),
+      },
+    }
+    return withResolver(
+      [a],
+      (resolver) =>
+        Effect.gen(function* () {
+          const resolved = yield* resolver.resolveModel(route)
+          expect(String(resolved.routing?.credentialID)).toBe("cred-a")
+          // The serving credential fails on quota and is benched; meanwhile another
+          // session activates cred-b, so cred-b is the *active* credential by the time
+          // this session's fallback runs.
+          ModelRoute.failed(
+            ModelRoute.ref({ providerID: "pa", model: a.id }),
+            ModelRoute.policy(),
+            Date.now(),
+            { quota: true },
+            "cred-a",
+          )
+          activeID = "cred-b"
+          // The fallback must still offer cred-b: it excludes the credential that
+          // served this resolution (cred-a, also credential-cooling), not the
+          // currently active one.
+          const switched = yield* resolved.routing!.credentialFallback!()
+          expect(String(switched?.routing?.credentialID)).toBe("cred-b")
+          expect(targetOf(switched!)).toBe("pa")
+        }),
+      integration,
+    )
+  })
+
   it.effect("a known-full active credential takes its target out of the route until a good read (#6)", () => {
     ModelRoute.resetHealth()
     const a = leaf("pa")
@@ -2080,4 +2133,45 @@ describe("ModelResolver routes", () => {
       integration,
     )
   })
+
+  it.effect("an over-limit non-full target does not mask a known-full last resort that fits (#6)", () => {
+    ModelRoute.resetHealth()
+    const a = leaf("pa")
+    const b = leaf("pb")
+    const route = routed([a, b], {
+      ...ordered,
+      targetLimits: [{ context: 200_000 }, { context: 100_000 }],
+    })
+    const conn = { type: "credential" as const, id: Credential.ID.make("cred-a"), label: "lab", method: "key" as const }
+    const integration = {
+      revision: () => 0,
+      connection: {
+        active: (id: Integration.ID) => Effect.succeed(String(id) === "pa" ? conn : undefined),
+        resolve: () => Effect.succeed(Credential.Key.make({ type: "key", key: "secret" })),
+      },
+    }
+    ModelRoute.observeCredentialQuota(ModelRoute.ref({ providerID: "pa", model: a.id }), "cred-a", {
+      planID: "pa-plan",
+      window: "monthly",
+      providerID: "pa",
+      percent: 100,
+      remaining: 0,
+      resetAt: Date.now() + 3_600_000,
+      observedAt: Date.now(),
+      stale: false,
+    })
+    return withResolver(
+      [a, b],
+      (resolver) =>
+        Effect.gen(function* () {
+          // pa's credential is known-full but pa fits the request; pb is not quota-blocked
+          // but its ceiling is below the request. The last resort is pa: an over-limit
+          // target is unusable, so it cannot count as the non-full alternative that
+          // excludes the known-full credential.
+          expect(targetOf(yield* resolver.resolveModel(route, undefined, "s-mask", 110_000))).toBe("pa")
+        }),
+      integration,
+    )
+  })
 })
+

@@ -156,8 +156,10 @@ export interface Resolved {
     /**
      * Activates the next eligible stored credential on the target's own integration and
      * re-resolves the same target on it (#6 credential failover). Eligibility is the Phase A
-     * gate: not credential-cooling, not quota-known-full, not credential-demoted. Returns
-     * undefined when no other stored credential is eligible.
+     * gate: not credential-cooling, not quota-known-full, not credential-demoted. The
+     * credential that served this resolution is the one excluded, even if another session
+     * has since activated a different credential. Returns undefined when no other stored
+     * credential is eligible.
      */
     readonly credentialFallback?: () => Effect.Effect<Resolved | undefined, Error>
     readonly fallback: () => Effect.Effect<Resolved | undefined, Error>
@@ -567,12 +569,15 @@ export const layer = Layer.effect(
           // credential is not a soft limit (#6): the last resort excludes one while any
           // remaining target's credential is not known-full. Context ceilings are
           // hard limits — the request cannot be served over a target's ceiling — so over-limit
-          // targets stay excluded even in the last resort.
-          const nonFull = indexes.filter((index) => {
+          // targets stay excluded even in the last resort, and they are filtered out
+          // before the non-full choice so an over-limit target cannot mask a
+          // known-full-but-fitting target as the last resort.
+          const usable = indexes.filter((index) => !overLimit.has(index))
+          const nonFull = usable.filter((index) => {
             const credentialID = credentialByProvider.get(definition.targets[index].providerID)
             return credentialID === undefined || ModelRoute.credentialQuotaBlocked(credentialID, now) === undefined
           })
-          const lastResort = (nonFull.length > 0 ? nonFull : indexes).filter((index) => !overLimit.has(index))
+          const lastResort = nonFull.length > 0 ? nonFull : usable
           const eligible = ready.length > 0 ? ready : allowCooling ? lastResort : []
           const index = ModelRoute.nextTarget(
             definition,
@@ -629,33 +634,36 @@ export const layer = Layer.effect(
           // #6 credential failover for this target: activate the next eligible stored credential
           // on the target's own integration and re-resolve the same target on it. The opencode-go
           // Lab -> Personal fall-through is this same path; there is no special case.
-          const credentialFallback = (): Effect.Effect<Resolved | undefined, Error> =>
-            Effect.gen(function* () {
-              const provider = yield* providers.get(target.providerID)
-              const integrationID = provider?.integrationID ?? Integration.ID.make(target.providerID)
-              const info = yield* integrations.get(integrationID)
-              const active = yield* integrations.connection.active(integrationID)
-              const activeID = active?.type === "credential" ? active.id : undefined
-              const at = Date.now()
-              const candidates = (info?.connections ?? []).filter(
-                (connection) =>
-                  connection.type === "credential" &&
-                  connection.id !== activeID &&
-                  ModelRoute.credentialCooldownUntil(target, connection.id, at) <= at &&
-                  ModelRoute.credentialQuotaBlocked(connection.id, at) === undefined &&
-                  !ModelRoute.demoted(target, at, connection.id),
-              )
-              for (const candidate of candidates) {
-                if (candidate.type !== "credential") continue
-                yield* integrations.connection.activate(candidate.id)
-                const retried = yield* Effect.result(
-                  load(source, target.variant ?? mapped, definition.targetCacheFormats?.[index]?.cacheFormat),
+          // The fallback excludes the credential that served this resolved target, captured
+          // at resolution time — not whatever happens to be active when the fallback runs:
+          // another session may already have activated a healthy credential after this one
+          // resolved, and that credential stays an eligible candidate (#6).
+          const credentialFallback =
+            (servingID: Credential.ID | undefined) => (): Effect.Effect<Resolved | undefined, Error> =>
+              Effect.gen(function* () {
+                const provider = yield* providers.get(target.providerID)
+                const integrationID = provider?.integrationID ?? Integration.ID.make(target.providerID)
+                const info = yield* integrations.get(integrationID)
+                const at = Date.now()
+                const candidates = (info?.connections ?? []).filter(
+                  (connection) =>
+                    connection.type === "credential" &&
+                    connection.id !== servingID &&
+                    ModelRoute.credentialCooldownUntil(target, connection.id, at) <= at &&
+                    ModelRoute.credentialQuotaBlocked(connection.id, at) === undefined &&
+                    !ModelRoute.demoted(target, at, connection.id),
                 )
-                if (Result.isFailure(retried)) continue
-                return makeResolved(retried.success, undefined, credentialFallback, candidate.id)
-              }
-              return undefined
-            })
+                for (const candidate of candidates) {
+                  if (candidate.type !== "credential") continue
+                  yield* integrations.connection.activate(candidate.id)
+                  const retried = yield* Effect.result(
+                    load(source, target.variant ?? mapped, definition.targetCacheFormats?.[index]?.cacheFormat),
+                  )
+                  if (Result.isFailure(retried)) continue
+                  return makeResolved(retried.success, undefined, credentialFallback(candidate.id), candidate.id)
+                }
+                return undefined
+              })
           // A session that just moved off its origin races that origin rather than the next fallback.
           const home = sessionID === undefined ? undefined : ModelRoute.hedgeHome(definition.id, sessionID)
           const homeIndex =
@@ -673,7 +681,7 @@ export const layer = Layer.effect(
                     requestTokens,
                   )
               : undefined
-          return makeResolved(current, origin, credentialFallback)
+          return makeResolved(current, origin, credentialFallback(credentialByProvider.get(target.providerID)))
         }
         if (lastError) return yield* Effect.fail(lastError)
         return undefined
