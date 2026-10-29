@@ -200,6 +200,8 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
           \`tokens_cache_read\` integer,
           \`tokens_cache_write\` integer,
           \`cost_usd\` real,
+          \`continuation_of\` integer,
+          \`continuation_index\` integer DEFAULT 0,
           \`quota\` text
         );
       `)
@@ -445,6 +447,7 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
       yield* tx.run(
         `CREATE INDEX \`route_attempt_session_idx\` ON \`route_attempt\` (\`session_id\`,\`time_started\`);`,
       )
+      yield* tx.run(`CREATE INDEX \`route_attempt_continuation_idx\` ON \`route_attempt\` (\`continuation_of\`);`)
       yield* tx.run(`CREATE INDEX \`route_decision_route_time_idx\` ON \`route_decision\` (\`route_id\`,\`time\`);`)
       yield* tx.run(`CREATE INDEX \`route_decision_session_idx\` ON \`route_decision\` (\`session_id\`,\`time\`);`)
       yield* tx.run(

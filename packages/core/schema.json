@@ -1,8 +1,8 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "3b8437ee-1a59-400d-9a69-ad74f9d1e8f5",
-  "prevIds": ["c9735d25-ef18-4dc1-ae6d-00504c68d035"],
+  "id": "2d44615a-d376-47d0-bd31-b05ed305aeb1",
+  "prevIds": ["3b8437ee-1a59-400d-9a69-ad74f9d1e8f5"],
   "ddl": [
     {
       "name": "account_state",
@@ -1381,6 +1381,26 @@
       "default": null,
       "generated": null,
       "name": "cost_usd",
+      "entityType": "columns",
+      "table": "route_attempt"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "continuation_of",
+      "entityType": "columns",
+      "table": "route_attempt"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "continuation_index",
       "entityType": "columns",
       "table": "route_attempt"
     },
@@ -3386,6 +3406,20 @@
       "where": null,
       "origin": "manual",
       "name": "route_attempt_session_idx",
+      "entityType": "indexes",
+      "table": "route_attempt"
+    },
+    {
+      "columns": [
+        {
+          "value": "continuation_of",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "route_attempt_continuation_idx",
       "entityType": "indexes",
       "table": "route_attempt"
     },

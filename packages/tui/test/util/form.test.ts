@@ -5,6 +5,7 @@ import {
   formDisplayValue,
   formInitialValues,
   formLabel,
+  formNumberValue,
   formRows,
   formSelected,
   formSetMultiselectCustom,
@@ -82,6 +83,25 @@ test("validates every supported field constraint", () => {
   validate(multi({ maxItems: 1 }), ["one", "two"], "Select at most 1")
   validate(multi({ options: [{ value: "one", label: "One" }] }), ["two"], "Select only available options")
   validate(multi({ custom: true }), ["custom"], undefined)
+})
+
+test("parses typed numeric answers with the strict decimal grammar (#844)", () => {
+  expect(formNumberValue("42")).toBe(42)
+  expect(formNumberValue("-3")).toBe(-3)
+  expect(formNumberValue("1.5")).toBe(1.5)
+  expect(formNumberValue("")).toBeUndefined()
+  expect(formNumberValue("  ")).toBeUndefined()
+  for (const spelling of ["0x10", "0b101", "0o17", "1e3", "Infinity", "+1", ".5", "5.", "abc"])
+    expect(formNumberValue(spelling)).toBeNaN()
+  // The converted value is what formValidateValue sees: a required field fed
+  // empty text must report required, never submit the 0 bare Number() made.
+  const required = { key: "value", type: "integer", required: true } satisfies FormAnswerField
+  expect(formValidateValue(required, formNumberValue(""))).toBe("Answer required")
+  expect(formValidateValue(required, formNumberValue("0x10"))).toBe("Expected a number")
+  expect(formValidateValue(required, formNumberValue("1.5"))).toBe("Expected an integer")
+  const optional = { key: "value", type: "number" } satisfies FormAnswerField
+  expect(formValidateValue(optional, formNumberValue(""))).toBeUndefined()
+  expect(formValidateValue(optional, formNumberValue("1.5"))).toBeUndefined()
 })
 
 test("shares field classification, rows, selection, and display", () => {

@@ -5,11 +5,14 @@ import { ModelRoute } from "@opencode/core/model-route"
 import { Permission } from "@opencode/core/permission"
 import { ModelRouteLog } from "@opencode/core/model-route-log"
 import { ModelRouteReview } from "@opencode/core/model-route-review"
+import { ModelUsage } from "@opencode/core/model-usage"
 import { AIError, AuthenticationError, QuotaExceededError, RateLimitError } from "@opencode/ai"
 import { RouteStatsTool } from "@opencode/core/tool/plugin/route-stats"
+import { RouteUsageTool } from "@opencode/core/tool/plugin/route-usage"
 import { RouteAttemptTable, RouteDecisionTable, RouteHealthTable } from "@opencode/core/model-route-log/sql"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { testEffect } from "./lib/effect"
+import { withTempDir } from "./fixture/tmpdir"
 
 const it = testEffect(LayerNode.compile(LayerNode.group([ModelRouteLog.node, Database.node])))
 
@@ -229,6 +232,194 @@ describe("usage history", () => {
       expect(offers.find((row) => row.target === "openai/gpt-6-luna")).toMatchObject({ offered: 1, chosen: 1 })
       expect(offers.find((row) => row.target === "azure/gpt-6-luna")).toMatchObject({ offered: 1, chosen: 0 })
     }),
+  )
+})
+
+describe("continuation attempts", () => {
+  it.live("links each chunk of a continued response to the attempt that started it", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      ModelRouteLog.record({
+        kind: "attempt",
+        row: attempt({
+          session_id: "ses_continued",
+          assistant_message_id: "msg_root",
+          time_started: 1_000,
+          time_ended: 2_000,
+          tokens_input: 1_000,
+          tokens_output: 100,
+          cost_usd: 0.1,
+        }),
+      })
+      ModelRouteLog.record({
+        kind: "attempt",
+        continuationOfMessageID: "msg_root",
+        row: attempt({
+          session_id: "ses_continued",
+          assistant_message_id: "msg_chunk_1",
+          continuation_index: 1,
+          time_started: 3_000,
+          time_ended: 4_000,
+          tokens_input: 1_100,
+          tokens_output: 80,
+          cost_usd: 0.08,
+        }),
+      })
+      // A continuation that fails keeps its own outcome and reason, and still belongs to the turn.
+      ModelRouteLog.record({
+        kind: "attempt",
+        continuationOfMessageID: "msg_root",
+        row: attempt({
+          session_id: "ses_continued",
+          assistant_message_id: "msg_chunk_2",
+          continuation_index: 2,
+          outcome: "failure",
+          output_started: false,
+          time_started: 5_000,
+          time_ended: 6_000,
+          tokens_input: 1_200,
+          cost_usd: 0.02,
+          ...ModelRouteLog.failureFields({ _tag: "QuotaExceeded", message: "You exceeded your current quota" }),
+        }),
+      })
+      yield* Effect.sleep("100 millis")
+
+      const rows = yield* db.select().from(RouteAttemptTable).orderBy(RouteAttemptTable.id).all()
+      const root = rows.find((row) => row.assistant_message_id === "msg_root")
+      expect(root).toMatchObject({ continuation_of: null, continuation_index: 0 })
+      expect(rows.find((row) => row.assistant_message_id === "msg_chunk_1")).toMatchObject({
+        continuation_of: root?.id,
+        continuation_index: 1,
+        cost_usd: 0.08,
+      })
+      expect(rows.find((row) => row.assistant_message_id === "msg_chunk_2")).toMatchObject({
+        continuation_of: root?.id,
+        continuation_index: 2,
+        outcome: "failure",
+        error_tag: "QuotaExceeded",
+      })
+
+      // The per-session totals already count every chunk; the turn view gives the same usage as one response.
+      const session = (yield* ModelRouteLog.sessionUsage(db, 0, 50)).find((row) => row.sessionID === "ses_continued")
+      expect(session).toMatchObject({ requests: 3, failures: 1, input: 3_300, output: 180 })
+      const [turn] = ModelUsage.turns(yield* ModelRouteLog.turnAttempts(db, 0, "ses_continued"))
+      expect(turn).toMatchObject({
+        rootID: root?.id,
+        chunks: 3,
+        requests: 3,
+        failures: 1,
+        input: 3_300,
+        output: 180,
+        first: 1_000,
+        last: 6_000,
+        durationMs: 5_000,
+      })
+      expect(turn?.costUsd).toBeCloseTo(0.2)
+    }),
+  )
+
+  it.live("links to the attempt that answered when the first chunk was retried", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      ModelRouteLog.record({
+        kind: "attempt",
+        row: attempt({
+          session_id: "ses_retried",
+          assistant_message_id: "msg_retried",
+          outcome: "failure",
+          output_started: false,
+          time_started: 1_000,
+          time_ended: 2_000,
+        }),
+      })
+      ModelRouteLog.record({
+        kind: "attempt",
+        row: attempt({
+          session_id: "ses_retried",
+          assistant_message_id: "msg_retried",
+          time_started: 2_100,
+          time_ended: 3_000,
+          tokens_input: 500,
+          tokens_output: 40,
+          cost_usd: 0.05,
+        }),
+      })
+      ModelRouteLog.record({
+        kind: "attempt",
+        continuationOfMessageID: "msg_retried",
+        row: attempt({
+          session_id: "ses_retried",
+          assistant_message_id: "msg_retried_chunk",
+          continuation_index: 1,
+          time_started: 4_000,
+          time_ended: 5_000,
+          tokens_input: 600,
+          tokens_output: 30,
+          cost_usd: 0.03,
+        }),
+      })
+      yield* Effect.sleep("100 millis")
+
+      const rows = yield* db.select().from(RouteAttemptTable).orderBy(RouteAttemptTable.id).all()
+      const answered = rows.find((row) => row.time_started === 2_100)
+      const chunk = rows.find((row) => row.assistant_message_id === "msg_retried_chunk")
+      expect(chunk?.continuation_of).toBe(answered?.id)
+      expect(chunk?.continuation_of).not.toBe(rows.find((row) => row.time_started === 1_000)?.id)
+      // The retry that produced no response still belongs to the turn it was part of.
+      const turns = ModelUsage.turns(yield* ModelRouteLog.turnAttempts(db, 0, "ses_retried"))
+      expect(turns).toHaveLength(1)
+      expect(turns[0]).toMatchObject({ rootID: answered?.id, chunks: 2, requests: 3, failures: 1 })
+    }),
+  )
+
+  it.live("route_usage lists a continued response as one turn", () =>
+    withTempDir((tmp) =>
+      Effect.gen(function* () {
+        const now = Date.now()
+        ModelRouteLog.record({
+          kind: "attempt",
+          row: attempt({
+            session_id: "ses_turn_report",
+            assistant_message_id: "msg_report_root",
+            time_started: now - 3_000,
+            time_ended: now - 2_000,
+            tokens_input: 100,
+            tokens_output: 40,
+            cost_usd: 0.04,
+          }),
+        })
+        ModelRouteLog.record({
+          kind: "attempt",
+          continuationOfMessageID: "msg_report_root",
+          row: attempt({
+            session_id: "ses_turn_report",
+            assistant_message_id: "msg_report_chunk",
+            continuation_index: 1,
+            time_started: now - 1_000,
+            time_ended: now,
+            tokens_input: 200,
+            tokens_output: 20,
+            cost_usd: 0.02,
+          }),
+        })
+        yield* Effect.sleep("100 millis")
+
+        const report = yield* RouteUsageTool.collect({ hours: 1, session: "ses_turn_report" }, undefined, {
+          dataDir: tmp.path,
+          now: () => now,
+        })
+        expect(report.turns).toHaveLength(1)
+        expect(report.turns[0]).toMatchObject({ chunks: 2, requests: 2, input: 300, output: 60, durationMs: 3_000 })
+        expect(report.sessions[0]).toMatchObject({ requests: 2, input: 300, output: 60 })
+
+        // A provider filter narrows the turn list like it narrows the target and day reports.
+        const filtered = yield* RouteUsageTool.collect({ hours: 1, provider: "azure" }, undefined, {
+          dataDir: tmp.path,
+          now: () => now,
+        })
+        expect(filtered.turns).toEqual([])
+      }),
+    ),
   )
 })
 

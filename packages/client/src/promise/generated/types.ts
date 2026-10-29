@@ -756,6 +756,7 @@ export type ConfigModelRouteTarget =
   | { providerID: string; model: string; variant?: string }
   | {
       model: string | { providerID: string; model: string; variant?: string }
+      exclude?: Array<string>
       defaultVariant?: string
       variants?: { [x: string]: string }
       until?: number
@@ -1736,6 +1737,15 @@ export type FilesystemChanged = {
   type: "filesystem.changed"
   location?: LocationRef
   data: { file: string; event: "add" | "change" | "unlink" }
+}
+
+export type FilesystemWatcherDegraded = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "filesystem.watcher-degraded"
+  location?: LocationRef
+  data: { directory: string; cause: "timeout" | "inotify-limit" | "unsupported" | "error" }
 }
 
 export type ReferenceUpdated = {
@@ -3076,6 +3086,7 @@ export type V2Event =
   | SessionRevertCleared
   | SessionRevertCommitted
   | FilesystemChanged
+  | FilesystemWatcherDegraded
   | ReferenceUpdated
   | PermissionAsked
   | PermissionReplied

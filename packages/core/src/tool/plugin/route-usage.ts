@@ -11,7 +11,7 @@ import { QuotaBurnRate } from "../../quota-burn-rate.js"
 
 export const name = "route_usage"
 
-export const description = `Read what routed work has used: totals per provider and model, per session (requests, tokens, cost, the pools and models it used), per day, and each plan's quota windows with the share used in its last window.
+export const description = `Read what routed work has used: totals per provider and model, per session (requests, tokens, cost, the pools and models it used), per day, per continued turn (the chunks of one response joined back together), and each plan's quota windows with the share used in its last window.
 
 Use it for questions like "which sessions used the most", "did any pool use this provider", "how much of my Claude window is gone", or "what did this week cost". It also reports per-model burn rates: the typical percent of a quota window one session costs, derived from the listed sessions' window shares. Set \`hours\` for the window (default 168; up to a year). Set \`provider\` or \`model\` to narrow the totals, \`route\` to one pool, or \`session\` to one session. Every target lists each pool it belongs to: used, offered but never chosen, or configured but never reached. The history is kept indefinitely, so a longer window is always available.`
 
@@ -29,6 +29,7 @@ export const Output = Schema.Struct({
   targets: Schema.Array(Schema.Unknown),
   sessions: Schema.Array(Schema.Unknown),
   days: Schema.Array(Schema.Unknown),
+  turns: Schema.Array(Schema.Unknown),
   plans: Schema.Array(Schema.Unknown),
   burnRates: Schema.Array(Schema.Unknown),
   noDatabase: Schema.Boolean,
@@ -93,6 +94,7 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
         }
         const targets = yield* ModelRouteLog.targetUsage(db, since)
         const days = yield* ModelRouteLog.dailyUsage(db, since)
+        const turns = yield* ModelRouteLog.turnAttempts(db, since, input.session)
         const offers = (yield* ModelRouteLog.offerUsage(db, since, input.route)) as ModelUsage.OfferRow[]
         const windowTotals: { plan: string; window: string; totals: ModelUsage.Totals }[] = []
         for (const { plan, window } of windows) {
@@ -104,7 +106,7 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
             totals: ModelUsage.sum(rows.filter((row) => row.providerID === plan.providerID)),
           })
         }
-        return { sessions, sessionTargets, targets, days, offers, windowTotals, windowSessionTargets }
+        return { sessions, sessionTargets, targets, days, turns, offers, windowTotals, windowSessionTargets }
       }).pipe(Effect.orDie),
     )
     const history = Option.getOrUndefined(read)
@@ -161,6 +163,11 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
     )
     const burnRates = QuotaBurnRate.buckets(burnSamples)
     const days = ModelUsage.dayReports((history?.days ?? []).filter(matches))
+    // A turn is a root attempt plus every chunk that continued it. Only continued turns are worth listing here:
+    // a single-request turn is already a row of the target, session and day totals.
+    const turns = ModelUsage.turns(history?.turns ?? [])
+      .filter((turn) => turn.chunks > 1 && matches(turn))
+      .slice(0, input.limit ?? 20)
     const planReports = windows.map(({ plan, window }) => {
       const found = history?.windowTotals.find((item) => item.plan === plan.id && item.window === window.name)
       const report = ModelUsage.windowReport(plan, window, found?.totals ?? ModelUsage.zero)
@@ -178,6 +185,7 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
       targets,
       sessions,
       days,
+      turns,
       plans: planReports,
       burnRates,
     }
@@ -190,7 +198,9 @@ const describe = (report: Effect.Success<ReturnType<typeof collect>>) => {
   if (report.noDatabase) lines.push("Routing history is unavailable: no database is attached.")
   if (report.planError) lines.push(`Plan records could not be read: ${report.planError}`)
   lines.push(`Window: the last ${report.hours} hours, from ${report.since}.`)
-  lines.push(`${report.targets.length} targets, ${report.sessions.length} sessions listed, ${report.days.length} days.`)
+  lines.push(
+    `${report.targets.length} targets, ${report.sessions.length} sessions listed, ${report.turns.length} continued turns, ${report.days.length} days.`,
+  )
   for (const target of report.targets) {
     const pools = target.pools.map(
       (pool) => `${pool.routeID} ${pool.state} (offered ${pool.offered}, chosen ${pool.chosen})`,
@@ -209,6 +219,12 @@ const describe = (report: Effect.Success<ReturnType<typeof collect>>) => {
   }
   for (const day of report.days.slice(-14)) {
     lines.push(`${day.day}: ${day.requests} requests, ${day.metered} metered tokens, ${money(day.costUsd)}`)
+  }
+  // Continued responses: the tokens and cost of every chunk of the turn, not one line per chunk.
+  for (const turn of report.turns.slice(0, 10)) {
+    lines.push(
+      `turn ${turn.rootID}${turn.sessionID === null ? "" : ` (session ${turn.sessionID})`}: ${turn.chunks} chunks, ${turn.requests} requests, ${ModelUsage.metered(turn)} metered tokens, ${money(turn.costUsd)}, ${(turn.durationMs / 1_000).toFixed(1)}s${turn.failures > 0 ? `, ${turn.failures} failed` : ""}`,
+    )
   }
   for (const burn of report.burnRates) {
     lines.push(
@@ -239,6 +255,7 @@ export const add = (editor: ToolEditor, source: () => Source = () => NO_SOURCE, 
             targets: report.targets,
             sessions: report.sessions,
             days: report.days,
+            turns: report.turns,
             plans: report.plans,
             burnRates: report.burnRates,
             noDatabase: report.noDatabase,

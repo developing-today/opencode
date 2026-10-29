@@ -1,7 +1,7 @@
 import { confirm, log, multiselect, password, select, text, type Option } from "@clack/prompts"
 import { Effect, Schema } from "effect"
 import { Form } from "@opencode/schema/form"
-import { formValidateValue } from "@opencode/tui/util/form"
+import { formNumberValue, formValidateValue } from "@opencode/tui/util/form"
 import type { FormAnswer, FormField, FormFields } from "@opencode/client"
 import { openUrl, prompt, requireInteractive } from "../../../ui/prompt"
 
@@ -146,7 +146,7 @@ const answerField = Effect.fn("cli.auth.form.field")(function* (field: FormField
   )
   if (!value && !field.required) return undefined
   if (field.type === "string") return value
-  return Number(value)
+  return formNumberValue(value)
 })
 
 function active(field: FormField, answer: FormAnswer) {
@@ -163,11 +163,12 @@ function required(value: string | undefined) {
   return value ? undefined : "Required"
 }
 
-function validateText(field: Exclude<FormField, { type: "boolean" | "external" | "multiselect" }>, value?: string) {
+export function validateText(field: Exclude<FormField, { type: "boolean" | "external" | "multiselect" }>, value?: string) {
   if (!value) return field.required ? "Required" : undefined
   if (field.type === "number" || field.type === "integer") {
-    const number = Number(value)
-    if (!Number.isFinite(number)) return "Expected a number"
+    if (!value.trim()) return field.required ? "Required" : undefined
+    const number = formNumberValue(value)
+    if (number === undefined || !Number.isFinite(number)) return "Expected a number"
     if (field.type === "integer" && !Number.isInteger(number)) return "Expected an integer"
     if (typeof field.minimum === "number" && number < field.minimum) return `Must be at least ${field.minimum}`
     if (typeof field.maximum === "number" && number > field.maximum) return `Must be at most ${field.maximum}`

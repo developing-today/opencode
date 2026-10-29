@@ -451,6 +451,37 @@ describe("ModelGovernance.assertAllowed", () => {
     expect(message).toContain("route")
   })
 
+  test("a door-set route target expanding to an excluded model on a non-excluded door denies (#637)", async () => {
+    const parent = info("ses_parent", { subagentPolicy: { excludedModels: ["other/a"] } })
+    const configInput = { experimental: { model_routes: { main: { targets: [{ model: "*/a" }] } } } }
+    const catalogInput = { test: { a: {} }, other: { a: {} } }
+    const message = await runDenied({
+      all: [parent],
+      parent,
+      configInput,
+      catalogInput,
+      model: ref("opencode-route/main"),
+    })
+    expect(message).toContain("other/a")
+    expect(message).toContain("route")
+  })
+
+  test("a door-set route target's exclusions win in governance too (#637)", async () => {
+    const parent = info("ses_parent", { subagentPolicy: { excludedModels: ["other/a"] } })
+    const configInput = {
+      experimental: { model_routes: { main: { targets: [{ model: "*/a", exclude: ["other"] }] } } },
+    }
+    const catalogInput = { test: { a: {} }, other: { a: {} } }
+    await run({ all: [parent], parent, configInput, catalogInput, model: ref("opencode-route/main") })
+  })
+
+  test("a door-set route target expanding only to allowed models passes (#637)", async () => {
+    const parent = info("ses_parent", { subagentPolicy: { models: ["test/a", "other/a"] } })
+    const configInput = { experimental: { model_routes: { main: { targets: [{ model: "*/a" }] } } } }
+    const catalogInput = { test: { a: {} }, other: { a: {}, b: {} } }
+    await run({ all: [parent], parent, configInput, catalogInput, model: ref("opencode-route/main") })
+  })
+
   test("a wildcard route target expanding only to allowed models passes (#530b)", async () => {
     const parent = info("ses_parent", { subagentPolicy: { models: ["test/a", "test/b"] } })
     const configInput = { experimental: { model_routes: { main: { targets: [{ model: "test/*" }] } } } }

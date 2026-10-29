@@ -380,7 +380,19 @@ export function expand(
         }
         continue
       }
-      for (const [id, model] of ModelRouteExpansion.matchingModels(ref.id, definitions.get(ref.providerID))) {
+      // A door-set target (`*/model`, #637) runs its model on every door whose catalog lists
+      // it, minus the target's exclusions; any other target names exactly one provider. The
+      // per-leaf logic below is identical either way, with the leaf's own provider.
+      const doors: ReadonlyArray<readonly [Provider.ID, ReadonlyMap<string, Model.Info> | undefined]> =
+        ref.providerID === "*"
+          ? ModelRouteExpansion.matchingProviders(
+              definitions,
+              "exclude" in spec ? (spec.exclude ?? []) : [],
+              ModelRoute.PROVIDER_ID,
+            )
+          : [[ref.providerID, definitions.get(ref.providerID)]]
+      for (const [door, doorModels] of doors) {
+        for (const [id, model] of ModelRouteExpansion.matchingModels(ref.id, doorModels)) {
         if (!model.enabled) continue
         const requested = ref.variant ?? inheritedVariant
         // A pinned variant is producible natively or through the target's remap table, matching
@@ -397,7 +409,7 @@ export function expand(
                 : undefined
         if (requested && !variant) continue
         const resolved = Model.Ref.make({
-          providerID: ref.providerID,
+          providerID: door,
           id: Model.ID.make(id),
           ...(variant ? { variant } : {}),
         })
@@ -443,6 +455,7 @@ export function expand(
           ...(Object.keys(variantMap).length ? { variantMap } : {}),
           ...(cacheFormat ? { cacheFormat } : {}),
         })
+        }
       }
     }
     return node.children.length > 0 ? nodeIndex : undefined

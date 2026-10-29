@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { FormFields } from "@opencode/client"
-import { answerForm } from "../src/commands/handlers/auth/form"
+import { answerForm, validateText } from "../src/commands/handlers/auth/form"
 
 test("resolves hidden defaults without an interactive terminal", async () => {
   const fields = [
@@ -20,6 +20,22 @@ test("resolves hidden defaults without an interactive terminal", async () => {
     enabled: false,
     count: 0,
   })
+})
+
+test("validateText applies the strict decimal grammar to numeric answers (#844)", () => {
+  const count = { type: "integer", key: "count", required: true } satisfies FormFields[number]
+  expect(validateText(count, "")).toBe("Required")
+  expect(validateText(count, " ")).toBe("Required")
+  expect(validateText(count, "0x10")).toBe("Expected a number")
+  expect(validateText(count, "0b101")).toBe("Expected a number")
+  expect(validateText(count, "1e3")).toBe("Expected a number")
+  expect(validateText(count, "1.5")).toBe("Expected an integer")
+  expect(validateText(count, "42")).toBeUndefined()
+  expect(validateText(count, "-3")).toBeUndefined()
+  const rate = { type: "number", key: "rate" } satisfies FormFields[number]
+  expect(validateText(rate, " ")).toBeUndefined()
+  expect(validateText(rate, "0o17")).toBe("Expected a number")
+  expect(validateText(rate, "1.5")).toBeUndefined()
 })
 
 test("parses typed answers and evaluates conditions in form order", async () => {

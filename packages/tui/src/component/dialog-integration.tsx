@@ -39,6 +39,7 @@ import { errorMessage } from "../util/error"
 import {
   formInitialValues,
   formLabel,
+  formNumberValue,
   formRows,
   formSelected,
   formToggleMultiselect,
@@ -1114,7 +1115,12 @@ function textAnswer(
             value={initial}
             onConfirm={(input) => {
               const text = input.trim()
-              const value = text === "" && !field.required ? undefined : field.type === "string" ? text : Number(text)
+              const value =
+                text === "" && !field.required
+                  ? undefined
+                  : field.type === "string"
+                    ? text
+                    : formNumberValue(text)
               const invalid = formValidateValue(field, value)
               if (invalid) {
                 setError(invalid)
