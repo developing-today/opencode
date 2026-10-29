@@ -319,6 +319,54 @@ test("fills a subagent from discovery while its own read is in flight, and keeps
   }
 })
 
+test("syncing a nested subagent by ID also loads its ancestors (#631)", async () => {
+  const info = (id: string, parentID?: string): SessionInfo => ({ ...session(0), id, parentID })
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      if (url.pathname === "/api/session/ses_root") return Response.json({ data: info("ses_root") })
+      if (url.pathname === "/api/session/ses_child")
+        return Response.json({ data: info("ses_child", "ses_root") })
+      if (url.pathname === "/api/session/ses_grandchild")
+        return Response.json({ data: info("ses_grandchild", "ses_child") })
+      if (url.pathname === "/api/session/ses_great_grandchild")
+        return Response.json({ data: info("ses_great_grandchild", "ses_grandchild") })
+      if (url.pathname === "/api/session/ses_grandchild_missing")
+        return Response.json({ data: info("ses_grandchild_missing", "ses_child") })
+      // The session list (and every children listing) only ever surfaces the root,
+      // matching a subagent chain that has not been loaded into the list cache yet.
+      return Response.json({ data: [info("ses_root")], cursor: {} })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    // A plain sync leaves the chain unloaded: callers that walk ancestors themselves
+    // (the TUI's family discovery, with its own retry backoff) keep their semantics.
+    await setup.data.session.sync("ses_great_grandchild")
+    expect(setup.data.session.get("ses_grandchild")).toBeUndefined()
+    expect(setup.data.session.get("ses_child")).toBeUndefined()
+
+    await setup.data.session.sync("ses_great_grandchild", { children: true })
+    expect(setup.data.session.get("ses_grandchild")?.parentID).toBe("ses_child")
+    expect(setup.data.session.get("ses_child")?.parentID).toBe("ses_root")
+    expect(setup.data.session.get("ses_root")?.id).toBe("ses_root")
+    expect(setup.data.session.root("ses_great_grandchild")).toBe("ses_root")
+    expect(setup.data.session.family("ses_great_grandchild").toSorted()).toEqual([
+      "ses_child",
+      "ses_grandchild",
+      "ses_great_grandchild",
+      "ses_root",
+    ])
+  } finally {
+    setup.dispose()
+  }
+})
+
 test("lists a branch again on the next sync after its listing failed", async () => {
   const failures = { left: 1 }
   const info = (id: string, parentID?: string): SessionInfo => ({ ...session(0), id, parentID })
@@ -378,8 +426,11 @@ test("lists each session once when parent links form a cycle", async () => {
   try {
     await setup.data.session.sync("ses_x", { children: true })
     expect(setup.data.session.get("ses_y")?.parentID).toBe("ses_x")
+    // The ancestor read for ses_y (#631) is a by-ID get, not a listing: each
+    // session is still listed exactly once, and the cycle still terminates.
     expect(requests.toSorted()).toEqual([
       "/api/session/ses_x?",
+      "/api/session/ses_y?",
       "/api/session?limit=200&order=desc&parentID=ses_x",
       "/api/session?limit=200&order=desc&parentID=ses_y",
     ])
