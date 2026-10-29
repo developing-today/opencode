@@ -224,6 +224,74 @@ describe("Watcher lifecycle", () => {
   })
 })
 
+describe("Watcher degraded signal (#797)", () => {
+  const captured = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.catchCause((cause) => Effect.succeed(cause)))
+
+  it.live("classifies subscribe failures by cause class", () =>
+    Effect.gen(function* () {
+      const timeout = yield* captured(Effect.timeout(Effect.never, "1 millis"))
+      expect(Watcher.classifySubscribeFailure(timeout)).toBe("timeout")
+      const enospc = yield* captured(
+        Effect.fail(new Error("ENOSPC: System limit for number of file watchers reached")),
+      )
+      expect(Watcher.classifySubscribeFailure(enospc)).toBe("inotify-limit")
+      const generic = yield* captured(Effect.fail(new Error("boom")))
+      expect(Watcher.classifySubscribeFailure(generic)).toBe("error")
+    }),
+  )
+
+  it.live("publishes filesystem.watcher-degraded on the bus when a directory watch cannot be established", () =>
+    Effect.gen(function* () {
+      const bus = yield* Bus.Service
+      const seen = yield* Deferred.make<{ directory: string; cause: string }>()
+      yield* bus
+        .subscribe(FileSystem.Event.Degraded)
+        .pipe(
+          Stream.runForEach((event) => Deferred.succeed(seen, event.data)),
+          Effect.forkScoped({ startImmediately: true }),
+        )
+      // Give the bus subscription a real tick to register before the watch fails.
+      yield* Effect.sleep("50 millis")
+      const watcher = yield* Watcher.Service
+      const stream = yield* watcher.subscribe({ path: "/unavailable", type: "directory" })
+      yield* Stream.runDrain(stream)
+      const data = yield* Deferred.await(seen).pipe(Effect.timeout("2 seconds"))
+      expect(data).toEqual({ directory: "/unavailable", cause: "timeout" })
+    }).pipe(
+      withNative({
+        subscribe: (input) =>
+          Effect.sync(() => {
+            input.degraded?.("timeout")
+            return undefined
+          }),
+      }),
+    ),
+  )
+
+  it.live("reports degraded when neither Parcel nor the node fallback can watch a directory", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          const native = yield* Watcher.Native
+          // A path under a regular file fails immediately in both backends (ENOTDIR).
+          const file = path.join(tmp.path, "a-file")
+          yield* Effect.promise(() => fs.writeFile(file, "x"))
+          const causes: Watcher.DegradedCause[] = []
+          const subscription = yield* native.subscribe({
+            type: "directory",
+            target: path.join(file, "child"),
+            ignore: [],
+            publish: () => {},
+            degraded: (cause) => causes.push(cause),
+          })
+          expect(subscription).toBeUndefined()
+          expect(causes).toHaveLength(1)
+        }).pipe(Effect.provide(Watcher.nativeLayer)),
+      ),
+    ),
+  )
+})
+
 function provide(
   directory: string,
   vcs?: Location.Interface["vcs"],
