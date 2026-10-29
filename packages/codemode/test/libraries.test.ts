@@ -41,6 +41,8 @@ describe("program-source libraries", () => {
         `const proto = { inherited: 1 }; const obj = Object.create(proto); obj.own = 2; return std.pick(obj, ["inherited", "own"])`,
       ),
     ).toEqual({ own: 2 })
+    // Keys simply absent from the object are skipped, not fabricated (ported from closed #859).
+    expect(await valueWithStd(`return std.pick({ a: 1 }, ["a", "missing"])`)).toEqual({ a: 1 })
     // An own property literally named "constructor" is still copied.
     expect(await valueWithStd(`return std.pick({ constructor: 42 }, ["constructor"])`)).toEqual({ constructor: 42 })
     // An own "__proto__" data property is still picked as a key.
