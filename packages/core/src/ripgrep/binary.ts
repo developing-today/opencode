@@ -109,7 +109,7 @@ export namespace RipgrepBinary {
             yield* Effect.logInfo("downloading ripgrep", { url })
             yield* fs.ensureDir(global.bin).pipe(Effect.orDie)
             const bytes = yield* HttpClientRequest.get(url).pipe(
-              http.execute,
+              HttpClient.withScope(http).execute,
               Effect.flatMap((response) =>
                 collectBoundedResponseBody(
                   response,
@@ -118,6 +118,9 @@ export namespace RipgrepBinary {
                 ),
               ),
               Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))),
+              // Scoped (withScope above): a declared over-cap rejection aborts the
+              // response instead of leaving the download running until GC.
+              Effect.scoped,
             )
             if (bytes.byteLength === 0) throw new Error(`failed to download ripgrep from ${url}`)
 

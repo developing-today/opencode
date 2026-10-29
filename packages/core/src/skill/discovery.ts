@@ -86,7 +86,7 @@ const layer = Layer.effect(
     const download = Effect.fn("SkillDiscovery.download")(function* (url: string, destination: string) {
       if (yield* fs.exists(destination).pipe(Effect.orDie)) return true
       return yield* HttpClientRequest.get(url).pipe(
-        http.execute,
+        HttpClient.withScope(http).execute,
         Effect.flatMap((response) =>
           collectBoundedResponseBody(
             response,
@@ -99,6 +99,9 @@ const layer = Layer.effect(
         Effect.catch((error) =>
           Effect.logError("failed to download skill file", { url, error }).pipe(Effect.as(false)),
         ),
+        // Scoped (withScope above): closing the scope aborts a response the bounded
+        // collector rejected on its declared size instead of leaving it to GC.
+        Effect.scoped,
       )
     })
 

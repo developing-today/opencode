@@ -97,6 +97,31 @@ describe("CodeModeWeb fetch response size cap (#923)", () => {
     }
   })
 
+  test("a declared over-cap rejection cancels the response body", async () => {
+    // Regression (Codex review on #926): rejecting on the declared size without cancelling
+    // left the oversized download running in the background until completion/timeout.
+    let cancelled = false
+    const original = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(1024))
+          },
+          cancel() {
+            cancelled = true
+          },
+        }),
+        { headers: { "content-length": String(CodeModeWeb.MAX_RESPONSE_BYTES + 1) } },
+      )) as unknown as typeof fetch
+    try {
+      await expect(webFetch("http://example.test/large")).rejects.toThrow("Response too large")
+      expect(cancelled).toBe(true)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
   test("a HEAD response is not rejected by the declared-size check", async () => {
     // HEAD carries the GET representation's content-length but no body, so the declared-size
     // pre-check must not reject a HEAD for a resource larger than the cap.

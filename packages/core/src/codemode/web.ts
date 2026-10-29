@@ -17,7 +17,12 @@ const readBounded = async (response: Response, method: string): Promise<Uint8Arr
   // declared-size check would reject a HEAD for a resource a later GET could legitimately stream.
   if (method !== "HEAD") {
     const declared = Number(response.headers.get("content-length"))
-    if (Number.isSafeInteger(declared) && declared > MAX_RESPONSE_BYTES) throw tooLarge()
+    if (Number.isSafeInteger(declared) && declared > MAX_RESPONSE_BYTES) {
+      // Cancel before rejecting: an uncancelled body keeps downloading in the background
+      // until it completes or the fetch timeout fires.
+      await response.body?.cancel().catch(() => {})
+      throw tooLarge()
+    }
   }
   if (!response.body) {
     const bytes = await response.bytes()
