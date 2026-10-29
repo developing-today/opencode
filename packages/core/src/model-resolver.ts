@@ -140,6 +140,10 @@ export interface Resolved {
   readonly transport?: Provider.Transport
   /** Milliseconds without streamed data before a WebSocket exchange fails; `false` disables the limit. */
   readonly chunkTimeout?: number | false
+  /** The stored credential serving this resolution, when the provider's active connection is one (#6). */
+  readonly credentialID?: Credential.ID
+  /** The integration the serving connection belongs to. */
+  readonly integrationID?: Integration.ID
   /** Selection and health data for a configured OpenCode model route. */
   readonly routing?: {
     readonly routeID: ID
@@ -151,6 +155,16 @@ export interface Resolved {
     readonly hedgeAfterMs?: number
     /** The route's autonomy level: a route races its next target once a target keeps giving up only at `adaptive` and up. */
     readonly autonomy?: ModelRouteAutonomy.Level
+    /** The active stored credential for the target's integration, when there is one (#6). */
+    readonly credentialID?: Credential.ID
+    readonly integrationID?: Integration.ID
+    /**
+     * Activates the next eligible stored credential on the target's own integration and
+     * re-resolves the same target on it (#6 credential failover). Eligibility is the Phase A
+     * gate: not credential-cooling, not quota-known-full, not credential-demoted. Returns
+     * undefined when no other stored credential is eligible.
+     */
+    readonly credentialFallback?: () => Effect.Effect<Resolved | undefined, Error>
     readonly fallback: () => Effect.Effect<Resolved | undefined, Error>
     /** Set just after a session failed over: the target it came from, which a hedge races instead of
      * the next fallback while the session is still new on the alternate. */
@@ -411,18 +425,15 @@ export const layer = Layer.effect(
       cacheFormat?: CacheFormat,
     ) {
       const provider = yield* providers.get(selected.providerID)
-      const connection = yield* integrations.connection.active(
-        provider?.integrationID ?? Integration.ID.make(selected.providerID),
-      )
+      const integrationID = provider?.integrationID ?? Integration.ID.make(selected.providerID)
+      const connection = yield* integrations.connection.active(integrationID)
       const credential = connection ? yield* integrations.connection.resolve(connection) : undefined
       const selectedVariant = yield* withVariant(selected, variant)
       const runtimeInfo: RuntimeInfo = {
         ...selectedVariant,
         // A route target's declared cache format overrides the model's own compatibility for this
         // resolution only; the catalog model stays as configured.
-        ...(cacheFormat === undefined
-          ? {}
-          : { compatibility: { ...selectedVariant.compatibility, cacheFormat } }),
+        ...(cacheFormat === undefined ? {} : { compatibility: { ...selectedVariant.compatibility, cacheFormat } }),
         settings: Provider.mergeOverlay(provider?.settings, Provider.modelSettings(selectedVariant.settings)),
       }
       const model = yield* fromCatalogModel(runtimeInfo, credential, {
@@ -449,6 +460,8 @@ export const layer = Layer.effect(
         compaction: runtimeInfo.settings?.compaction,
         transport: provider?.settings?.transport,
         chunkTimeout: Provider.timeout(provider?.settings?.chunkTimeout),
+        ...(connection?.type === "credential" ? { credentialID: connection.id } : {}),
+        integrationID,
       }
     })
     const resolveRoute = (
@@ -463,6 +476,45 @@ export const layer = Layer.effect(
         const now = Date.now()
         const triedTargets = new Set(tried)
         let lastError: Error | undefined
+        // The active stored credential per target provider (#6): the ready filter gates on the
+        // credential that would actually serve the target, not only on the target itself.
+        const credentialByProvider = new Map<string, Credential.ID>()
+        for (const target of definition.targets) {
+          if (credentialByProvider.has(target.providerID)) continue
+          const provider = yield* providers.get(target.providerID)
+          const connection = yield* integrations.connection.active(
+            provider?.integrationID ?? Integration.ID.make(target.providerID),
+          )
+          if (connection?.type === "credential") credentialByProvider.set(target.providerID, connection.id)
+        }
+        const makeResolved = (
+          current: Resolved,
+          origin: (() => Effect.Effect<Resolved | undefined, Error>) | undefined,
+          credentialFallback: (() => Effect.Effect<Resolved | undefined, Error>) | undefined,
+        ): Resolved => ({
+          ...current,
+          // The alias advertises the safest shared request shape. Pricing and provider metadata stay
+          // tied to the concrete target that answered.
+          capabilities: selected.capabilities,
+          limit: selected.limit,
+          // A native provider checkpoint is not portable across the route's targets.
+          compaction: undefined,
+          routing: {
+            routeID: definition.id,
+            target: current.ref,
+            policy: definition.health,
+            // Two requests by default: a single transient failure on a steady target is retried before the
+            // route moves on. Rate limits skip the retry (see the runner). Set 1 to fail over at once.
+            attempts: definition.attempts ?? 2,
+            ...(definition.hedgeAfterMs ? { hedgeAfterMs: definition.hedgeAfterMs } : {}),
+            autonomy: definition.autonomy,
+            ...(current.credentialID ? { credentialID: current.credentialID } : {}),
+            ...(current.integrationID ? { integrationID: current.integrationID } : {}),
+            fallback: () => resolveRoute(selected, definition, requestedVariant, triedTargets, false, sessionID),
+            ...(origin ? { origin } : {}),
+            ...(credentialFallback ? { credentialFallback } : {}),
+          },
+        })
         while (triedTargets.size < definition.targets.length) {
           const indexes = definition.targets.flatMap((_, index) => (triedTargets.has(index) ? [] : [index]))
           const unavailable = new Map<number, string>()
@@ -479,15 +531,33 @@ export const layer = Layer.effect(
             const limited = rules ? ModelRoute.limitedUntil(target, now) : 0
             // A burst hold steers new sessions away but leaves a session on the target it is already using.
             const kept = limited > now && ModelRoute.keepsThrough(definition.id, sessionID, target, now)
+            const credentialID = credentialByProvider.get(target.providerID)
+            const credentialUntil = credentialID ? ModelRoute.credentialCooldownUntil(target, credentialID, now) : 0
+            const quotaBlock = credentialID ? ModelRoute.credentialQuotaBlocked(credentialID, now) : undefined
             if (until > now) unavailable.set(index, `cooldown-until:${until}`)
+            else if (credentialUntil > now) unavailable.set(index, `credential-cooldown-until:${credentialUntil}`)
+            else if (quotaBlock) unavailable.set(index, `quota-known-full-until:${quotaBlock.until ?? "unknown"}`)
             else if (limited > now && !kept) unavailable.set(index, `provider-limit-until:${limited}`)
             else if (isSkipped) unavailable.set(index, "user-skip")
             else if (isOverBudget) unavailable.set(index, "soft-budget")
-            return until <= now && (limited <= now || kept) && !isSkipped && !isOverBudget
+            return (
+              until <= now &&
+              credentialUntil <= now &&
+              quotaBlock === undefined &&
+              (limited <= now || kept) &&
+              !isSkipped &&
+              !isOverBudget
+            )
           })
           // Budgets and skips are soft limits: if every remaining target is excluded, try the
-          // configured tree as a last resort rather than refusing a turn.
-          const eligible = ready.length > 0 ? ready : allowCooling ? indexes : []
+          // configured tree as a last resort rather than refusing a turn. A known-full
+          // credential is not a soft limit (#6): the last resort excludes one while any
+          // remaining target's credential is not known-full.
+          const nonFull = indexes.filter((index) => {
+            const credentialID = credentialByProvider.get(definition.targets[index].providerID)
+            return credentialID === undefined || ModelRoute.credentialQuotaBlocked(credentialID, now) === undefined
+          })
+          const eligible = ready.length > 0 ? ready : allowCooling ? (nonFull.length > 0 ? nonFull : indexes) : []
           const index = ModelRoute.nextTarget(
             definition,
             new Set(eligible),
@@ -540,6 +610,36 @@ export const layer = Layer.effect(
             continue
           }
           const current = resolved.success
+          // #6 credential failover for this target: activate the next eligible stored credential
+          // on the target's own integration and re-resolve the same target on it. The opencode-go
+          // Lab -> Personal fall-through is this same path; there is no special case.
+          const credentialFallback = (): Effect.Effect<Resolved | undefined, Error> =>
+            Effect.gen(function* () {
+              const provider = yield* providers.get(target.providerID)
+              const integrationID = provider?.integrationID ?? Integration.ID.make(target.providerID)
+              const info = yield* integrations.get(integrationID)
+              const active = yield* integrations.connection.active(integrationID)
+              const activeID = active?.type === "credential" ? active.id : undefined
+              const at = Date.now()
+              const candidates = (info?.connections ?? []).filter(
+                (connection) =>
+                  connection.type === "credential" &&
+                  connection.id !== activeID &&
+                  ModelRoute.credentialCooldownUntil(target, connection.id, at) <= at &&
+                  ModelRoute.credentialQuotaBlocked(connection.id, at) === undefined &&
+                  !ModelRoute.demoted(target, at, connection.id),
+              )
+              for (const candidate of candidates) {
+                if (candidate.type !== "credential") continue
+                yield* integrations.connection.activate(candidate.id)
+                const retried = yield* Effect.result(
+                  load(source, target.variant ?? mapped, definition.targetCacheFormats?.[index]?.cacheFormat),
+                )
+                if (Result.isFailure(retried)) continue
+                return makeResolved(retried.success, undefined, credentialFallback)
+              }
+              return undefined
+            })
           // A session that just moved off its origin races that origin rather than the next fallback.
           const home = sessionID === undefined ? undefined : ModelRoute.hedgeHome(definition.id, sessionID)
           const homeIndex =
@@ -556,27 +656,7 @@ export const layer = Layer.effect(
                     sessionID,
                   )
               : undefined
-          return {
-            ...current,
-            // The alias advertises the safest shared request shape. Pricing and provider metadata stay
-            // tied to the concrete target that answered.
-            capabilities: selected.capabilities,
-            limit: selected.limit,
-            // A native provider checkpoint is not portable across the route's targets.
-            compaction: undefined,
-            routing: {
-              routeID: definition.id,
-              target: current.ref,
-              policy: definition.health,
-              // Two requests by default: a single transient failure on a steady target is retried before the
-              // route moves on. Rate limits skip the retry (see the runner). Set 1 to fail over at once.
-              attempts: definition.attempts ?? 2,
-              ...(definition.hedgeAfterMs ? { hedgeAfterMs: definition.hedgeAfterMs } : {}),
-              autonomy: definition.autonomy,
-              fallback: () => resolveRoute(selected, definition, requestedVariant, triedTargets, false, sessionID),
-              ...(origin ? { origin } : {}),
-            },
-          }
+          return makeResolved(current, origin, credentialFallback)
         }
         if (lastError) return yield* Effect.fail(lastError)
         return undefined

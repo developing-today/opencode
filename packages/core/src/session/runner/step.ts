@@ -160,6 +160,34 @@ const isRateLimited = (failure: AIError) =>
   failure.reason._tag === "QuotaExceeded" ||
   failureHint(failure).retryAfterMs !== undefined
 
+/**
+ * A failure the credential switch may answer (#6): the provider refused on quota grounds — the
+ * `QuotaExceeded` tag, or an HTTP 429 the provider classified as a rate limit. Anything else
+ * (transport, unknown, a plain error after dispatch) has unknowable billing state and never
+ * triggers a same-request re-issue on another credential.
+ */
+export const isQuotaFailure = (failure: AIError) => {
+  if (failure.reason._tag === "QuotaExceeded") return true
+  const reason = failure.reason as { _tag: string; http?: { status?: number } }
+  return reason._tag === "RateLimit" && reason.http?.status === 429
+}
+
+/** Assistant messages that already switched credential for a provider (#6): at most one switch
+ * per provider per assistant message, so a turn cannot cycle a provider's whole credential pool. */
+const credentialSwitches = new Set<string>()
+export const CREDENTIAL_SWITCH_LIMIT = 1_000
+
+const markCredentialSwitch = (key: string) => {
+  credentialSwitches.delete(key)
+  credentialSwitches.add(key)
+  while (credentialSwitches.size > CREDENTIAL_SWITCH_LIMIT)
+    credentialSwitches.delete(credentialSwitches.values().next().value!)
+}
+
+/** Test seam for the one-switch-per-provider-per-message guard. */
+export const credentialSwitchUsed = (key: string) => credentialSwitches.has(key)
+export const clearCredentialSwitch = (key: string) => credentialSwitches.delete(key)
+
 const TOOLS_INTERRUPTED = { type: "aborted", message: "Tool execution interrupted" } as const
 const STEP_INTERRUPTED = { type: "aborted", message: "Step interrupted" } as const
 const RESULT_MISSING = { type: "tool.result-missing", message: "Provider did not return a tool result" } as const
@@ -376,64 +404,23 @@ export const make = Effect.gen(function* () {
               : unknownFinish
         const failureError = llmFailure ? toSessionError(llmFailure) : undefined
         const llmError = failureError && !recorded.providerFailed ? failureError : undefined
-        // Every attempt is logged where its outcome is first known, ahead of every early return, so a
-        // failure that fails over, retries or recovers is recorded like any other. Routed or not, so
-        // provider-wide trouble is visible across models.
-        {
-          const failed = llmFailure !== undefined
-          const timedOut = failed && llmFailure.reason._tag === "Transport" && llmFailure.reason.code === "Timeout"
-          const tokens = recorded.finish?.tokens
-          ModelRoute.recordRequest(input.model.ref, tokens)
-          const failureLog = failed ? ModelRouteLog.failureFields(llmFailure.reason) : undefined
-          if (failed)
-            ModelRoute.observeRateLimit(
-              input.model.ref,
-              ModelRouteLimits.snapshot(
-                (llmFailure.reason as { rateLimit?: ModelRouteLimits.Details }).rateLimit,
-                Date.now(),
-              ),
-            )
-          ModelRouteLog.record({
-            kind: "attempt",
-            row: {
-              time_started: wallStarted,
-              time_ended: Date.now(),
-              session_id: input.sessionID,
-              assistant_message_id: input.assistantMessageID,
-              route_id: input.model.routing?.routeID ?? "",
-              provider_id: input.model.ref.providerID,
-              model_id: input.model.ref.id,
-              variant: input.model.ref.variant,
-              outcome: streamInterrupted ? "interrupted" : timedOut ? "timeout" : failed ? "failure" : "success",
-              ...failureLog,
-              // A failed request's own details win; a successful one keeps what its response said.
-              quota: failureLog?.quota ?? (rateLimit.capture.snapshot && { ...rateLimit.capture.snapshot }),
-              retryable: failed ? SessionRunnerRetry.isRetryable(llmFailure) : undefined,
-              output_started: recorded.outputStarted,
-              first_token_ms: firstOutputAt === undefined ? undefined : firstOutputAt - requestStarted,
-              response_ms: streamedAt - requestStarted,
-              tokens_per_second:
-                tokens && firstOutputAt !== undefined
-                  ? ((tokens.output + tokens.reasoning) * 1_000) / Math.max(1, streamedAt - firstOutputAt)
-                  : undefined,
-              tokens_input: tokens?.input,
-              tokens_estimated: false,
-              hedged: raced !== undefined,
-              tokens_output: tokens?.output,
-              tokens_reasoning: tokens?.reasoning,
-              tokens_cache_read: tokens?.cache.read,
-              tokens_cache_write: tokens?.cache.write,
-              cost_usd: tokens ? SessionUsage.calculateCost(input.model.cost, tokens) : undefined,
-            },
-          })
-        }
-        if (
-          input.recoverContinuation &&
-          llmFailure?.reason._tag === "Transport" &&
-          (llmFailure.reason.recovery === "retry-full" || llmFailure.reason.recovery === "rotate-and-retry-full") &&
-          !recorded.outputStarted
-        )
-          return Outcome.RecoverFull()
+        // Usage and rate-limit state are recorded where the outcome is first known. The attempt
+        // row itself is written after the failover decision below, so it can name where the
+        // attempt failed over to; it still precedes every return past that point, so a failure
+        // that fails over, retries or recovers is recorded like any other.
+        const failed = llmFailure !== undefined
+        const timedOut = failed && llmFailure.reason._tag === "Transport" && llmFailure.reason.code === "Timeout"
+        const tokens = recorded.finish?.tokens
+        ModelRoute.recordRequest(input.model.ref, tokens)
+        const failureLog = failed ? ModelRouteLog.failureFields(llmFailure.reason) : undefined
+        if (failed)
+          ModelRoute.observeRateLimit(
+            input.model.ref,
+            ModelRouteLimits.snapshot(
+              (llmFailure.reason as { rateLimit?: ModelRouteLimits.Details }).rateLimit,
+              Date.now(),
+            ),
+          )
         const routeFailure =
           llmFailure !== undefined &&
           (SessionRunnerRetry.isRetryable(llmFailure) ||
@@ -469,24 +456,103 @@ export const make = Effect.gen(function* () {
         if (sameTargetRetry) {
           countFailedAttempt(retryKey)
         } else clearFailedAttempt(retryKey)
+        // The failover decision: where this attempt moves to, if anywhere. The return itself is
+        // deferred until after the attempt row is written, so the row can name the destination.
+        let failover: { readonly model: SessionRunnerModel.Resolved; readonly overTo: string } | undefined
         if (input.model.routing && llmFailure && failureError && routeFailure && !sameTargetRetry) {
-          ModelRoute.failed(input.model.routing.target, input.model.routing.policy, Date.now(), failureHint(llmFailure))
+          ModelRoute.failed(
+            input.model.routing.target,
+            input.model.routing.policy,
+            Date.now(),
+            failureHint(llmFailure),
+            input.model.routing.credentialID,
+          )
           if (!recorded.outputStarted && retry?.retry) {
-            const fallback = yield* Effect.result(input.model.routing.fallback())
-            if (Result.isSuccess(fallback) && fallback.success) {
-              yield* Effect.logInfo("model route failover", {
-                routeID: input.model.routing.routeID,
-                from: `${input.model.routing.target.providerID}/${input.model.routing.target.id}`,
-                to: `${fallback.success.ref.providerID}/${fallback.success.ref.id}`,
-                reason: failureError?.message,
-              })
-              if (input.sessionID)
-                ModelRoute.moved(input.model.routing.routeID, input.sessionID, input.model.routing.target)
-              return Outcome.Failover({ model: fallback.success, error: failureError })
+            // #6: before moving to a different target, a quota-class failure with no output yet
+            // may switch to the next eligible credential on the same provider and re-issue the
+            // same target. The guards are cumulative: quota-class only (isQuotaFailure), no
+            // output recorded (this branch), one switch per provider per assistant message.
+            const switchKey = `${input.assistantMessageID}|${input.model.routing.target.providerID}`
+            if (
+              isQuotaFailure(llmFailure) &&
+              input.model.routing.credentialFallback &&
+              !credentialSwitchUsed(switchKey)
+            ) {
+              const switched = yield* Effect.result(input.model.routing.credentialFallback())
+              if (Result.isSuccess(switched) && switched.success) {
+                markCredentialSwitch(switchKey)
+                const credentialID = switched.success.routing?.credentialID ?? switched.success.credentialID
+                failover = { model: switched.success, overTo: `credential:${credentialID ?? "unknown"}` }
+                yield* Effect.logInfo("credential failover", {
+                  routeID: input.model.routing.routeID,
+                  target: `${input.model.routing.target.providerID}/${input.model.routing.target.id}`,
+                  credentialID,
+                  reason: failureError?.message,
+                })
+              }
             }
+            if (!failover) {
+              const fallback = yield* Effect.result(input.model.routing.fallback())
+              if (Result.isSuccess(fallback) && fallback.success) {
+                failover = {
+                  model: fallback.success,
+                  overTo: `${fallback.success.ref.providerID}/${fallback.success.ref.id}`,
+                }
+                yield* Effect.logInfo("model route failover", {
+                  routeID: input.model.routing.routeID,
+                  from: `${input.model.routing.target.providerID}/${input.model.routing.target.id}`,
+                  to: `${fallback.success.ref.providerID}/${fallback.success.ref.id}`,
+                  reason: failureError?.message,
+                })
+              }
+            }
+            if (failover && input.sessionID)
+              ModelRoute.moved(input.model.routing.routeID, input.sessionID, input.model.routing.target)
           }
         }
 
+        ModelRouteLog.record({
+          kind: "attempt",
+          row: {
+            time_started: wallStarted,
+            time_ended: Date.now(),
+            session_id: input.sessionID,
+            assistant_message_id: input.assistantMessageID,
+            route_id: input.model.routing?.routeID ?? "",
+            provider_id: input.model.ref.providerID,
+            model_id: input.model.ref.id,
+            variant: input.model.ref.variant,
+            outcome: streamInterrupted ? "interrupted" : timedOut ? "timeout" : failed ? "failure" : "success",
+            ...failureLog,
+            // A failed request's own details win; a successful one keeps what its response said.
+            quota: failureLog?.quota ?? (rateLimit.capture.snapshot && { ...rateLimit.capture.snapshot }),
+            retryable: failed ? SessionRunnerRetry.isRetryable(llmFailure) : undefined,
+            output_started: recorded.outputStarted,
+            failed_over_to: failover?.overTo,
+            first_token_ms: firstOutputAt === undefined ? undefined : firstOutputAt - requestStarted,
+            response_ms: streamedAt - requestStarted,
+            tokens_per_second:
+              tokens && firstOutputAt !== undefined
+                ? ((tokens.output + tokens.reasoning) * 1_000) / Math.max(1, streamedAt - firstOutputAt)
+                : undefined,
+            tokens_input: tokens?.input,
+            tokens_estimated: false,
+            hedged: raced !== undefined,
+            tokens_output: tokens?.output,
+            tokens_reasoning: tokens?.reasoning,
+            tokens_cache_read: tokens?.cache.read,
+            tokens_cache_write: tokens?.cache.write,
+            cost_usd: tokens ? SessionUsage.calculateCost(input.model.cost, tokens) : undefined,
+          },
+        })
+        if (
+          input.recoverContinuation &&
+          llmFailure?.reason._tag === "Transport" &&
+          (llmFailure.reason.recovery === "retry-full" || llmFailure.reason.recovery === "rotate-and-retry-full") &&
+          !recorded.outputStarted
+        )
+          return Outcome.RecoverFull()
+        if (failover && failureError) return Outcome.Failover({ model: failover.model, error: failureError })
         if (providerFailure) {
           yield* publisher.publish(providerFailure)
           recorded = publisher.record()
@@ -535,11 +601,18 @@ export const make = Effect.gen(function* () {
           firstOutputAt !== undefined
         ) {
           const outputDuration = Math.max(1, streamedAt - firstOutputAt)
-          ModelRoute.completed(input.model.routing.target, input.model.routing.policy, {
-            firstTokenMs: firstOutputAt - requestStarted,
-            responseMs: streamedAt - requestStarted,
-            tokensPerSecond: ((record.finish.tokens.output + record.finish.tokens.reasoning) * 1_000) / outputDuration,
-          })
+          ModelRoute.completed(
+            input.model.routing.target,
+            input.model.routing.policy,
+            {
+              firstTokenMs: firstOutputAt - requestStarted,
+              responseMs: streamedAt - requestStarted,
+              tokensPerSecond:
+                ((record.finish.tokens.output + record.finish.tokens.reasoning) * 1_000) / outputDuration,
+            },
+            Date.now(),
+            input.model.routing.credentialID,
+          )
           if (input.sessionID)
             ModelRoute.served(input.model.routing.routeID, input.sessionID, input.model.routing.target)
         }
