@@ -525,6 +525,24 @@ describe("Form", () => {
     }),
   )
 
+  it.effect("rejects non-finite when values on a number target (#853)", () =>
+    Effect.sync(() => {
+      const gated = (value: number, op: "eq" | "neq" = "eq") =>
+        Form.validateFields([
+          { key: "age", type: "number" },
+          { key: "b", type: "string", when: [{ key: "age", op, value }] },
+        ])
+      // No valid answer is non-finite, so eq can never match and neq always matches.
+      for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+        expect(gated(value)).toBe("Form field condition value must be a finite number: b -> age")
+        expect(gated(value, "neq")).toBe("Form field condition value must be a finite number: b -> age")
+      }
+      // A finite control still creates.
+      expect(gated(5)).toBeUndefined()
+      expect(gated(5, "neq")).toBeUndefined()
+    }),
+  )
+
   it.effect("rejects when values an external target can never answer (#732)", () =>
     Effect.sync(() => {
       const gated = (value: boolean, op: "eq" | "neq" = "eq") =>
