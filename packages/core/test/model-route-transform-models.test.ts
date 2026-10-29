@@ -129,6 +129,48 @@ describe("retargetDefinition (#236)", () => {
     // advertised variants are still reported so a retarget can revise them (#869).
     expect(retargetDefinition(stored(routeMap), routeMap, editor)?.definition).toBeUndefined()
   })
+
+  test("unchanged targets still refresh targetVariants when a transform adds a remapped variant", () => {
+    const variantInfo = (id: string, variants: string[]) =>
+      Model.Info.make({
+        ...Model.Info.default(azure, Model.ID.make(id)),
+        variants: variants.map((variant) => ({ id: Model.VariantID.make(variant) })),
+      })
+    // The catalog model offers neither variant, so the stored definition has no
+    // remap for max; the transform then adds high to the same model.
+    const catalogModel = new Map<string, Model.Info>([["gpt-5-base", variantInfo("gpt-5-base", [])]])
+    const routeMap = new Map<string, ConfigModelRoutes.Route>([
+      [
+        "r",
+        {
+          targets: [{ model: { providerID: "azure", model: "gpt-5-base" }, variants: { max: "high" } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+    ])
+    const { leaves, nodes } = expand("r", routeMap, new Map([[azure, catalogModel]]))
+    const before = {
+      id: Model.ID.make("r"),
+      targets: leaves.map((leaf) => leaf.ref),
+      targetVariants: leaves.map(() => ({})),
+      health: ModelRoute.policy(),
+      budgets: leaves.map(() => ({})),
+      nodes,
+    } satisfies ModelRoute.Definition
+    const transformEditor = {
+      provider: { list: () => [{ provider: Provider.Info.empty(azure), models: catalogModel }] },
+      ids: () => [Model.ID.make("gpt-5-base")],
+      get: (_providerID: Provider.ID, modelID: Model.ID) =>
+        String(modelID) === "gpt-5-base" ? variantInfo("gpt-5-base", ["high"]) : undefined,
+    } as unknown as Parameters<typeof retargetDefinition>[2]
+    const next = retargetDefinition(before, routeMap, transformEditor)
+    // The target refs are identical, but the stored mapping was stale: without a
+    // replacement definition the resolver would run the model bare under #max
+    // instead of at the remapped #high.
+    expect(next?.definition?.targets.map((target) => `${target.providerID}/${target.id}`)).toEqual([
+      "azure/gpt-5-base",
+    ])
+    expect(next?.definition?.targetVariants).toEqual([{ map: { max: Model.VariantID.make("high") } }])
+  })
 })
 
 describe("advertised variants after retargeting (#869)", () => {

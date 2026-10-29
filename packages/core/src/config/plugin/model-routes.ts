@@ -601,6 +601,10 @@ export function retargetDefinition(
   // same rule the provider transform used over the catalog alone (#869).
   const variants = routeVariants(leaves)
   const targets = leaves.map((leaf) => leaf.ref)
+  const targetVariants = leaves.map((leaf) => ({
+    ...(leaf.defaultVariant ? { default: leaf.defaultVariant } : {}),
+    ...(leaf.variantMap ? { map: leaf.variantMap } : {}),
+  }))
   const same =
     targets.length === current.targets.length &&
     targets.every(
@@ -609,16 +613,28 @@ export function retargetDefinition(
         target.id === current.targets[index]?.id &&
         target.variant === current.targets[index]?.variant,
     )
-  if (same) return { definition: undefined, variants }
+  // Identical target refs are not enough to keep the stored definition: a
+  // transform can add a variant a target's remap names (or a leaf default)
+  // without changing any ref, and the stored targetVariants would then be
+  // stale — the resolver would find no mapping for a variant the route now
+  // advertises and run the model bare instead of at the remapped variant.
+  const sameVariants =
+    targetVariants.length === current.targetVariants.length &&
+    targetVariants.every((entry, index) => {
+      const storedEntry = current.targetVariants[index]
+      if (storedEntry === undefined || entry.default !== storedEntry.default) return false
+      const map = entry.map ?? {}
+      const storedMap = storedEntry.map ?? {}
+      const keys = Object.keys(map)
+      return keys.length === Object.keys(storedMap).length && keys.every((key) => map[key] === storedMap[key])
+    })
+  if (same && sameVariants) return { definition: undefined, variants }
   const targetCacheFormats = leaves.map((leaf) => (leaf.cacheFormat ? { cacheFormat: leaf.cacheFormat } : {}))
   const { targetCacheFormats: _stored, ...rest } = current
   const next: ModelRoute.Definition = {
     ...rest,
     targets,
-    targetVariants: leaves.map((leaf) => ({
-      ...(leaf.defaultVariant ? { default: leaf.defaultVariant } : {}),
-      ...(leaf.variantMap ? { map: leaf.variantMap } : {}),
-    })),
+    targetVariants,
     budgets: leaves.map((leaf) => leaf.budget ?? {}),
     nodes,
     ...(targetCacheFormats.some((item) => item.cacheFormat !== undefined) ? { targetCacheFormats } : {}),
