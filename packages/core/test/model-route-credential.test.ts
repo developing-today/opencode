@@ -88,6 +88,30 @@ describe("ModelRoute credential quota gate (#6)", () => {
     expect(ModelRoute.credentialQuotaBlocked("cred-lab", 20_000)).toBeUndefined()
   })
 
+  test("an older good read does not re-admit a credential gated by a newer full read", () => {
+    ModelRoute.observeCredentialQuota(target, "cred-lab", snap({ observedAt: 20_000 }), 20_000)
+    expect(ModelRoute.credentialQuotaBlocked("cred-lab", 20_000)).toEqual({ until: 100_000 })
+
+    // The below-limit reading was taken before the known-full one; delivered late, it is
+    // still fresh (not stale) but must not rewind the gate.
+    ModelRoute.observeCredentialQuota(
+      target,
+      "cred-lab",
+      snap({ percent: 40, remaining: 60, observedAt: 10_000 }),
+      20_000,
+    )
+    expect(ModelRoute.credentialQuotaBlocked("cred-lab", 20_000)).toEqual({ until: 100_000 })
+
+    // A genuinely newer good read still re-admits.
+    ModelRoute.observeCredentialQuota(
+      target,
+      "cred-lab",
+      snap({ percent: 40, remaining: 60, observedAt: 30_000 }),
+      30_000,
+    )
+    expect(ModelRoute.credentialQuotaBlocked("cred-lab", 30_000)).toBeUndefined()
+  })
+
   test("unknown and stale readings never block, and never clear a known gate", () => {
     ModelRoute.observeCredentialQuota(target, "cred-lab", snap({ percent: null, remaining: null }), 10_000)
     expect(ModelRoute.credentialQuotaBlocked("cred-lab", 10_000)).toBeUndefined()

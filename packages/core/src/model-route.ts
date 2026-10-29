@@ -489,6 +489,10 @@ export const observeCredentialQuota = (
 ) => {
   const previous = credentialQuota.get(credentialID)
   if (previous && !QuotaSnapshot.known(snapshot)) return
+  // Out-of-order delivery must not rewind the gate: an observation older than the retained
+  // one carries no new information, even when it is still fresh — a below-limit reading
+  // taken before the retained known-full reading cannot re-admit the credential (#6).
+  if (previous && snapshot.observedAt < previous.snapshot.observedAt) return
   const full = QuotaSnapshot.isKnownFull(snapshot, now)
   credentialQuota.set(credentialID, { snapshot, target, gated: full })
   if (full && !previous?.gated)
