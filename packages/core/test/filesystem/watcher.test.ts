@@ -256,7 +256,9 @@ describe("Watcher degraded signal (#797)", () => {
       const stream = yield* watcher.subscribe({ path: "/unavailable", type: "directory" })
       yield* Stream.runDrain(stream)
       const data = yield* Deferred.await(seen).pipe(Effect.timeout("2 seconds"))
-      expect(data).toEqual({ directory: "/unavailable", cause: "timeout" })
+      // watcher.subscribe resolves the path first (path.resolve), which on
+      // Windows anchors a rooted path to the current drive (D:\unavailable).
+      expect(data).toEqual({ directory: path.resolve("/unavailable"), cause: "timeout" })
     }).pipe(
       withNative({
         subscribe: (input) =>
