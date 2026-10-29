@@ -395,6 +395,22 @@ describe("SpeechStream.sampleRate", () => {
   })
 })
 
+describe("SpeechStream media-type tables", () => {
+  test("do not read through the prototype chain", () => {
+    for (const name of ["constructor", "toString", "__proto__"]) {
+      expect(SpeechStream.container(name).mediaType).toBeUndefined()
+      expect(SpeechStream.pcm(name as SpeechStream.PcmEncoding, 8000).mediaType).toBeUndefined()
+    }
+  })
+
+  test("keep known formats and encodings unchanged", () => {
+    expect(SpeechStream.container("mp3").mediaType).toBe("audio/mpeg")
+    expect(SpeechStream.container("wav").mediaType).toBe("audio/wav")
+    expect(SpeechStream.pcm("pcm_s16le", 8000).mediaType).toBe("audio/pcm")
+    expect(SpeechStream.pcm("pcm_mulaw", 8000).mediaType).toBe("audio/mulaw")
+  })
+})
+
 describe("SpeechStream.headerUsage", () => {
   test("returns undefined for blank or whitespace-only header values", () => {
     expect(SpeechStream.headerUsage("characters", "")).toBeUndefined()
