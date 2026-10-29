@@ -1910,10 +1910,10 @@ describe("ModelResolver routes", () => {
           expect(targetOf(yield* resolver.resolveModel(route, undefined, "s-limit-small", 50_000))).toBe("pa")
           expect(targetOf(yield* resolver.resolveModel(route, undefined, "s-limit-big", 110_000))).toBe("pb")
           // The skip is attributed to the limit specifically in the resolved-route dump.
-          const decision = events.find((event) => event.kind === "decision" && event.row.chosen === "pb/luna")
+          const decision = events.find((event) => event.kind === "decision" && event.row.chosen === "pb/test-model")
           expect(decision?.row).toMatchObject({
-            candidates: ["pb/luna"],
-            detail: { excluded: [{ candidate: "pa/luna", reason: "over-limit" }] },
+            candidates: ["pb/test-model"],
+            detail: { excluded: [{ candidate: "pa/test-model", reason: "over-limit" }] },
           })
           // Without a request size every target stays eligible, as before.
           expect(targetOf(yield* resolver.resolveModel(route, undefined, "s-limit-plain"))).toBe("pa")

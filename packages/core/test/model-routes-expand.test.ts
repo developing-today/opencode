@@ -520,7 +520,7 @@ describe("per-target context limits", () => {
 
   test("a flat mixed-ceiling pool carries per-element ceilings without a nested route", () => {
     const { leaves } = expand(
-      "small",
+      "r",
       route([
         { model: "anthropic/opus", limit: { context: 100_000 } },
         { model: "anthropic/sonnet", limit: { context: 100_000 } },

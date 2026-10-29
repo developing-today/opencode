@@ -121,9 +121,10 @@ export const configured = (route: ConfigModelRoutes.Route): Configured => ({
   selection: route.selection ?? "ordered",
   ...(route.autonomy !== undefined ? { autonomy: route.autonomy } : {}),
   ...(route.hedgeAfterMs !== undefined ? { hedgeAfterMs: route.hedgeAfterMs } : {}),
-  targets: route.targets.map((target) =>
-    bare("providerID" in target ? referenceOf(target) : referenceOf(target.model)),
-  ),
+  targets: route.targets.map((target) => {
+    if (typeof target === "string") return bare(target)
+    return bare("providerID" in target ? referenceOf(target) : referenceOf(target.model))
+  }),
   weights: Object.fromEntries(
     Object.entries(route.weights ?? {}).map(([reference, weight]) => [bare(reference), weight]),
   ),
