@@ -630,12 +630,23 @@ export function retargetDefinition(
     })
   if (same && sameVariants) return { definition: undefined, variants }
   const targetCacheFormats = leaves.map((leaf) => (leaf.cacheFormat ? { cacheFormat: leaf.cacheFormat } : {}))
-  const { targetCacheFormats: _stored, ...rest } = current
+  // Per-target ceilings are parallel to `targets`, so a retarget that adds a leaf
+  // (a door set picking up a transform-created model) must rebuild them or the
+  // stored entries shift onto the wrong leaves and the new leaf loses its cap
+  // (#869 Codex P2). Built by the same rule the provider transform uses.
+  const targetLimits =
+    current.targetLimits !== undefined || leaves.some((leaf) => leaf.contextLimit !== undefined)
+      ? leaves.map((leaf) => ({
+          context: Math.min(leaf.model.limit.context, leaf.contextLimit ?? Number.POSITIVE_INFINITY),
+        }))
+      : undefined
+  const { targetCacheFormats: _stored, targetLimits: _storedLimits, ...rest } = current
   const next: ModelRoute.Definition = {
     ...rest,
     targets,
     targetVariants,
     budgets: leaves.map((leaf) => leaf.budget ?? {}),
+    ...(targetLimits === undefined ? {} : { targetLimits }),
     nodes,
     ...(targetCacheFormats.some((item) => item.cacheFormat !== undefined) ? { targetCacheFormats } : {}),
   }

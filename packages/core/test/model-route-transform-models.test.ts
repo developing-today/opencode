@@ -123,6 +123,41 @@ describe("retargetDefinition (#236)", () => {
     ])
   })
 
+  test("a retarget that adds a leaf rebuilds targetLimits in step with targets (#869)", () => {
+    const cap = 4096
+    const routeMap = new Map<string, ConfigModelRoutes.Route>([
+      [
+        "r",
+        {
+          targets: [{ model: { providerID: "azure", model: "*" }, limit: { context: cap } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+    ])
+    const definitions = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>([[azure, catalog]])
+    const { leaves, nodes } = expand("r", routeMap, definitions)
+    const limits = (items: typeof leaves) =>
+      items.map((leaf) => ({ context: Math.min(leaf.model.limit.context, leaf.contextLimit ?? Number.POSITIVE_INFINITY) }))
+    const before = {
+      id: Model.ID.make("r"),
+      targets: leaves.map((leaf) => leaf.ref),
+      targetVariants: leaves.map(() => ({})),
+      health: ModelRoute.policy(),
+      budgets: leaves.map(() => ({})),
+      targetLimits: limits(leaves),
+      nodes,
+    } satisfies ModelRoute.Definition
+    // The provider transform saw only the catalog model, so one ceiling is stored.
+    expect(before.targetLimits).toHaveLength(1)
+    const next = retargetDefinition(before, routeMap, editor)
+    // The added leaf gets its own ceiling instead of shifting the stored one, and the
+    // existing leaf keeps the ceiling it had (Codex P2 on #871).
+    expect(next?.definition?.targets.map((target) => String(target.id))).toEqual(["gpt-5-base", "prod-mini"])
+    expect(next?.definition?.targetLimits).toEqual([
+      before.targetLimits?.[0],
+      { context: Math.min(Model.Info.default(azure, Model.ID.make("prod-mini")).limit.context, cap) },
+    ])
+  })
+
   test("a route whose targets are unchanged keeps its stored definition", () => {
     const routeMap = routes(["azure/gpt-5-base"])
     // No replacement definition, so the caller leaves the stored targets alone; the
