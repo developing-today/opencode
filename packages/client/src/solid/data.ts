@@ -623,20 +623,26 @@ export function createData(config: CreateDataInput) {
     })
   }
 
-  // Walk parentID upward through loaded session info to the family root. When a
-  // parent's info is missing, that missing ID is the furthest-known ancestor and
-  // is returned so orphan subtrees group under it until the parent arrives. A
-  // seen set guards against parent cycles, stopping at the last non-repeating
-  // ancestor.
+  // Walk parentID upward through loaded session info to the family root,
+  // following a fork link (fork.sessionID) where a session has no parent, so a
+  // fork and its subtree group with the source tree — the same links core
+  // SessionAffinity.resolveRoot follows. When a parent's info is missing, that
+  // missing ID is the furthest-known ancestor and is returned so orphan
+  // subtrees group under it until the parent arrives. A seen set guards
+  // against parent cycles, stopping at the last non-repeating ancestor.
   function resolveRoot(sessionID: string) {
+    const next = (id: string) => {
+      const info = store.session.info[id]
+      return info?.parentID ?? info?.fork?.sessionID
+    }
     let current = sessionID
-    let parentID = store.session.info[sessionID]?.parentID
+    let parentID = next(sessionID)
     const seen = new Set([sessionID])
     while (parentID) {
       if (seen.has(parentID)) break
       seen.add(parentID)
       current = parentID
-      parentID = store.session.info[parentID]?.parentID
+      parentID = next(parentID)
     }
     return current
   }
@@ -1506,7 +1512,7 @@ export function createData(config: CreateDataInput) {
       cost(sessionID: string) {
         const session = store.session.info[sessionID]
         if (!session) return 0
-        if (session.parentID) return session.cost
+        if (session.parentID || session.fork) return session.cost
         return (store.session.family[sessionID] ?? [sessionID]).reduce(
           (total, id) => total + (store.session.info[id]?.cost ?? 0),
           0,

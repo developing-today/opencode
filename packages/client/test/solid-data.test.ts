@@ -52,6 +52,65 @@ test("uses the configured initial window and retains normal cursor page sizes", 
   }
 })
 
+test("groups a fork and its subtree with the source tree's root, family and cost", async () => {
+  const info = (partial: Partial<SessionInfo> & { id: string }): SessionInfo => ({ ...session(0), ...partial })
+  const sessions: Record<string, SessionInfo> = {
+    ses_root: info({ id: "ses_root", cost: 0.5 }),
+    ses_child: info({ id: "ses_child", parentID: "ses_root", cost: 1 }),
+    ses_fork: info({
+      id: "ses_fork",
+      fork: { sessionID: "ses_child", boundary: { type: "through", messageID: "msg_fork" } },
+      cost: 2,
+    }),
+    ses_grandchild: info({ id: "ses_grandchild", parentID: "ses_fork", cost: 4 }),
+  }
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      const found = sessions[url.pathname.replace("/api/session/", "")]
+      if (found) return Response.json({ data: found })
+      return Response.json({ data: [], cursor: {} })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({
+      api: () => api,
+      directory: "/project",
+      event: { on: () => () => {}, listen: () => () => {} },
+    }),
+    dispose,
+  }))
+
+  try {
+    await setup.data.session.sync("ses_root")
+    await setup.data.session.sync("ses_child")
+    await setup.data.session.sync("ses_fork")
+    await setup.data.session.sync("ses_grandchild")
+
+    expect(setup.data.session.root("ses_fork")).toBe("ses_root")
+    expect(setup.data.session.root("ses_grandchild")).toBe("ses_root")
+    expect(setup.data.session.family("ses_root").toSorted()).toEqual([
+      "ses_child",
+      "ses_fork",
+      "ses_grandchild",
+      "ses_root",
+    ])
+    expect(setup.data.session.family("ses_fork").toSorted()).toEqual([
+      "ses_child",
+      "ses_fork",
+      "ses_grandchild",
+      "ses_root",
+    ])
+    // The root aggregates the whole family including the fork subtree; the
+    // fork itself is not a root, so its own cost stays its own.
+    expect(setup.data.session.cost("ses_root")).toBe(7.5)
+    expect(setup.data.session.cost("ses_fork")).toBe(2)
+  } finally {
+    setup.dispose()
+  }
+})
+
 test("counts every subagent page in a root session's cost", async () => {
   const child = (index: number): SessionInfo => ({
     ...session(0),
