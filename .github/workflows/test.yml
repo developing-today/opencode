@@ -176,6 +176,19 @@ jobs:
         if: runner.os == 'Linux'
         run: bun run check:doc-env-vars
 
+      - name: Test prototype-chain read guard
+        # Same script/ wiring as the steps above: script/ is not a
+        # workspace, so the test file is run explicitly (#865).
+        working-directory: script
+        run: bun test check-proto-reads.test.ts
+
+      - name: Check prototype-chain reads are dispositioned
+        # Every P-A/P-C sweep hit in packages/core/src must be guarded by
+        # ownValue/ownOr or listed with a disposition in the allowlist, or
+        # the prototype-chain class regrows one bare read at a time (#865).
+        if: runner.os == 'Linux'
+        run: bun run check:proto-reads
+
       - name: Configure git identity
         run: |
           git config --global user.email "bot@opencode.ai"

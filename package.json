@@ -27,6 +27,7 @@
     "typecheck": "bun turbo typecheck --concurrency=3",
     "check": "bun run lint && bun run typecheck",
  "check:doc-env-vars": "bun script/check-doc-env-vars.ts",
+    "check:proto-reads": "bun script/check-proto-reads.ts",
     "typecheck:profile": "bun script/profile-typecheck.ts",
     "typecheck:profile:packages": "bun script/profile-typecheck-packages.ts",
     "upgrade-opentui": "bun run script/upgrade-opentui.ts",

@@ -179,11 +179,10 @@ export type Catalog = ReadonlyMap<string, ReadonlyMap<string, CatalogModel>>
  * catalog door via the shared `matchingProviders` minus its exclusions, and
  * catalog models that are disabled are dropped. Per leaf,
  * the effective variant is filtered the way the plugin expansion filters it
- * before the resolver runs: a fixed (selection/inherited) variant the leaf
- * does not offer drops the leaf; a requested variant runs at its remap only
- * when the leaf offers the remapped variant, else at the requested variant
- * when the leaf offers it, else bare; a `defaultVariant` applies only when
- * the leaf offers it. Expansion needs the catalog: when none is supplied
+ * before the resolver runs: a pinned or requested variant runs at the
+ * target's remap of it when the leaf offers the remapped variant, else at
+ * the variant itself when the leaf offers it, else the leaf is dropped
+ * (#869); a `defaultVariant` applies only when the leaf offers it. Expansion needs the catalog: when none is supplied
  * (or the provider is absent from it), a pattern target is judged as its
  * literal ref and a concrete target is judged as named, exactly as
  * governance behaved before it had a catalog. A concrete target the catalog
@@ -241,25 +240,24 @@ function routeTargets(
     const leaf = (providerID: string, id: string, model: CatalogModel): Model.Ref[] => {
       if (!model.enabled) return []
       const offers = (variant: string) => model.variants.some((item) => item.id === variant)
-      if (selectionVariant !== undefined)
-        return offers(selectionVariant)
-          ? [{ id: Model.ID.make(id), providerID: Provider.ID.make(providerID), variant: selectionVariant }]
-          : []
-      if (requested !== undefined) {
-        const remapped = ownVariant(object?.variants, requested)
+      // A pinned or route-requested variant resolves through the target's remap
+      // table exactly as the plugin expansion resolves it (#869): the remapped
+      // variant when the leaf offers it, else the variant itself when offered,
+      // else the leaf is pruned — governance must not judge a variant that never
+      // runs, nor keep a leaf the plugin drops. The remap read itself is
+      // own-property only (#831's ownVariant).
+      const wanted = selectionVariant ?? requested
+      if (wanted !== undefined) {
+        const remapped = ownVariant(object?.variants, wanted)
         const variant =
           remapped !== undefined && offers(remapped)
             ? Model.VariantID.make(remapped)
-            : offers(requested)
-              ? requested
+            : offers(wanted)
+              ? wanted
               : undefined
-        return [
-          {
-            id: Model.ID.make(id),
-            providerID: Provider.ID.make(providerID),
-            ...(variant === undefined ? {} : { variant }),
-          },
-        ]
+        return variant === undefined
+          ? []
+          : [{ id: Model.ID.make(id), providerID: Provider.ID.make(providerID), variant }]
       }
       const variant =
         object?.defaultVariant !== undefined && offers(object.defaultVariant)

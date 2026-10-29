@@ -150,7 +150,11 @@ function build(id: Model.ID, remote: UsableModel, baseURL: string, previous?: Mo
   const version = remote.version.startsWith(`${remote.id}-`)
     ? remote.version.slice(remote.id.length + 1)
     : remote.version
-  const released = previous?.time.released || Date.parse(version)
+  // Strict release-date parse (#886): bare Date.parse rolls calendar-invalid
+  // suffixes over ("2026-02-30" becomes March 2), fabricating a release instant
+  // that can outrank genuinely newer models. Model.parseReleaseDate rejects
+  // those (the #471/#502 precedent); unknown dates stay the 0 sentinel.
+  const released = previous?.time.released || (Model.parseReleaseDate(version) ?? 0)
 
   return Model.Info.make({
     ...Model.Info.default(Provider.ID.githubCopilot, id),

@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { LLM } from "@opencode/ai"
 import { LLMClient, RequestExecutor } from "@opencode/ai/route"
 import { ConfigPolicy } from "@opencode/schema/config/policy"
@@ -20,7 +20,7 @@ import { ModelResolver } from "@opencode/core/model-resolver"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { PluginHost } from "@opencode/core/plugin/host"
-import { OpencodePlugin } from "@opencode/core/plugin/provider/opencode"
+import { deviceIntervalMs, OpencodePlugin } from "@opencode/core/plugin/provider/opencode"
 import { Provider } from "@opencode/core/provider"
 import { Session } from "@opencode/core/session"
 import { WebSearch } from "@opencode/core/websearch"
@@ -131,6 +131,19 @@ const cost = (input: number, output = 0) => [
 ]
 
 describe("OpencodePlugin", () => {
+  test("floors the device poll interval and falls back on unusable values (#880)", () => {
+    expect(deviceIntervalMs(5)).toBe(5000)
+    expect(deviceIntervalMs(10)).toBe(10_000)
+    expect(deviceIntervalMs(1)).toBe(1000)
+    // Sub-second values are floored to 1 second instead of flooding the
+    // token endpoint.
+    expect(deviceIntervalMs(0.1)).toBe(1000)
+    expect(deviceIntervalMs(0.5)).toBe(1000)
+    // Zero, negative, and non-finite values take the 5-second fallback
+    // instead of busy-polling.
+    for (const value of [0, -3, Number.NaN, Number.POSITIVE_INFINITY]) expect(deviceIntervalMs(value)).toBe(5000)
+  })
+
   it.effect("registers account and service account methods", () =>
     Effect.gen(function* () {
       yield* addPlugin()
@@ -188,9 +201,14 @@ describe("OpencodePlugin", () => {
             answer: { server: `${server.url.origin}/console///?ignored=true#ignored` },
           })
           expect(attempt.url).toBe(`${server.url.origin}/console/device?user_code=user&client_id=opencode-cli`)
+          // The mock server reports interval: 0, which the poll now floors
+          // to the 5-second fallback plus the 3-second safety margin
+          // (#880), so the first token poll lands ~8s after connect —
+          // far past eventually's default ~1s window.
           yield* eventually(
             integrations.oauth.status({ integrationID, attemptID: attempt.attemptID }),
             (status) => status.status === "complete",
+            20000,
           )
 
           expect(requests).toContain("POST /console/auth/device/code")
@@ -204,6 +222,9 @@ describe("OpencodePlugin", () => {
         }),
       ({ server }) => Effect.promise(() => server.stop(true)),
     ),
+    // The floored device poll waits ~8s before its first token request
+    // (#880), past bun's 5s default test timeout.
+    30_000,
   )
 
   it.live("rejects malformed device verification URLs", () =>
@@ -254,9 +275,12 @@ describe("OpencodePlugin", () => {
               methodID: Integration.MethodID.make("device"),
               answer: { server: server.url.origin },
             })
+            // Same #880 poll delay as the canonical-server test above:
+            // interval: 0 now means ~8s before the first token poll.
             const status = yield* eventually(
               integrations.oauth.status({ integrationID, attemptID: attempt.attemptID }),
               (status) => status.status !== "pending",
+              20000,
             )
             if (orgID === "org-missing") {
               expect(status).toMatchObject({
@@ -291,6 +315,8 @@ describe("OpencodePlugin", () => {
           }),
         ({ server }) => Effect.promise(() => server.stop(true)),
       ),
+      // Same ~8s first-poll wait as the canonical-server test above (#880).
+      30_000,
     )
   }
 

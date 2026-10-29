@@ -166,10 +166,7 @@ describe("MCP OAuth", () => {
       fetch(request) {
         if (request.method !== "POST" || new URL(request.url).pathname !== "/token")
           return new Response(null, { status: 404 })
-        return Response.json(
-          { error: "invalid_client", error_description: "bad_client_secret" },
-          { status: 400 },
-        )
+        return Response.json({ error: "invalid_client", error_description: "bad_client_secret" }, { status: 400 })
       },
     })
 
@@ -550,6 +547,51 @@ describe("MCP OAuth", () => {
       ).finally(() => server.stop(true))
       expect(url.searchParams.get("client_id")).toBe("registered")
       expect(registrations).toHaveLength(1)
+    })
+  })
+
+  describe("credential expiry validation", () => {
+    const DAY = 24 * 60 * 60
+    const stored = (expires_in?: number) => ({
+      access_token: "access",
+      token_type: "Bearer",
+      ...(expires_in === undefined ? {} : { expires_in }),
+    })
+    const credentialFor = (expires_in?: number) =>
+      McpOAuth.toCredential({
+        methodID,
+        serverUrl: "https://example.com/mcp",
+        tokens: stored(expires_in),
+        client: undefined,
+      })
+
+    test("treats a negative expires_in as non-expiring, not a born-expired credential", () => {
+      const credential = credentialFor(-3600)
+      expect(credential.expires).toBe(0)
+      expect(McpOAuth.toTokens(credential).expires_in).toBeUndefined()
+    })
+
+    test("keeps absent and zero expires_in non-expiring", () => {
+      expect(credentialFor(undefined).expires).toBe(0)
+      expect(credentialFor(0).expires).toBe(0)
+    })
+
+    test("clamps a millisecond-scale expires_in so it cannot disable refresh for weeks", () => {
+      const before = Date.now()
+      const credential = credentialFor(7_200_000)
+      expect(credential.expires).toBeGreaterThanOrEqual(before + 30 * DAY * 1000)
+      expect(credential.expires).toBeLessThanOrEqual(Date.now() + 30 * DAY * 1000)
+      const round = McpOAuth.toTokens(credential)
+      expect(round.expires_in).toBeDefined()
+      expect(round.expires_in!).toBeLessThanOrEqual(30 * DAY)
+      expect(round.expires_in!).toBeGreaterThan(29 * DAY)
+    })
+
+    test("preserves a valid positive expires_in", () => {
+      const before = Date.now()
+      const credential = credentialFor(3600)
+      expect(credential.expires).toBeGreaterThanOrEqual(before + 3600 * 1000)
+      expect(credential.expires).toBeLessThanOrEqual(Date.now() + 3600 * 1000)
     })
   })
 })

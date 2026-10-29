@@ -508,6 +508,15 @@ test("spells GitLab Duo variants for gitlab-ai-provider routes", () => {
   expect(resolve(gitlab("duo-workflow-opus-5-5"), [{ type: "effort" }])).toEqual([])
 })
 
+test("resolves no variants for prototype-named packages (#862)", () => {
+  // PROTOCOLS is a plain-object table keyed by the externally supplied model.package; without an
+  // own-property guard these names read through the prototype chain to inherited values.
+  for (const packageName of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
+    expect(resolve(model(packageName, "test-model"), [{ type: "effort" }])).toEqual([])
+    expect(resolve(model(packageName, "test-model"), [{ type: "toggle" }])).toEqual([])
+  }
+})
+
 test("spells reasoning variants for every bundled native package", () => {
   const supports: Variant.Support[] = [{ type: "toggle" }, { type: "effort" }, { type: "budget_tokens" }]
   const missing = Array.from(Provider.builtinPackages).filter(
