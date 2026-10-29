@@ -5,7 +5,7 @@ import { App } from "../../app.js"
 import { Credential } from "../../credential.js"
 import { Integration } from "../../integration.js"
 import { Provider } from "../../provider.js"
-import { expiresInSeconds } from "./expires.js"
+import { deviceLifetimeSeconds, expiresInSeconds } from "./expires.js"
 
 const clientID = "b1a00492-073a-47ea-816f-4c329264a828"
 const issuer = "https://auth.x.ai/oauth2"
@@ -59,7 +59,7 @@ const device = (app: App.Info) =>
         Effect.flatMap((value) =>
           Clock.currentTimeMillis.pipe(
             Effect.map((created) => {
-              const lifetime = expiresInSeconds(value.expires_in, 0)
+              const lifetime = deviceLifetimeSeconds(value.expires_in, 0)
               return {
                 mode: "auto" as const,
                 url: value.verification_uri_complete ?? value.verification_uri,
@@ -123,10 +123,17 @@ function refresh(methodID: Integration.MethodID, value: Credential.OAuth, app: A
   ).pipe(Effect.flatMap((tokens) => credential(methodID, tokens, value.refresh, value.metadata)))
 }
 
+/** The poll deadline for a device attempt, in epoch milliseconds (#900). The
+ * server-supplied lifetime is clamped to {@link MAX_DEVICE_LIFETIME_SECONDS}
+ * so a millisecond-confused value cannot poll the token endpoint for days; an
+ * absent or non-positive value takes the 300-second fallback. */
+export const deviceDeadline = (started: number, value: unknown) =>
+  started + deviceLifetimeSeconds(value, 300) * 1000
+
 function poll(device: typeof Device.Type, app: App.Info): Effect.Effect<Token, unknown> {
   return Effect.gen(function* () {
     const started = yield* Clock.currentTimeMillis
-    const expires = started + expiresInSeconds(device.expires_in, 300) * 1000
+    const expires = deviceDeadline(started, device.expires_in)
     const loop = (interval: number): Effect.Effect<Token, unknown> =>
       Effect.gen(function* () {
         if ((yield* Clock.currentTimeMillis) >= expires) {

@@ -1,5 +1,5 @@
 import { Duration, Effect, Equal, Option, Schema, SchemaGetter, Scope, Semaphore, Stream } from "effect"
-import { expiresInSeconds } from "./expires.js"
+import { deviceLifetimeSeconds, expiresInSeconds } from "./expires.js"
 import type { IntegrationOAuthMethodRegistration } from "@opencode/plugin/effect/integration"
 import { define } from "@opencode/plugin/effect/plugin"
 import type { SessionHttpResponse } from "@opencode/plugin/effect/session"
@@ -154,8 +154,11 @@ function oauth(http: HttpClient.HttpClient, integrationID: Integration.ID) {
         })
         // The integration layer bounds the attempt by expiresAt when given
         // one; without it a short-lived code is polled for the full
-        // 10-minute attempt lifetime (#880).
-        const lifetime = Number.isFinite(device.expires_in) && device.expires_in > 0 ? device.expires_in : 0
+        // 10-minute attempt lifetime (#880). The server-supplied lifetime is
+        // clamped to that same 10-minute ceiling (#900): a millisecond-scale
+        // expires_in must not stretch the attempt — and the deadline-free
+        // poll loop — to days.
+        const lifetime = deviceLifetimeSeconds(device.expires_in, 0)
         return {
           mode: "auto" as const,
           url: verification.href,
