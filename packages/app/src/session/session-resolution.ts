@@ -3,7 +3,7 @@ import { sessionNotFoundError } from "@/runtime/server/errors"
 
 type SessionStore<T> = {
   get: (id: string) => T | undefined
-  sync: (id: string, options?: { children?: boolean }) => Promise<unknown>
+  sync: (id: string, options?: { children?: boolean; ancestors?: boolean }) => Promise<unknown>
   message: {
     sync: (id: string) => Promise<unknown>
   }
@@ -37,7 +37,7 @@ type Resolution<T> = { id: string; store: SessionStore<T> } & (
 export function createSessionResolution<T>(
   sessionID: () => string | undefined,
   sessions: () => SessionStore<T>,
-  options?: { children?: boolean; connected?: () => boolean },
+  options?: { children?: boolean; ancestors?: boolean; connected?: () => boolean },
 ) {
   const cached = createMemo(() => {
     const id = sessionID()

@@ -345,7 +345,13 @@ test("syncing a nested subagent by ID also loads its ancestors (#631)", async ()
   }))
 
   try {
+    // A plain sync leaves the chain unloaded: callers that walk ancestors themselves
+    // (the TUI's family discovery, with its own retry backoff) keep their semantics.
     await setup.data.session.sync("ses_great_grandchild")
+    expect(setup.data.session.get("ses_grandchild")).toBeUndefined()
+    expect(setup.data.session.get("ses_child")).toBeUndefined()
+
+    await setup.data.session.sync("ses_great_grandchild", { ancestors: true })
     expect(setup.data.session.get("ses_grandchild")?.parentID).toBe("ses_child")
     expect(setup.data.session.get("ses_child")?.parentID).toBe("ses_root")
     expect(setup.data.session.get("ses_root")?.id).toBe("ses_root")

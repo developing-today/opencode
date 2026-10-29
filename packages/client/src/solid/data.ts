@@ -1745,8 +1745,13 @@ export function createData(config: CreateDataInput) {
           throw error
         })
       },
-      /** With `children`, also loads every descendant session at any depth, so the family index is complete. */
-      sync(sessionID: string, options?: { children?: boolean }) {
+      /**
+       * With `children`, also loads every descendant session at any depth, so the family index is complete.
+       * With `ancestors`, also reads the missing parents by ID (best effort), for a session opened directly
+       * before its chain is known. Opt-in: the TUI's family discovery walks ancestors itself and retries
+       * failed reads with backoff, which an always-on walk inside sync would consume and defeat.
+       */
+      sync(sessionID: string, options?: { children?: boolean; ancestors?: boolean }) {
         return sync.run(options?.children ? `session.family:${sessionID}` : `session:${sessionID}`, async () => {
           const generation = sync.generation()
           const [info, children] = await Promise.all([
@@ -1756,25 +1761,27 @@ export function createData(config: CreateDataInput) {
           // Ancestors are never listed by the descendant walk, so a session opened directly
           // (a deep link into a nested subagent, #631) holds no info for them: resolveRoot
           // stops at the first missing parent, the family groups under the wrong root, and
-          // the ancestor trail truncates. Read the missing parents by ID, best effort: a
-          // parent that cannot be read leaves the walk at the furthest-known ancestor,
-          // exactly what resolveRoot already tolerates.
+          // the ancestor trail truncates. With `ancestors`, read the missing parents by ID,
+          // best effort: a parent that cannot be read leaves the walk at the furthest-known
+          // ancestor, exactly what resolveRoot already tolerates.
           const ancestors: SessionInfo[] = []
-          const seen = new Set([sessionID])
-          let parentID = info.parentID
-          while (parentID && !seen.has(parentID)) {
-            seen.add(parentID)
-            const known = store.session.info[parentID]
-            if (known) {
-              parentID = known.parentID
-              continue
+          if (options?.ancestors) {
+            const seen = new Set([sessionID])
+            let parentID = info.parentID
+            while (parentID && !seen.has(parentID)) {
+              seen.add(parentID)
+              const known = store.session.info[parentID]
+              if (known) {
+                parentID = known.parentID
+                continue
+              }
+              const parent = await api()
+                .session.get({ sessionID: parentID })
+                .catch(() => undefined)
+              if (!parent || parent.id !== parentID) break
+              ancestors.push(parent)
+              parentID = parent.parentID
             }
-            const parent = await api()
-              .session.get({ sessionID: parentID })
-              .catch(() => undefined)
-            if (!parent || parent.id !== parentID) break
-            ancestors.push(parent)
-            parentID = parent.parentID
           }
           publishSessions([info, ...ancestors, ...children.filter(unread)], generation)
           // A walk that skipped a failed branch is not kept, so the next sync lists the tree again.
