@@ -23,7 +23,10 @@ import { SessionProviderContext } from "./provider-context.js"
 import { InstructionEntry } from "./instruction-entry.js"
 import { SessionMessage } from "./message.js"
 import { SessionModelRequest } from "./model-request.js"
+import { Config } from "../config.js"
+import { ModelAlias } from "../model-alias.js"
 import { ModelRoute } from "../model-route.js"
+import { Provider } from "../provider.js"
 import { SessionCompaction } from "./compaction.js"
 import { SessionRunnerModel } from "./runner/model.js"
 import { SessionSchema } from "./schema.js"
@@ -88,6 +91,7 @@ const layer = Layer.effect(
     const mcpInstructions = yield* McpInstructions.Service
     const mcpTools = yield* McpTool.Service
     const models = yield* SessionRunnerModel.Service
+    const config = yield* Effect.serviceOption(Config.Service)
     const request = yield* SessionModelRequest.Service
     const referenceInstructions = yield* ReferenceInstructions.Service
     const skillInstructions = yield* SkillInstructions.Service
@@ -192,7 +196,28 @@ const layer = Layer.effect(
       // order and passes no size, so unknown sizes never filter and plain models are
       // unaffected.
       const selected = selection.session.model
-      const catalog = selected ? yield* model.get(selected.providerID, selected.id) : undefined
+      // The catalog lookup must see the effective selection: a bare alias pointing at a
+      // route is expanded inside SessionRunnerModel.resolve, so mirror that expansion here
+      // or an aliased route would never take the sized path below.
+      let effective = selected
+      if (selected && Option.isSome(config)) {
+        const entries = yield* config.value.entries()
+        const aliases = Config.latest(entries, "aliases")
+        if (aliases) {
+          const available = yield* model.available()
+          const exists = ({ providerID, modelID }: { providerID: string; modelID: string }) =>
+            available.some((item) => item.providerID === providerID && item.id === modelID)
+          try {
+            const res = ModelAlias.resolveRef(aliases, ModelAlias.refString(selected), exists)
+            effective = Model.Ref.make({
+              providerID: Provider.ID.make(res.providerID),
+              id: Model.ID.make(res.id),
+              ...(res.variant ? { variant: Model.VariantID.make(res.variant) } : {}),
+            })
+          } catch {}
+        }
+      }
+      const catalog = effective ? yield* model.get(effective.providerID, effective.id) : undefined
       const route = catalog && ModelRoute.definition(catalog) !== undefined ? catalog : undefined
       if (!route || !selected) {
         const resolved = yield* resolveModel(selection.session)
@@ -215,12 +240,18 @@ const layer = Layer.effect(
       const messages = history.entries.map((entry) => entry.message)
       const requestTokens = SessionCompaction.estimateHistoryRequest({
         agent: selection.agent,
-        model: { ref: selected, capabilities: route.capabilities },
+        model: { ref: effective ?? selected, capabilities: route.capabilities },
         tools: selection.tools,
         initial: history.initial,
         messages,
       })
-      const resolved = yield* resolveModel(selection.session, requestTokens)
+      // If every target is over its ceiling the sized resolution fails — but automatic
+      // compaction runs after load and exists precisely to shrink an oversized history, so
+      // fall back to the unsized resolution (the pre-#891 behaviour) and let it run. If the
+      // unsized resolution also fails, that error surfaces unchanged.
+      const resolved = yield* resolveModel(selection.session, requestTokens).pipe(
+        Effect.catchTag("SessionRunnerModel.RouteUnavailableError", () => resolveModel(selection.session)),
+      )
       return {
         session: selection.session,
         agent: selection.agent,
