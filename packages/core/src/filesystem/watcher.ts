@@ -8,7 +8,7 @@ import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Cause, Context, Effect, Layer, PubSub, RcMap, Schema, Stream } from "effect"
 import { lazy } from "../util/lazy.js"
-import { watch } from "node:fs"
+import { existsSync, watch } from "node:fs"
 import path from "path"
 import loadBinding from "./watcher-binding.js"
 
@@ -242,10 +242,21 @@ function subscribeDirectory(
   publish: (update: Update) => void,
 ): Effect.Effect<Subscription | undefined> {
   if (!native || !backend) {
-    return Effect.logError("watcher backend not supported", { directory, platform: process.platform }).pipe(
-      Effect.as(undefined),
+    // The Parcel binding can be unavailable even on supported platforms
+    // (e.g. its native library fails to load), which must not silently end
+    // every directory watch: fall back to node's recursive fs.watch (#773).
+    return Effect.try({
+      try: () => subscribeDirectoryWithNode(directory, ignore, publish),
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("watcher backend not supported", { directory, platform: process.platform, cause }).pipe(
+          Effect.as(undefined),
+        ),
+      ),
     )
   }
+
   const callback: ParcelWatcher.SubscribeCallback = (error, updates) => {
     if (error) Effect.runFork(Effect.logError("watcher callback failed", { error }))
     for (const update of updates) publish(update)
@@ -270,4 +281,43 @@ function subscribeDirectory(
       }).pipe(Effect.as(undefined)),
     ),
   )
+}
+
+/** Recursive directory watch on node's fs.watch, used when Parcel is unavailable. */
+function subscribeDirectoryWithNode(
+  directory: string,
+  ignore: readonly string[],
+  publish: (update: Update) => void,
+): Subscription | undefined {
+  // Parcel ignore entries are literal names ("node_modules") or subtree
+  // globs ("**/{node_modules,.git}/**"); both reduce to segment names here.
+  const ignored = new Set<string>()
+  for (const entry of ignore) {
+    const braces = entry.match(/\*\*\/\{([^}]+)\}\/\*\*/)
+    if (braces) {
+      for (const name of braces[1].split(",")) ignored.add(name)
+      continue
+    }
+    const name = entry.replace(/^\*\*\//, "").replace(/\/\*\*$/, "")
+    if (name && !/[*{}]/.test(name)) ignored.add(name)
+  }
+  let subscription: ReturnType<typeof watch>
+  try {
+    subscription = watch(directory, { recursive: true }, (event, file) => {
+      if (!file) return
+      const relative = file.toString()
+      if (relative.split(path.sep).some((segment) => ignored.has(segment))) return
+      const full = path.join(directory, relative)
+      // fs.watch cannot distinguish create from delete on a rename; the
+      // path's existence at delivery time is the available signal.
+      publish({ path: full, type: event === "rename" ? (existsSync(full) ? "create" : "delete") : "update" })
+    })
+  } catch {
+    // Recursive watching is unavailable on this platform/runtime.
+    return undefined
+  }
+  subscription.on("error", (error: unknown) =>
+    Effect.runFork(Effect.logError("watcher callback failed", { path: directory, error })),
+  )
+  return { unsubscribe: () => Promise.resolve(subscription.close()), backend: "node" }
 }

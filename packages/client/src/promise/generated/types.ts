@@ -5494,6 +5494,7 @@ export type SessionLogOutput = SessionLogItem
 export type SessionInterruptInput = {
   readonly sessionID: { readonly sessionID: string }["sessionID"]
   readonly resume?: { readonly resume?: boolean | undefined }["resume"]
+  readonly force?: { readonly force?: boolean | undefined }["force"]
 }
 
 export type SessionInterruptOutput = SessionInterruptResponse
