@@ -222,6 +222,9 @@ describe("OpencodePlugin", () => {
         }),
       ({ server }) => Effect.promise(() => server.stop(true)),
     ),
+    // The floored device poll waits ~8s before its first token request
+    // (#880), past bun's 5s default test timeout.
+    30_000,
   )
 
   it.live("rejects malformed device verification URLs", () =>
@@ -312,6 +315,8 @@ describe("OpencodePlugin", () => {
           }),
         ({ server }) => Effect.promise(() => server.stop(true)),
       ),
+      // Same ~8s first-poll wait as the canonical-server test above (#880).
+      30_000,
     )
   }
 
