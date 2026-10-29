@@ -3,9 +3,13 @@ import type { Library } from "./codemode.js"
 export const name = "std"
 export const version = "1.0.0"
 
-// Pure program-side helpers in the interpreter's supported subset. No imports,
-// no async helpers (phase 2), no host calls: every helper below runs as plain
-// program code so tool wrappers keep their original call identity.
+// Program-side helpers in the interpreter's supported subset. No imports:
+// every helper below runs as plain program code so tool wrappers keep their
+// original call identity. The async helpers (phase 2) are program code too;
+// the one thing program code cannot do — wait — goes through the host sleep
+// primitive the runtime may provide under the internal global named by
+// `sleepHostGlobal`, wrapped here as `std.sleep` and never exposed to
+// programs under its own name.
 export const source = `
 const version = "1.0.0";
 
@@ -125,7 +129,126 @@ function bind(target, defaults) {
   return out;
 }
 
-return Object.freeze({ version, bind, chunk, uniqBy, keyBy, pick, omit });
+// The host sleep primitive, captured once at library evaluation. Runtimes
+// without the sleep extension leave std.sleep present but rejecting, so a
+// program can feature-check instead of dying on an unknown global.
+const hostSleep = (() => {
+  try {
+    return __opencode_sleep;
+  } catch {
+    return undefined;
+  }
+})();
+
+async function sleep(ms) {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) {
+    throw new TypeError("std.sleep ms must be a non-negative finite number.");
+  }
+  if (typeof hostSleep !== "function") {
+    throw new Error("std.sleep is unavailable: this execution has no sleep host primitive.");
+  }
+  // A host primitive may cap a single wait (core caps one call at 30s), so a
+  // single call can return before the requested time has elapsed. Measure
+  // against Date.now and keep waiting out the remainder instead of silently
+  // shortening the sleep: deadlines built on sleep (withTimeout, retry
+  // delays) must fire at the requested time, not at the host cap.
+  const start = Date.now();
+  let remaining = ms;
+  while (remaining > 0) {
+    await hostSleep(remaining);
+    remaining = ms - (Date.now() - start);
+  }
+}
+
+async function mapLimit(items, limit, fn) {
+  requireArray(items, "std.mapLimit");
+  if (typeof limit !== "number" || !Number.isInteger(limit) || limit <= 0) {
+    throw new TypeError("std.mapLimit limit must be a positive integer.");
+  }
+  if (typeof fn !== "function") throw new TypeError("std.mapLimit fn must be a function.");
+  const results = new Array(items.length);
+  let next = 0;
+  let failure;
+  let failed = false;
+  async function worker() {
+    while (!failed && next < items.length) {
+      const index = next;
+      next += 1;
+      try {
+        results[index] = await fn(items[index], index, items);
+      } catch (error) {
+        if (!failed) {
+          failed = true;
+          failure = error;
+        }
+      }
+    }
+  }
+  const workers = [];
+  const count = Math.min(limit, items.length);
+  for (let i = 0; i < count; i += 1) workers.push(worker());
+  await Promise.all(workers);
+  if (failed) throw failure;
+  return results;
+}
+
+async function retry(fn, options) {
+  if (typeof fn !== "function") throw new TypeError("std.retry fn must be a function.");
+  const opts = options === undefined ? {} : options;
+  if (!isObject(opts)) throw new TypeError("std.retry options must be an object.");
+  const attempts = opts.attempts === undefined ? 3 : opts.attempts;
+  if (typeof attempts !== "number" || !Number.isInteger(attempts) || attempts <= 0) {
+    throw new TypeError("std.retry attempts must be a positive integer.");
+  }
+  const delayMs = opts.delayMs === undefined ? 0 : opts.delayMs;
+  if (typeof delayMs !== "number" || !Number.isFinite(delayMs) || delayMs < 0) {
+    throw new TypeError("std.retry delayMs must be a non-negative finite number.");
+  }
+  const backoff = opts.backoff === undefined ? 1 : opts.backoff;
+  if (typeof backoff !== "number" || !Number.isFinite(backoff) || backoff < 1) {
+    throw new TypeError("std.retry backoff must be a finite number of at least 1.");
+  }
+  const shouldRetry = opts.shouldRetry;
+  if (shouldRetry !== undefined && typeof shouldRetry !== "function") {
+    throw new TypeError("std.retry shouldRetry must be a function.");
+  }
+  let delay = delayMs;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fn(attempt);
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) break;
+      if (shouldRetry !== undefined && !shouldRetry(error, attempt)) break;
+      if (delay > 0) await sleep(delay);
+      delay = delay * backoff;
+    }
+  }
+  throw lastError;
+}
+
+async function withTimeout(input, ms) {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) {
+    throw new TypeError("std.withTimeout ms must be a non-negative finite number.");
+  }
+  const promise = typeof input === "function" ? input() : input;
+  const timeout = sleep(ms).then(() => {
+    throw new Error(
+      "std.withTimeout timed out after " + ms + "ms. The underlying work was not cancelled and may still complete.",
+    );
+  });
+  return Promise.race([promise, timeout]);
+}
+
+return Object.freeze({ version, bind, chunk, uniqBy, keyBy, pick, omit, sleep, mapLimit, retry, withTimeout });
 `
 
 export const library: Library = { name, version, source }
+
+/**
+ * The internal global a runtime's sleep host extension provides and the std
+ * source wraps as `std.sleep`. Deliberately not a program-facing name: the
+ * only surface programs are told about is `std.sleep` itself.
+ */
+export const sleepHostGlobal = "__opencode_sleep"
