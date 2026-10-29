@@ -98,13 +98,7 @@ export const layer = Layer.effect(
             // A bare alias arrives as the provider field with an empty model id (PR #382's
             // CLI passthrough); build the reference from the alias name alone, keeping any
             // variant, instead of a trailing-slash string alias resolution rejects.
-            const refStr = target.id
-              ? target.variant
-                ? `${target.providerID}/${target.id}#${target.variant}`
-                : `${target.providerID}/${target.id}`
-              : target.variant
-                ? `${target.providerID}#${target.variant}`
-                : target.providerID
+            const refStr = ModelAlias.refString(target)
             try {
               const res = ModelAlias.resolveRef(aliases, refStr, exists)
               target = Model.Ref.make({
