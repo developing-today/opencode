@@ -199,7 +199,9 @@ export const provider = (options: Options): OAuthClientProvider => {
     redirectToAuthorization: (url) => {
       if (!redirect) throw refuse("user authorization")
       if (url.protocol !== "http:" && url.protocol !== "https:")
-        throw new Error(`MCP server "${options.config.url}" returned a ${url.protocol} authorization URL; only http and https are supported`)
+        throw new Error(
+          `MCP server "${options.config.url}" returned a ${url.protocol} authorization URL; only http and https are supported`,
+        )
       return redirect.open(url)
     },
     ...(options.invalidate ? { invalidateCredentials: options.invalidate } : {}),
@@ -235,19 +237,36 @@ export const memoryStore = (): Store => {
 export const clientFromCredential = (credential: Credential.OAuth) =>
   credential.metadata?.client as StoredOAuthClientInformation | undefined
 
+/** Upper bound on a stored credential's lifetime, in seconds (30 days). A
+ * millisecond-confused `expires_in` (e.g. 7_200_000 for a 2h token) would
+ * otherwise store an ~83-day expiry, disabling refresh while the real token is
+ * long dead (#885). */
+const MAX_EXPIRES_IN_SECONDS = 30 * 24 * 60 * 60
+
+/** Server-supplied `expires_in` seconds, validated before it becomes a stored
+ * expiry (#885). A non-finite or non-positive value must not fabricate a
+ * past expiry, so it collapses to 0 (the SDK's non-expiring sentinel); a value
+ * beyond {@link MAX_EXPIRES_IN_SECONDS} is clamped to it. */
+const expiresInSeconds = (value: number | undefined): number => {
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0
+  return Math.min(seconds, MAX_EXPIRES_IN_SECONDS)
+}
+
 export const toCredential = (input: {
   readonly methodID: Integration.MethodID
   readonly serverUrl: string
   readonly tokens: StoredOAuthTokens
   readonly client: StoredOAuthClientInformation | undefined
-}) =>
-  Credential.OAuth.make({
+}) => {
+  const expiresIn = expiresInSeconds(input.tokens.expires_in)
+  return Credential.OAuth.make({
     type: "oauth",
     methodID: input.methodID,
     access: input.tokens.access_token,
     refresh: input.tokens.refresh_token ?? "",
     // 0 is non-expiring; toTokens then omits expires_in so the SDK does not force a refresh.
-    expires: input.tokens.expires_in ? Date.now() + input.tokens.expires_in * 1000 : 0,
+    expires: expiresIn ? Date.now() + expiresIn * 1000 : 0,
     metadata: {
       serverUrl: input.serverUrl,
       tokenType: input.tokens.token_type,
@@ -256,6 +275,7 @@ export const toCredential = (input: {
       ...(input.client ? { client: input.client } : {}),
     },
   })
+}
 
 export const toTokens = (credential: Credential.OAuth): StoredOAuthTokens => {
   const metadata = credential.metadata ?? {}
@@ -376,7 +396,9 @@ export const authorize = (input: {
       if (!value) return fail("Missing authorization code", "missing_code")
       // The page waits for the token exchange so the browser never reports success for a rejected code.
       if (
-        !Effect.runSync(Deferred.succeed(code, { code: value, iss: url.searchParams.get("iss") ?? undefined, response }))
+        !Effect.runSync(
+          Deferred.succeed(code, { code: value, iss: url.searchParams.get("iss") ?? undefined, response }),
+        )
       )
         response.writeHead(409).end("OAuth callback already received")
     })
