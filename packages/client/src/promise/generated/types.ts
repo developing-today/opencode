@@ -756,6 +756,7 @@ export type ConfigModelRouteTarget =
   | { providerID: string; model: string; variant?: string }
   | {
       model: string | { providerID: string; model: string; variant?: string }
+      exclude?: Array<string>
       defaultVariant?: string
       variants?: { [x: string]: string }
       until?: number
