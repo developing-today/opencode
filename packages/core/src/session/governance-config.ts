@@ -5,6 +5,7 @@ import type { Entry } from "@opencode/schema/config"
 import { Config } from "../config.js"
 import type { Instance } from "../instance.js"
 import { Location } from "../location.js"
+import { Model } from "../model.js"
 import { Provider } from "../provider.js"
 import { ModelGovernance } from "./model-governance.js"
 
@@ -43,7 +44,7 @@ export const load = (
       const provider = Context.getOption(context.value, Provider.Service)
       if (provider._tag === "None") return { entries, catalog: undefined }
       const snapshot = yield* provider.value.snapshot()
-      const catalog: ModelGovernance.Catalog = new Map(
+      const built: ModelGovernance.Catalog = new Map(
         Array.from(snapshot.records, ([providerID, record]) => [
           providerID as string,
           new Map(
@@ -54,8 +55,33 @@ export const load = (
           ),
         ]),
       )
-      return { entries, catalog }
+      // The provider snapshot predates model transforms, so models a transform
+      // creates (Azure deployments, #236) are invisible to governance's glob and
+      // matching-key expansion. Union the catalog with the location's current
+      // Model state when one is initialized; current state wins per model, since
+      // it is what the runtime resolves against.
+      const model = Context.getOption(context.value, Model.Service)
+      if (model._tag === "None") return { entries, catalog: built }
+      const current = yield* model.value.all()
+      return { entries, catalog: withCurrentModels(built, current) }
     }),
   ).pipe(
     Effect.orElseSucceed(() => ({ entries: [] as Entry[], catalog: undefined as ModelGovernance.Catalog | undefined })),
   )
+
+/** A governance catalog unioned with current (post-model-transform) models: every
+ * model in `models` is present under its provider, replacing the snapshot entry for
+ * the same id, so transform-created models are judged like catalog models (#236). */
+export function withCurrentModels(
+  catalog: ModelGovernance.Catalog,
+  models: readonly Model.Info[],
+): ModelGovernance.Catalog {
+  const merged = new Map(Array.from(catalog, ([providerID, provider]) => [providerID, new Map(provider)] as const))
+  for (const model of models) {
+    const providerID = String(model.providerID)
+    const provider = merged.get(providerID) ?? new Map<string, ModelGovernance.CatalogModel>()
+    provider.set(String(model.id), { enabled: model.enabled, variants: model.variants })
+    merged.set(providerID, provider)
+  }
+  return merged
+}

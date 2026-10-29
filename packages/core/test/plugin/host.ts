@@ -307,6 +307,7 @@ export function modelHost(models: Model.Interface): Plugin.Context["model"] {
       models.transform((editor) =>
         callback({
           list: (id) => editor.list(id === undefined ? undefined : Provider.ID.make(id)),
+          ids: (providerID) => editor.ids(Provider.ID.make(providerID)),
           get: (providerID, modelID) => editor.get(Provider.ID.make(providerID), Model.ID.make(modelID)),
           update: (providerID, modelID, update) =>
             editor.update(Provider.ID.make(providerID), Model.ID.make(modelID), update),
