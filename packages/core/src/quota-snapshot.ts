@@ -81,7 +81,15 @@ export const derive = (input: Input, options: Options): Snapshot => {
   // Without `windowHours` the totals cannot be attributed to this window (#550), so a percent computed
   // from them would not be a reading of the window: report unknown instead of that number.
   const windowed = input.window.windowHours !== undefined
-  const maxAge = options.perPlanMaxAgeMs?.[input.plan.id] ?? options.maxAgeMs ?? DEFAULT_MAX_AGE_MS
+  // Own-property lookup only: plan ids are operator-chosen, so one may be an Object.prototype member
+  // name. A plain index read would return the inherited function there, the nullish chain would not
+  // fall through, and the staleness comparison would never mark the snapshot stale (#824).
+  const maxAge =
+    (options.perPlanMaxAgeMs && Object.hasOwn(options.perPlanMaxAgeMs, input.plan.id)
+      ? options.perPlanMaxAgeMs[input.plan.id]
+      : undefined) ??
+    options.maxAgeMs ??
+    DEFAULT_MAX_AGE_MS
   return {
     planID: input.plan.id,
     window: input.window.name,

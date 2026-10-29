@@ -91,6 +91,51 @@ describe("QuotaSnapshot", () => {
     ).toBe(false)
   })
 
+  // Plan ids are operator-chosen, so one may be an Object.prototype member name (#824). The override
+  // record must be read with own-property semantics: an inherited function is not this plan's override.
+  const prototypeNamedPlanIDs = ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]
+  const observedAt = now - 61 * 60_000
+
+  test("prototype-named plans go stale when the override record has no own entry for them", () => {
+    const perPlanMaxAgeMsRecords = [
+      {},
+      { "other-plan": 7_200_000 },
+      JSON.parse('{"other-plan":7200000}') as Record<string, number>,
+    ]
+    for (const perPlanMaxAgeMs of perPlanMaxAgeMsRecords) {
+      for (const id of prototypeNamedPlanIDs) {
+        const snapshot = QuotaSnapshot.derive(
+          { plan: { ...plan, id } as ModelPlan.Plan, window, totals: totals({ requests: 50 }), observedAt },
+          { now, perPlanMaxAgeMs },
+        )
+        expect(snapshot.stale).toBe(true)
+        expect(QuotaSnapshot.known(snapshot)).toBe(false)
+      }
+    }
+  })
+
+  test("a prototype-named plan with no own override falls through to the configured max age", () => {
+    const snapshot = QuotaSnapshot.derive(
+      { plan: { ...plan, id: "constructor" } as ModelPlan.Plan, window, totals: totals(), observedAt },
+      { now, maxAgeMs: 7_200_000, perPlanMaxAgeMs: {} },
+    )
+    expect(snapshot.stale).toBe(false)
+  })
+
+  test("an explicit own entry for a prototype-named plan is honoured as that plan's override", () => {
+    // A literal `__proto__` key sets the prototype, so only JSON.parse can express an own entry for it.
+    const perPlanMaxAgeMs = JSON.parse('{"__proto__":7200000,"constructor":7200000}') as Record<string, number>
+    expect(Object.hasOwn(perPlanMaxAgeMs, "__proto__")).toBe(true)
+    for (const id of ["__proto__", "constructor"]) {
+      const snapshot = QuotaSnapshot.derive(
+        { plan: { ...plan, id } as ModelPlan.Plan, window, totals: totals({ requests: 50 }), observedAt },
+        { now, perPlanMaxAgeMs },
+      )
+      expect(snapshot.stale).toBe(false)
+      expect(QuotaSnapshot.known(snapshot)).toBe(true)
+    }
+  })
+
   test("resetAt comes from an explicit resetAt or a daily rule, and is null for a rolling rule", () => {
     const explicit = QuotaSnapshot.derive(
       {
