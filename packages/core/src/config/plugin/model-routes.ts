@@ -12,6 +12,7 @@ import { ModelRoute } from "../../model-route.js"
 import { ModelRouteExpansion } from "../../model-route-expansion.js"
 import { ModelRouteSchedule } from "../../model-route-schedule.js"
 import { Provider } from "../../provider.js"
+import { ownOr } from "../../util/record.js"
 import { ConfigEntryObserver } from "./entry-observer.js"
 import { Permission } from "../../permission.js"
 import { ModelRouteTuning } from "../../model-route-tuning.js"
@@ -389,7 +390,7 @@ export function expand(
     const attached = new Set<string>()
     const attach = (child: ModelRoute.Node["children"][number], key: string) => {
       node.children.push(child)
-      node.weights.push(ModelRouteAutonomy.usesRules(current.autonomy) ? (current.weights?.[key] ?? 1) : 1)
+      node.weights.push(ModelRouteAutonomy.usesRules(current.autonomy) ? ownOr(current.weights ?? {}, key, 1) : 1)
     }
     for (const target of current.targets) {
       const spec = targetSpec(target)

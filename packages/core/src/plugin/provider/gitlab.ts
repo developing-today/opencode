@@ -1,5 +1,6 @@
 import os from "os"
 import { App } from "../../app.js"
+import { expiresInSeconds } from "./expires.js"
 import { Clock, Deferred, Effect, Exit, Option, Schema, Semaphore, Stream } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import type { Server, ServerResponse } from "node:http"
@@ -429,7 +430,7 @@ function credential(instanceUrl: string, clientID: string, tokens: typeof Token.
       methodID,
       access: tokens.access_token,
       refresh: tokens.refresh_token,
-      expires: now + (tokens.expires_in ?? 7200) * 1000,
+      expires: now + expiresInSeconds(tokens.expires_in, 7200) * 1000,
       metadata: { instanceUrl, clientID },
     }),
   )

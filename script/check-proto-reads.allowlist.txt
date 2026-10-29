@@ -1,0 +1,50 @@
+# Prototype-chain read allowlist (#865; audit on #833).
+# Every line matching the P-A / P-C sweep patterns in packages/core/src must
+# appear here with its disposition, or script/check-proto-reads.ts fails.
+# Format: file :: exact trimmed source line :: disposition
+# Dispositions: guarded at the site, safe by construction (with the reason),
+# internal-only keys, vendored code, or tracked by an open issue.
+packages/core/src/aisdk-native.ts :: const hostTable = (providerID: string) => (Object.hasOwn(HOSTS, providerID) ? HOSTS[providerID] : undefined) :: guarded: Object.hasOwn ternary at the same site (#774)
+packages/core/src/aisdk-native.ts :: return Object.hasOwn(PACKAGES, npm) ? PACKAGES[npm] : undefined :: guarded: Object.hasOwn ternary at the same site (#774)
+packages/core/src/aisdk.ts :: LLMEvent.toolInputDelta({ id: event.id, name: state.toolNames[event.id] ?? "unknown", text: event.delta }), :: internal: state map keyed by provider event ids and written by own code before any read; ids are provider-assigned, not user text
+packages/core/src/aisdk.ts :: name: state.toolNames[event.id] ?? "unknown", :: internal: state map keyed by provider event ids and written by own code before any read; ids are provider-assigned, not user text
+packages/core/src/database/drizzle/internal/drizzle-utils.ts :: node[pathChunk] = (node[pathChunk] ?? {}) as Record<string, unknown> :: vendored: drizzle internal; path chunks come from the schema and the read seeds a fresh node object
+packages/core/src/database/v1-migration.bun.ts :: .map((name) => `\`${name}\` is now \`${RENAMED_TOOLS[name]}\``) :: safe: names derived from Object.keys(RENAMED_TOOLS), own keys only (#833)
+packages/core/src/database/v1-migration.bun.ts :: ? [`The \`${renamed[0]}\` tool is now \`${RENAMED_TOOLS[renamed[0]]}\` and must be called by that name.`] :: safe: names derived from Object.keys(RENAMED_TOOLS), own keys only (#833)
+packages/core/src/form.ts :: if (dayFirst) return [Number(dayFirst[3]), MONTH_NUMBERS[dayFirst[2].toLowerCase()], Number(dayFirst[1])] :: safe: key is a regex capture constrained to month-name prefixes (#833)
+packages/core/src/form.ts :: return [Number(monthFirst[3]), MONTH_NUMBERS[monthFirst[1].toLowerCase()], Number(monthFirst[2])] :: safe: key is a regex capture constrained to month-name prefixes (#833)
+packages/core/src/github-copilot/chat/openai-compatible-chat-language-model.ts :: Object.entries(providerOptions?.[this.providerOptionsName] ?? {}).filter( :: safe: key is this.providerOptionsName, the provider's own options key
+packages/core/src/messaging/vars.ts :: return args[name] ?? args.to :: safe: name is a switch-case literal (to/child_id) at this site and args is the template argument struct
+packages/core/src/model-route-limits.ts :: for (const [, amount, unit] of text.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h|d)/g)) total += Number(amount) * UNITS[unit] :: safe: unit captured by the (ms|s|m|h|d) amount regex (#833)
+packages/core/src/model-route-limits.ts :: if (dayFirst) return [Number(dayFirst[3]), MONTH_NUMBERS[dayFirst[2].toLowerCase()], Number(dayFirst[1])] :: safe: key is a regex capture constrained to month-name prefixes (#833)
+packages/core/src/model-route-limits.ts :: return [Number(monthFirst[3]), MONTH_NUMBERS[monthFirst[1].toLowerCase()], Number(monthFirst[2])] :: safe: key is a regex capture constrained to month-name prefixes (#833)
+packages/core/src/model-route-limits.ts :: total += Number(amount) * (RELATIVE_UNITS[unit] ?? 1_000) :: safe: unit captured by the (ms|s|m|h|d) amount regex (#833)
+packages/core/src/model-route-schedule.ts :: dayOfWeek: SHORT_DAYS[values.weekday.toLowerCase()] ?? 0, :: safe: key comes from Intl weekday formatting (#833)
+packages/core/src/model-route-schedule.ts :: return Object.hasOwn(DAY_NAMES, text) ? DAY_NAMES[text] : undefined :: guarded: Object.hasOwn ternary at the same site (#791)
+packages/core/src/model-route-schedule.ts :: window.daysOfWeek?.length ? window.daysOfWeek.map((day) => DAY_LABELS[day]).join(", ") : "every day" :: safe: numeric day index
+packages/core/src/model-route-tuning.ts :: total += Number(amount) * (unit[name] ?? 1_000) :: safe: name captured by the (second|minute|hour|day|sec|s) regex
+packages/core/src/model-route.ts :: [...from].toSorted((left, right) => (effective[right] ?? 1) - (effective[left] ?? 1)) :: safe: numeric index into a weight array
+packages/core/src/model-route.ts :: const base = node.weights[position] ?? 1 :: safe: numeric index into a weight array
+packages/core/src/model-route.ts :: const score = (state.scores.get(index) ?? 0) + (weights[index] ?? 1) :: safe: numeric index into a weight array
+packages/core/src/model-route.ts :: const total = candidateIndexes.reduce((sum, index) => sum + (weights[index] ?? 1), 0) :: safe: numeric index into a weight array
+packages/core/src/model-route.ts :: const trace = tracedWeightOf(definition.targets[child.leaf], node.weights[position] ?? 1, now, scope) :: safe: numeric index into a weight array
+packages/core/src/model-route.ts :: draw -= weights[index] ?? 1 :: safe: numeric index into a weight array
+packages/core/src/model-route.ts :: node.children.map((_, position) => effective[position] ?? 1), :: safe: numeric index into a weight array
+packages/core/src/plugin/command.ts :: (prompt.arguments ?? []).map((argument, index) => [argument.name, args[index] ?? ""]), :: safe: numeric index into an array
+packages/core/src/plugin/tool-input-repair.ts :: ? (tuple[index] ?? (Array.isArray(schema.prefixItems) ? schema.items : schema.additionalItems)) :: safe: numeric index into an array
+packages/core/src/ripgrep/binary.ts :: const config = PLATFORM[platformKey] :: safe: key is the internally composed `${process.arch}-${process.platform}` (#833)
+packages/core/src/session/compaction.ts :: const step = SHRINK_STEPS[rejections] :: safe: numeric index into a step table (#833)
+packages/core/src/session/runner/publish-llm-event.ts :: const failure = INPUT_FAILURES[reason] :: safe: key is the closed union InputFailureReason, internal only (#833)
+packages/core/src/shell/parse.ts :: !raw.includes("`$") && /['"`]/.test(raw) ? (item.words[index] ?? raw) : raw.replaceAll("`$", "\0") :: safe: numeric index into an array
+packages/core/src/shell/parse.ts :: const arity = Object.hasOwn(ARITY, key) ? ARITY[key] : undefined :: guarded: Object.hasOwn ternary at the same site (#792)
+packages/core/src/shell/scan.ts :: (/^(?:(?:dis_)?(?:functions|[gs]?aliases)|options|commands)$/.test(name) && "[=:".includes(input[colon] ?? ""))) :: safe: numeric index into a string
+packages/core/src/shell/scan.ts :: (state.context.dialect !== "bash" && ZSH_PRECOMMANDS.has(state.words[name] ?? "")) :: safe: name holds commandWordIndex, a numeric index into the words array
+packages/core/src/shell/scan.ts :: BASH_PRECOMMANDS.has(state.words[name] ?? "") || :: safe: name holds commandWordIndex, a numeric index into the words array
+packages/core/src/shell/scan.ts :: else while (/\d/.test(input[cursor] ?? "")) cursor++ :: safe: numeric index into a string
+packages/core/src/shell/scan.ts :: return { value: POWERSHELL_ESCAPES[char] ?? char, end: next } :: safe: single-char key; its ?? fallback is sound for the same reason (#833)
+packages/core/src/shell/scan.ts :: value += BASH_ANSI_ESCAPES[escaped] :: safe: single-char key; no single-char prototype member (#833)
+packages/core/src/shell/scan.ts :: while (/\d/.test(input[cursor] ?? "")) cursor++ :: safe: numeric index into a string
+packages/core/src/tool/plugin/route-usage.ts :: rows: (history?.windowSessionTargets[index] ?? []).flatMap((row) => :: safe: numeric index into an array
+packages/core/src/util/slug.ts :: ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)], :: safe: numeric random index into an array
+packages/core/src/util/slug.ts :: NOUNS[Math.floor(Math.random() * NOUNS.length)], :: safe: numeric random index into an array
+packages/core/src/variant.ts :: const protocol = model.package === undefined ? undefined : PROTOCOLS[model.package] :: tracked: #862, fix in flight on PR #878; migrate to ownValue when it lands (editing variant.ts in the #865 change would conflict with that PR)
