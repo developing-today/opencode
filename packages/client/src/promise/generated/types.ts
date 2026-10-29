@@ -2133,20 +2133,6 @@ export type CredentialKey = {
   configuration?: FormAnswer
 }
 
-export type ProviderInfo = {
-  id: ProviderID
-  canonical?: ProviderID
-  integrationID?: IntegrationID
-  instanceOf?: ProviderID
-  name: string
-  activation: "auto" | "enabled" | "disabled"
-  package: string
-  compatibility?: ProviderCompatibility
-  settings?: ProviderSettings
-  headers?: { [x: string]: string }
-  body?: { [x: string]: any }
-}
-
 export type ConfigModelRoutes = {
   [x: string]: {
     name?: string
@@ -2846,6 +2832,21 @@ export type SessionMessageCompaction =
   | SessionMessageCompactionRunning
   | SessionMessageCompactionCompleted
   | SessionMessageCompactionFailed
+
+export type ProviderInfoWithModels = {
+  id: ProviderID
+  canonical?: ProviderID
+  integrationID?: IntegrationID
+  instanceOf?: ProviderID
+  name: string
+  activation: "auto" | "enabled" | "disabled"
+  package: string
+  compatibility?: ProviderCompatibility
+  settings?: ProviderSettings
+  headers?: { [x: string]: string }
+  body?: { [x: string]: any }
+  models: Array<ModelInfo>
+}
 
 export type SessionInboxInfo = SessionInboxUser | SessionInboxSynthetic | SessionInboxCompaction | SessionInboxMove
 
@@ -6508,14 +6509,14 @@ export type ProviderListInput = {
   readonly location?: { readonly location?: { readonly directory?: string | undefined } | undefined }["location"]
 }
 
-export type ProviderListOutput = { location: LocationPublicRef; data: Array<ProviderInfo> }
+export type ProviderListOutput = { location: LocationPublicRef; data: Array<ProviderInfoWithModels> }
 
 export type ProviderGetInput = {
   readonly providerID: { readonly providerID: string }["providerID"]
   readonly location?: { readonly location?: { readonly directory?: string | undefined } | undefined }["location"]
 }
 
-export type ProviderGetOutput = { location: LocationPublicRef; data: ProviderInfo }
+export type ProviderGetOutput = { location: LocationPublicRef; data: ProviderInfoWithModels }
 
 export type IntegrationListInput = {
   readonly location?: { readonly location?: { readonly directory?: string | undefined } | undefined }["location"]
