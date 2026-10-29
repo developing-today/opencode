@@ -160,7 +160,10 @@ export interface Resolved {
 }
 
 export interface Interface {
-  readonly resolve: (requested?: Ref) => Effect.Effect<Resolved | undefined, Error>
+  /** `requestTokens` has the same meaning as on `resolveModel`: it also sizes the
+   * default selection, so a session with no explicit model still filters route
+   * targets by their per-target ceilings (#891). */
+  readonly resolve: (requested?: Ref, requestTokens?: number) => Effect.Effect<Resolved | undefined, Error>
   /** `sessionID` enables per-session target stickiness for routes with a non-ordered selection mode.
    * `requestTokens` is the request's context size in tokens, when known: a route target whose ceiling
    * the request does not fit is skipped like any other ineligible target. */
@@ -625,7 +628,7 @@ export const layer = Layer.effect(
     }
 
     return Service.of({
-      resolve: Effect.fn("ModelResolver.resolve")(function* (requested) {
+      resolve: Effect.fn("ModelResolver.resolve")(function* (requested, requestTokens) {
         let target = requested
         if (target && Option.isSome(config)) {
           const cfg = config.value
@@ -660,7 +663,7 @@ export const layer = Layer.effect(
                 ),
               )
         if (!selected) return undefined
-        return yield* resolveSelected(selected, target?.variant)
+        return yield* resolveSelected(selected, target?.variant, undefined, requestTokens)
       }),
       resolveModel: (selected, variant, sessionID, requestTokens) =>
         resolveSelected(selected, variant, sessionID, requestTokens),

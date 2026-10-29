@@ -26,6 +26,7 @@ import { SessionModelRequest } from "./model-request.js"
 import { Config } from "../config.js"
 import { ModelAlias } from "../model-alias.js"
 import { ModelRoute } from "../model-route.js"
+import { hasPackage } from "../model-resolver.js"
 import { Provider } from "../provider.js"
 import { SessionCompaction } from "./compaction.js"
 import { SessionRunnerModel } from "./runner/model.js"
@@ -218,8 +219,22 @@ const layer = Layer.effect(
         }
       }
       const catalog = effective ? yield* model.get(effective.providerID, effective.id) : undefined
-      const route = catalog && ModelRoute.definition(catalog) !== undefined ? catalog : undefined
-      if (!route || !selected) {
+      // A session with no explicit model resolves through the global default, which can
+      // itself be a route: determine the effective default catalog selection the same way
+      // ModelResolver.resolve does (the configured default when it is usable, else the
+      // first available packaged text model), or default-route sessions would bypass the
+      // sized path and their per-target ceilings would never filter (#891).
+      let fallback: Model.Info | undefined
+      if (!selected) {
+        const candidate = yield* model.default()
+        fallback =
+          candidate && hasPackage(candidate)
+            ? candidate
+            : (yield* model.available()).find((item) => hasPackage(item) && Model.supportsText(item))
+      }
+      const routeModel = catalog ?? fallback
+      const route = routeModel && ModelRoute.definition(routeModel) !== undefined ? routeModel : undefined
+      if (!route || (!selected && !fallback)) {
         const resolved = yield* resolveModel(selection.session)
         const history = yield* SessionHistory.entriesForRunner(
           db,
@@ -240,7 +255,10 @@ const layer = Layer.effect(
       const messages = history.entries.map((entry) => entry.message)
       const requestTokens = SessionCompaction.estimateHistoryRequest({
         agent: selection.agent,
-        model: { ref: effective ?? selected, capabilities: route.capabilities },
+        model: {
+          ref: effective ?? Model.Ref.make({ providerID: route.providerID, id: route.id }),
+          capabilities: route.capabilities,
+        },
         tools: selection.tools,
         initial: history.initial,
         messages,

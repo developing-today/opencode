@@ -155,8 +155,12 @@ describe("SessionRunnerModel requestTokens threading (#891)", () => {
     cost: [],
     limit: { context: 100, output: 20 },
   })
+  const resolveSeen: Array<number | undefined> = []
   const mockResolver = Layer.mock(ModelResolver.Service)({
-    resolve: () => Effect.succeed(undefined),
+    resolve: (_requested, requestTokens) => {
+      resolveSeen.push(requestTokens)
+      return Effect.succeed(stub)
+    },
     resolveModel: (_selected, _variant, _sessionID, requestTokens) => {
       seen.push(requestTokens)
       return Effect.succeed(stub)
@@ -175,6 +179,23 @@ describe("SessionRunnerModel requestTokens threading (#891)", () => {
       // The known size reaches route resolution, where per-target ceilings can skip
       // over-limit leaves; an unknown size stays undefined so it never filters.
       expect(seen).toEqual([123_456, undefined])
+    }),
+  )
+
+  itThreading.effect("passes the live request size to the default resolution when the session selects no model", () =>
+    Effect.gen(function* () {
+      const models = yield* SessionRunnerModel.Service
+      // A session with no explicit model delegates to ModelResolver.resolve (the global
+      // default); the size must follow it there too, or a default route's per-target
+      // ceilings never filter (#891).
+      const sized = yield* models.resolve(
+        // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
+        { id: SessionSchema.ID.make("ses_runner_model_test") } as unknown as SessionSchema.Info,
+        () => Effect.succeed([catalog]),
+        98_765,
+      )
+      expect(sized).toBe(stub)
+      expect(resolveSeen).toEqual([98_765])
     }),
   )
 })
