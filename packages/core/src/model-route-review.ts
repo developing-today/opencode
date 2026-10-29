@@ -15,6 +15,8 @@ export interface Configured {
   readonly hedgeAfterMs?: number
   readonly targets: readonly string[]
   readonly weights: Readonly<Record<string, number>>
+  /** Per-target context ceilings declared in config, keyed by bare `provider/model`. */
+  readonly limits: Readonly<Record<string, number>>
 }
 
 /** One request to one concrete target (`route_attempt`). */
@@ -67,8 +69,10 @@ export interface Member {
   readonly expectedShare: number | null
   /** The share of those draws it won. Compare with `expectedShare`. */
   readonly takeRate: number | null
-  /** Selections in which it was left out, by reason: cooldown, provider-limit, user-skip, soft-budget, already-tried. */
+  /** Selections in which it was left out, by reason: cooldown, provider-limit, user-skip, soft-budget, over-limit, already-tried. */
   readonly excluded: Readonly<Record<string, number>>
+  /** The per-target context ceiling the pool declares for this target, or null when it declares none. */
+  readonly configuredLimit: number | null
   /** Per-layer weight attribution from the most recent selection it was a candidate in, or null
    * when no recorded decision carries layers for it (decisions recorded before #589, or none). */
   readonly weightLayers: WeightLayers | null
@@ -122,6 +126,13 @@ export const configured = (route: ConfigModelRoutes.Route): Configured => ({
   ),
   weights: Object.fromEntries(
     Object.entries(route.weights ?? {}).map(([reference, weight]) => [bare(reference), weight]),
+  ),
+  limits: Object.fromEntries(
+    route.targets.flatMap((target): [string, number][] => {
+      if (typeof target === "string" || "providerID" in target) return []
+      const ceiling = target.limit?.context
+      return ceiling === undefined ? [] : [[bare(referenceOf(target.model)), ceiling]]
+    }),
   ),
 })
 
@@ -262,6 +273,7 @@ const memberOf = (
   return {
     target,
     configuredWeight: pool?.weights[target] ?? null,
+    configuredLimit: pool?.limits[target] ?? null,
     attempts: attempts.length,
     failures,
     timeouts: attempts.filter((row) => row.outcome === "timeout").length,

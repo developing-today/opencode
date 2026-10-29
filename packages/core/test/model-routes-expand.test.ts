@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Schema } from "effect"
 import {
   configuredWindows,
   expand,
@@ -9,7 +10,7 @@ import {
 import type { Entry } from "@opencode/schema/config"
 import { Model } from "@opencode/core/model"
 import { Provider } from "@opencode/core/provider"
-import type { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
+import { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
 
 const anthropic = Provider.ID.make("anthropic")
 const openai = Provider.ID.make("openai")
@@ -35,6 +36,7 @@ const route = (
         until?: number
         variants?: Record<string, string>
         cache_format?: string
+        limit?: { context: number }
         window?: string | { name: string; invert?: boolean }
       }
   )[],
@@ -467,6 +469,134 @@ describe("named windows", () => {
     expect(nodes[1].children).toEqual([{ leaf: 0 }])
     expect(nodes[2].children).toEqual([{ leaf: 1 }])
     expect(nodes[3].children).toEqual([{ leaf: 0 }])
+  })
+})
+
+describe("per-target context limits", () => {
+  const withLimit = (providerID: Provider.ID, id: string, context: number) =>
+    [
+      id,
+      {
+        ...Model.Info.default(providerID, Model.ID.make(id)),
+        limit: { context, output: 32_000 },
+      },
+    ] as const
+
+  const mixed = () =>
+    new Map<Provider.ID, ReadonlyMap<string, Model.Info>>([
+      [
+        anthropic,
+        new Map([
+          withLimit(anthropic, "opus", 200_000),
+          withLimit(anthropic, "sonnet", 200_000),
+          withLimit(anthropic, "haiku", 500_000),
+        ]),
+      ],
+      [openai, new Map([withLimit(openai, "gpt-6-luna", 200_000)])],
+    ])
+
+  test("a target-level limit survives schema parsing, and a non-positive ceiling is refused", () => {
+    const decode = Schema.decodeUnknownSync(ConfigModelRoutes.Target)
+    expect(decode({ model: "anthropic/claude-opus-4-1", limit: { context: 100_000 } })).toMatchObject({
+      limit: { context: 100_000 },
+    })
+    expect(decode("anthropic/claude-opus-4-1")).toMatchObject({
+      providerID: "anthropic",
+      model: "claude-opus-4-1",
+    })
+    for (const context of [0, -100]) {
+      expect(() => decode({ model: "anthropic/claude-opus-4-1", limit: { context } })).toThrow()
+    }
+  })
+
+  test("expand threads a per-target limit onto its leaf", () => {
+    const { leaves } = expand(
+      "r",
+      route([{ model: "anthropic/opus", limit: { context: 100_000 } }, "openai/gpt-6-luna"]),
+      mixed(),
+    )
+    expect(leaves.map((leaf) => leaf.contextLimit)).toEqual([100_000, undefined])
+  })
+
+  test("a flat mixed-ceiling pool carries per-element ceilings without a nested route", () => {
+    const { leaves } = expand(
+      "small",
+      route([
+        { model: "anthropic/opus", limit: { context: 100_000 } },
+        { model: "anthropic/sonnet", limit: { context: 100_000 } },
+        { model: "anthropic/haiku", limit: { context: 200_000 } },
+      ]),
+      mixed(),
+    )
+    expect(leaves.map((leaf) => `${leaf.ref.providerID}/${leaf.ref.id}`)).toEqual([
+      "anthropic/opus",
+      "anthropic/sonnet",
+      "anthropic/haiku",
+    ])
+    expect(leaves.map((leaf) => leaf.contextLimit)).toEqual([100_000, 100_000, 200_000])
+  })
+
+  test("a nested-route reference's own limit caps the leaves reached through it", () => {
+    const routes = new Map<string, ConfigModelRoutes.Route>([
+      [
+        "inner",
+        {
+          targets: [{ model: { providerID: "anthropic", model: "opus" } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+      [
+        "r",
+        {
+          targets: [
+            { model: { providerID: "opencode-route", model: "inner" }, limit: { context: 100_000 } },
+            { model: { providerID: "openai", model: "gpt-6-luna" } },
+          ],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+    ])
+    const { leaves } = expand("r", routes, mixed())
+    expect(leaves.map((leaf) => leaf.contextLimit)).toEqual([100_000, undefined])
+  })
+
+  test("a leaf reached through several references keeps the smallest ceiling", () => {
+    const both = (first: object, second: object) =>
+      new Map<string, ConfigModelRoutes.Route>([
+        ["a", { targets: [{ model: { providerID: "anthropic", model: "opus" } }] } as unknown as ConfigModelRoutes.Route],
+        ["b", { targets: [{ model: { providerID: "anthropic", model: "opus" } }] } as unknown as ConfigModelRoutes.Route],
+        [
+          "r",
+          {
+            targets: [
+              { model: { providerID: "opencode-route", model: "a" }, ...first },
+              { model: { providerID: "opencode-route", model: "b" }, ...second },
+            ],
+          } as unknown as ConfigModelRoutes.Route,
+        ],
+      ])
+    for (const routes of [both({ limit: { context: 100_000 } }, {}), both({}, { limit: { context: 100_000 } })]) {
+      const { leaves } = expand("r", routes, mixed())
+      expect(leaves).toHaveLength(1)
+      expect(leaves[0].contextLimit).toBe(100_000)
+    }
+  })
+
+  test("the tighter of the target's own limit and an inherited one wins", () => {
+    const routes = new Map<string, ConfigModelRoutes.Route>([
+      [
+        "inner",
+        {
+          targets: [{ model: { providerID: "anthropic", model: "opus" }, limit: { context: 150_000 } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+      [
+        "r",
+        {
+          targets: [{ model: { providerID: "opencode-route", model: "inner" }, limit: { context: 100_000 } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+    ])
+    const { leaves } = expand("r", routes, mixed())
+    expect(leaves.map((leaf) => leaf.contextLimit)).toEqual([100_000])
   })
 })
 

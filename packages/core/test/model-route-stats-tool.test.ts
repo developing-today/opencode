@@ -41,4 +41,23 @@ describe("route_stats configuration view", () => {
     )
     expect(report.routes).toEqual([])
   })
+
+  test("surfaces declared per-target ceilings in the per-pool view", async () => {
+    const mixed = Schema.decodeUnknownSync(ConfigModelRoutes.Route)({
+      selection: "ordered",
+      targets: [{ model: "anthropic/opus", limit: { context: 100_000 } }, "openai/gpt-6-luna"],
+    })
+    const report = await Effect.runPromise(
+      RouteStatsTool.collect({ hours: 24 }, { routes: new Map([["small", mixed]]), notes: [] }),
+    )
+    expect(report.routes).toHaveLength(1)
+    expect(report.routes[0]?.configured).toMatchObject({
+      targets: ["anthropic/opus", "openai/gpt-6-luna"],
+      limits: { "anthropic/opus": 100_000 },
+    })
+    expect(report.routes[0]?.members).toMatchObject([
+      { target: "anthropic/opus", configuredLimit: 100_000 },
+      { target: "openai/gpt-6-luna", configuredLimit: null },
+    ])
+  })
 })

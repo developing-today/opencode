@@ -800,3 +800,59 @@ describe("ModelRoute window gates", () => {
     expect(ModelRoute.orderTargets(route, ready, undefined, false)).toEqual([1])
   })
 })
+
+describe("ModelRoute per-target context limits", () => {
+  const limited = (targetLimits: ({ context?: number } | undefined)[], routeCap?: number) =>
+    ({
+      id: "r",
+      targets: targetLimits.map((_, index) => ModelRoute.ref({ providerID: "p", model: `m${index}` })),
+      targetVariants: [],
+      health: ModelRoute.policy(),
+      ...(routeCap !== undefined ? { limit: { context: routeCap } } : {}),
+      ...(targetLimits.some((item) => item !== undefined)
+        ? { targetLimits: targetLimits.map((item) => item ?? {}) }
+        : {}),
+      nodes: [
+        {
+          selection: "ordered" as const,
+          weights: targetLimits.map(() => 1),
+          children: targetLimits.map((_, index) => ({ leaf: index })),
+        },
+      ],
+    }) as unknown as ModelRoute.Definition
+
+  test("contextCeiling is the smaller of the route cap and the leaf ceiling", () => {
+    expect(ModelRoute.contextCeiling(limited([]), 0)).toBeUndefined()
+    expect(ModelRoute.contextCeiling(limited([undefined], 100_000), 0)).toBe(100_000)
+    expect(ModelRoute.contextCeiling(limited([{ context: 200_000 }]), 0)).toBe(200_000)
+    expect(ModelRoute.contextCeiling(limited([{ context: 200_000 }], 100_000), 0)).toBe(100_000)
+    expect(ModelRoute.contextCeiling(limited([{ context: 100_000 }], 200_000), 0)).toBe(100_000)
+  })
+
+  test("overLimit skips a request that fits neither ceiling, and never filters an unknown size", () => {
+    const both = limited([{ context: 200_000 }], 100_000)
+    expect(ModelRoute.overLimit(both, 0, undefined)).toBe(false)
+    expect(ModelRoute.overLimit(both, 0, 100_000)).toBe(false)
+    expect(ModelRoute.overLimit(both, 0, 100_001)).toBe(true)
+    // The route cap binds even though the leaf ceiling is larger.
+    expect(ModelRoute.overLimit(limited([{ context: 200_000 }], 100_000), 0, 150_000)).toBe(true)
+    // The leaf ceiling binds even though the route cap is larger.
+    expect(ModelRoute.overLimit(limited([{ context: 200_000 }], 300_000), 0, 250_000)).toBe(true)
+    expect(ModelRoute.overLimit(limited([{ context: 200_000 }], 300_000), 0, 150_000)).toBe(false)
+    // A leaf with no ceiling always fits, with or without a route cap elsewhere.
+    expect(ModelRoute.overLimit(limited([undefined], 100_000), 0, 90_000)).toBe(false)
+    expect(ModelRoute.overLimit(limited([undefined]), 0, 10_000_000)).toBe(false)
+  })
+
+  test("a definition with limits survives the settings round trip", () => {
+    const built = limited([{ context: 100_000 }, {}], 200_000)
+    const info = {
+      providerID: ModelRoute.PROVIDER_ID,
+      id: "r",
+      settings: { [ModelRoute.SETTING]: built },
+    } as unknown as Parameters<typeof ModelRoute.definition>[0]
+    const decoded = ModelRoute.definition(info)
+    expect(decoded?.limit).toEqual({ context: 200_000 })
+    expect(decoded?.targetLimits).toEqual([{ context: 100_000 }, {}])
+  })
+})

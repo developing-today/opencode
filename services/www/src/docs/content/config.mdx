@@ -487,7 +487,7 @@ and usage, and failures grouped by exact error code and HTTP status with the lat
 provider message. For each pool it also sets the configuration beside what happened:
 how often each member was offered and chosen, how often its new-session draws matched
 the share its weight promised, why it was left out (cooldown, provider limit, budget,
-user skip), and its request sizes. Pass `route` to narrow that to one pool. It
+user skip, context limit), and its request sizes. Pass `route` to narrow that to one pool. It
 suggests adjustments from that history (a high failure rate, repeated quota errors,
 unusually slow first output); with `apply` they are put in force for 30 minutes, only
 ever lowering a target's share or skipping it.

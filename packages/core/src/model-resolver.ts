@@ -160,8 +160,15 @@ export interface Resolved {
 
 export interface Interface {
   readonly resolve: (requested?: Ref) => Effect.Effect<Resolved | undefined, Error>
-  /** `sessionID` enables per-session target stickiness for routes with a non-ordered selection mode. */
-  readonly resolveModel: (model: Info, variant?: VariantID, sessionID?: string) => Effect.Effect<Resolved, Error>
+  /** `sessionID` enables per-session target stickiness for routes with a non-ordered selection mode.
+   * `requestTokens` is the request's context size in tokens, when known: a route target whose ceiling
+   * the request does not fit is skipped like any other ineligible target. */
+  readonly resolveModel: (
+    model: Info,
+    variant?: VariantID,
+    sessionID?: string,
+    requestTokens?: number,
+  ) => Effect.Effect<Resolved, Error>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ModelResolver") {}
@@ -458,6 +465,7 @@ export const layer = Layer.effect(
       tried: ReadonlySet<number>,
       allowCooling: boolean,
       sessionID?: string,
+      requestTokens?: number,
     ): Effect.Effect<Resolved | undefined, Error> =>
       Effect.gen(function* () {
         const now = Date.now()
@@ -476,6 +484,11 @@ export const layer = Layer.effect(
             const isSkipped =
               ModelRoute.userSkipped(target, now, scope) || (rules && ModelRoute.skipped(target, now, scope))
             const isOverBudget = rules && ModelRoute.overBudget(target, definition.budgets?.[index], now, scope)
+            // A target whose ceiling the request does not fit is skipped at every level, like a
+            // cooldown or a provider hold rather than a soft budget: the request cannot be served
+            // there. It is checked last so a target excluded for any existing reason keeps that
+            // reason, and only a limit-only exclusion is attributed to the limit.
+            const isOverLimit = ModelRoute.overLimit(definition, index, requestTokens)
             const limited = rules ? ModelRoute.limitedUntil(target, now) : 0
             // A burst hold steers new sessions away but leaves a session on the target it is already using.
             const kept = limited > now && ModelRoute.keepsThrough(definition.id, sessionID, target, now)
@@ -483,7 +496,8 @@ export const layer = Layer.effect(
             else if (limited > now && !kept) unavailable.set(index, `provider-limit-until:${limited}`)
             else if (isSkipped) unavailable.set(index, "user-skip")
             else if (isOverBudget) unavailable.set(index, "soft-budget")
-            return until <= now && (limited <= now || kept) && !isSkipped && !isOverBudget
+            else if (isOverLimit) unavailable.set(index, "over-limit")
+            return until <= now && (limited <= now || kept) && !isSkipped && !isOverBudget && !isOverLimit
           })
           // Budgets and skips are soft limits: if every remaining target is excluded, try the
           // configured tree as a last resort rather than refusing a turn.
@@ -554,6 +568,7 @@ export const layer = Layer.effect(
                     new Set(definition.targets.flatMap((_, position) => (position === homeIndex ? [] : [position]))),
                     false,
                     sessionID,
+                    requestTokens,
                   )
               : undefined
           return {
@@ -573,7 +588,8 @@ export const layer = Layer.effect(
               attempts: definition.attempts ?? 2,
               ...(definition.hedgeAfterMs ? { hedgeAfterMs: definition.hedgeAfterMs } : {}),
               autonomy: definition.autonomy,
-              fallback: () => resolveRoute(selected, definition, requestedVariant, triedTargets, false, sessionID),
+              fallback: () =>
+                resolveRoute(selected, definition, requestedVariant, triedTargets, false, sessionID, requestTokens),
               ...(origin ? { origin } : {}),
             },
           }
@@ -582,7 +598,7 @@ export const layer = Layer.effect(
         return undefined
       })
 
-    const resolveSelected = (selected: Info, variant?: VariantID, sessionID?: string) => {
+    const resolveSelected = (selected: Info, variant?: VariantID, sessionID?: string, requestTokens?: number) => {
       if (selected.providerID !== ModelRoute.PROVIDER_ID) return load(selected, variant)
       const definition = ModelRoute.definition(selected)
       if (!definition || definition.targets.length === 0)
@@ -596,7 +612,7 @@ export const layer = Layer.effect(
             variant: requestedVariant,
           }),
         )
-      return resolveRoute(selected, definition, requestedVariant, new Set(), true, sessionID).pipe(
+      return resolveRoute(selected, definition, requestedVariant, new Set(), true, sessionID, requestTokens).pipe(
         Effect.flatMap((resolved) =>
           resolved ? Effect.succeed(resolved) : Effect.fail(new RouteUnavailableError({ routeID: selected.id })),
         ),
@@ -645,7 +661,8 @@ export const layer = Layer.effect(
         if (!selected) return undefined
         return yield* resolveSelected(selected, target?.variant)
       }),
-      resolveModel: (selected, variant, sessionID) => resolveSelected(selected, variant, sessionID),
+      resolveModel: (selected, variant, sessionID, requestTokens) =>
+        resolveSelected(selected, variant, sessionID, requestTokens),
     })
   }),
 )
