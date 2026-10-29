@@ -103,7 +103,8 @@ const finish = (state: State, context: MediaProtocol.ResponseContext<Request>) =
   const headers = context.http.headers
   const mediaType = headers["content-type"]
   const format = audioFormat(context.request)
-  const headerless = HEADERLESS_ENCODINGS[format.encoding ?? ""]
+  const headerlessKey = format.encoding ?? ""
+  const headerless = Object.hasOwn(HEADERLESS_ENCODINGS, headerlessKey) ? HEADERLESS_ENCODINGS[headerlessKey] : undefined
   const container = format.container ?? (headerless === undefined ? undefined : "wav")
   const requestID = headers["dg-request-id"]
   const modelName = headers["dg-model-name"]
