@@ -161,8 +161,20 @@ export const Plugin = define({
         if (!current) continue
         const next = retargetDefinition(current, routes, models, windows)
         if (!next) continue
+        // The advertised variants were computed by the provider transform, before the
+        // transform-created targets existed, so a retargeted leaf that cannot produce a
+        // variant must take it back out here (#869): the resolver gates on the advertised
+        // set, and a variant it still advertises would let it run that leaf bare.
+        const variants = sameVariants(routeModel.variants, next.variants) ? undefined : next.variants
+        if (next.definition === undefined && variants === undefined) continue
         models.update(ModelRoute.PROVIDER_ID, routeModel.id, (draft) => {
-          draft.settings = { ...draft.settings, [ModelRoute.SETTING]: next }
+          if (next.definition !== undefined)
+            draft.settings = { ...draft.settings, [ModelRoute.SETTING]: next.definition }
+          if (variants !== undefined)
+            draft.variants = variants.map((variant) => ({
+              ...(draft.variants.find((item) => item.id === variant.id) ?? {}),
+              id: variant.id,
+            }))
         })
       }
     })
@@ -465,15 +477,31 @@ export function expand(
   return { leaves: result, nodes }
 }
 
+/** What a retarget produces: the replacement definition, and the variants the route can
+ * advertise once the retargeted leaves are known. `definition` is undefined when the
+ * expanded target set is unchanged; `variants` is always the set every retargeted leaf
+ * can produce, so a caller compares it against the advertised set itself (#869). */
+export type Retargeted = {
+  readonly definition: ModelRoute.Definition | undefined
+  readonly variants: readonly { readonly id: Model.VariantID }[]
+}
+
+const sameVariants = (
+  left: readonly { readonly id: Model.VariantID }[],
+  right: readonly { readonly id: Model.VariantID }[],
+) => left.length === right.length && left.every((variant, index) => variant.id === right[index]?.id)
+
 /** Re-expands one route's stored definition against the models that exist after model
  * transforms have run: the union of provider-definition ids and current model ids
  * (#236). Transform-created models are resolved from the editor's current state;
  * their ids are enumerated with `ids()` so no catalog model is drafted just to list
- * it. Returns the replacement definition, or undefined when the expanded target set
- * is unchanged (or still empty). A route the provider transform never built — one
- * whose targets were all transform-created — cannot be created here: model edits
- * cannot create a provider, so such a route still needs a definition-visible target
- * (a glob or a catalog sibling) to exist before it can be retargeted. */
+ * it. Returns the replacement definition (undefined when the expanded target set is
+ * unchanged) together with the variants the retargeted leaves can still produce, or
+ * undefined when the expansion is still empty. A route the provider transform never
+ * built — one whose targets were all transform-created — cannot be created here:
+ * model edits cannot create a provider, so such a route still needs a
+ * definition-visible target (a glob or a catalog sibling) to exist before it can be
+ * retargeted. */
 export function retargetDefinition(
   current: ModelRoute.Definition,
   routes: ReadonlyMap<string, ConfigModelRoutes.Route>,
@@ -488,7 +516,7 @@ export function retargetDefinition(
     }
   },
   windows: ReadonlyMap<string, ModelRouteSchedule.Window> = new Map(),
-): ModelRoute.Definition | undefined {
+): Retargeted | undefined {
   const definitions = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>(
     editor.provider.list().map((record) => [record.provider.id, record.models] as const),
   )
@@ -517,6 +545,9 @@ export function retargetDefinition(
   }
   const { leaves, nodes } = expand(String(current.id), routes, definitions, windows)
   if (leaves.length === 0) return undefined
+  // The variants the route can still advertise, decided over the retargeted leaves by the
+  // same rule the provider transform used over the catalog alone (#869).
+  const variants = routeVariants(leaves)
   const targets = leaves.map((leaf) => leaf.ref)
   const same =
     targets.length === current.targets.length &&
@@ -526,7 +557,7 @@ export function retargetDefinition(
         target.id === current.targets[index]?.id &&
         target.variant === current.targets[index]?.variant,
     )
-  if (same) return undefined
+  if (same) return { definition: undefined, variants }
   const targetCacheFormats = leaves.map((leaf) => (leaf.cacheFormat ? { cacheFormat: leaf.cacheFormat } : {}))
   const { targetCacheFormats: _stored, ...rest } = current
   const next: ModelRoute.Definition = {
@@ -540,7 +571,7 @@ export function retargetDefinition(
     nodes,
     ...(targetCacheFormats.some((item) => item.cacheFormat !== undefined) ? { targetCacheFormats } : {}),
   }
-  return next
+  return { definition: next, variants }
 }
 
 /** Settings are stored as JSON, which has no undefined: keep only the allowances actually set. */

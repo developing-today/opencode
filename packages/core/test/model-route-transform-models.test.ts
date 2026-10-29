@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { retargetDefinition, expand } from "@opencode/core/config/plugin/model-routes"
+import { retargetDefinition, expand, routeVariants } from "@opencode/core/config/plugin/model-routes"
 import { Model } from "@opencode/core/model"
 import { ModelRoute } from "@opencode/core/model-route"
 import { ModelRouteExpansion } from "@opencode/core/model-route-expansion"
@@ -63,19 +63,19 @@ describe("retargetDefinition (#236)", () => {
     // The provider transform could only place the catalog model.
     expect(before.targets.map((target) => String(target.id))).toEqual(["gpt-5-base"])
     const next = retargetDefinition(before, routeMap, editor)
-    expect(next?.targets.map((target) => `${target.providerID}/${target.id}`)).toEqual([
+    expect(next?.definition?.targets.map((target) => `${target.providerID}/${target.id}`)).toEqual([
       "azure/gpt-5-base",
       "azure/prod-mini",
     ])
     // Parallel arrays stay parallel with the new leaf.
-    expect(next?.targetVariants).toHaveLength(2)
-    expect(next?.budgets).toHaveLength(2)
+    expect(next?.definition?.targetVariants).toHaveLength(2)
+    expect(next?.definition?.budgets).toHaveLength(2)
   })
 
   test("a glob target enumerates transform-created model ids as well as definition ids", () => {
     const routeMap = routes(["azure/*"])
     const next = retargetDefinition(stored(routeMap), routeMap, editor)
-    expect(next?.targets.map((target) => String(target.id))).toEqual(["gpt-5-base", "prod-mini"])
+    expect(next?.definition?.targets.map((target) => String(target.id))).toEqual(["gpt-5-base", "prod-mini"])
   })
 
   test("a */* door-set target picks up transform-created models from every concrete door (#869)", () => {
@@ -116,16 +116,69 @@ describe("retargetDefinition (#236)", () => {
     const next = retargetDefinition(before, routeMap, awareEditor)
     // The transform-created azure/prod-mini joins the */* pool exactly as it does
     // for an explicitly enumerated azure/* target.
-    expect(next?.targets.map((target) => `${target.providerID}/${target.id}`)).toEqual([
+    expect(next?.definition?.targets.map((target) => `${target.providerID}/${target.id}`)).toEqual([
       "azure/gpt-5-base",
       "azure/prod-mini",
       "other/x",
     ])
   })
 
-  test("a route whose targets are unchanged is left alone", () => {
+  test("a route whose targets are unchanged keeps its stored definition", () => {
     const routeMap = routes(["azure/gpt-5-base"])
-    expect(retargetDefinition(stored(routeMap), routeMap, editor)).toBeUndefined()
+    // No replacement definition, so the caller leaves the stored targets alone; the
+    // advertised variants are still reported so a retarget can revise them (#869).
+    expect(retargetDefinition(stored(routeMap), routeMap, editor)?.definition).toBeUndefined()
+  })
+})
+
+describe("advertised variants after retargeting (#869)", () => {
+  const variantInfo = (id: string, variants: string[]) =>
+    Model.Info.make({
+      ...Model.Info.default(azure, Model.ID.make(id)),
+      variants: variants.map((variant) => ({ id: Model.VariantID.make(variant) })),
+    })
+
+  // The provider transform sees only the catalog model, so it advertises the variants that
+  // model offers; the deployment the model transform adds may offer none of them.
+  const advertised = (offered: string[], deploymentVariants: string[]) => {
+    const catalogModel = new Map<string, Model.Info>([["gpt-5-base", variantInfo("gpt-5-base", offered)]])
+    const deployment = new Map<string, Model.Info>([["prod-mini", variantInfo("prod-mini", deploymentVariants)]])
+    const doorEditor = {
+      provider: { list: () => [{ provider: Provider.Info.empty(azure), models: catalogModel }] },
+      ids: () => Array.from(deployment.keys()).map((id) => Model.ID.make(id)),
+      get: (_providerID: Provider.ID, modelID: Model.ID) => deployment.get(String(modelID)),
+    } as unknown as Parameters<typeof retargetDefinition>[2]
+    const routeMap = new Map<string, ConfigModelRoutes.Route>([
+      ["r", { targets: [{ providerID: "*", model: "*" }] } as unknown as ConfigModelRoutes.Route],
+    ])
+    const { leaves, nodes } = expand("r", routeMap, new Map([[azure, catalogModel]]))
+    const before = {
+      id: Model.ID.make("r"),
+      targets: leaves.map((leaf) => leaf.ref),
+      targetVariants: leaves.map(() => ({})),
+      health: ModelRoute.policy(),
+      budgets: leaves.map(() => ({})),
+      nodes,
+    } satisfies ModelRoute.Definition
+    return { before: routeVariants(leaves), next: retargetDefinition(before, routeMap, doorEditor) }
+  }
+
+  test("a variant the retargeted leaf cannot produce is dropped from the route", () => {
+    const { before, next } = advertised(["max", "high"], [])
+    // The provider transform advertised both: the deployment did not exist yet.
+    expect(before.map((variant) => String(variant.id))).toEqual(["max", "high"])
+    expect(next?.definition?.targets.map((target) => `${target.providerID}/${target.id}`)).toEqual([
+      "azure/gpt-5-base",
+      "azure/prod-mini",
+    ])
+    // Advertising #max would let the resolver run the deployment bare under it, and would
+    // let an exclusion naming that deployment stop binding. The route offers nothing now.
+    expect(next?.variants).toEqual([])
+  })
+
+  test("a variant every retargeted leaf can produce stays advertised", () => {
+    const { next } = advertised(["max", "high"], ["max"])
+    expect(next?.variants.map((variant) => String(variant.id))).toEqual(["max"])
   })
 })
 
