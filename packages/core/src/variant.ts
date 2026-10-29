@@ -27,7 +27,14 @@ type Overlay = Omit<Variants[number], "id">
 type Protocol = (model: Model.Info, support: Support) => Variants
 
 export function resolve(model: Model.Info, supports: readonly Support[] = [{ type: "effort" }]): Variants {
-  const protocol = model.package === undefined ? undefined : PROTOCOLS[model.package]
+  // Own-property read (#862): a package named "constructor"/"toString" must miss, not resolve
+  // through the prototype chain to an inherited value that would be called as a protocol factory.
+  const protocol =
+    model.package === undefined
+      ? undefined
+      : Object.hasOwn(PROTOCOLS, model.package)
+        ? PROTOCOLS[model.package]
+        : undefined
   if (!protocol) return []
   const toggle = supports.some((support) => support.type === "toggle") ? protocol(model, { type: "toggle" }) : []
   const effort = supports.find((support) => support.type === "effort")
