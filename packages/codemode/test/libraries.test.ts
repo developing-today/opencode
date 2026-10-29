@@ -30,6 +30,33 @@ describe("program-source libraries", () => {
     ])
   })
 
+  test("std.pick copies only own properties, never prototype-chain members", async () => {
+    // Prototype-named keys are not fabricated from Object.prototype.
+    for (const key of ["toString", "constructor", "hasOwnProperty", "valueOf", "__proto__"]) {
+      expect(await valueWithStd(`return std.pick({}, ["${key}"])`)).toEqual({})
+    }
+    // Inherited data properties are not copied.
+    expect(
+      await valueWithStd(
+        `const proto = { inherited: 1 }; const obj = Object.create(proto); obj.own = 2; return std.pick(obj, ["inherited", "own"])`,
+      ),
+    ).toEqual({ own: 2 })
+    // An own property literally named "constructor" is still copied.
+    expect(await valueWithStd(`return std.pick({ constructor: 42 }, ["constructor"])`)).toEqual({ constructor: 42 })
+    // An own "__proto__" data property is still picked as a key.
+    expect(
+      await valueWithStd(
+        `const obj = Object.create(null); obj["__proto__"] = 7; return Object.keys(std.pick(obj, ["__proto__"]))`,
+      ),
+    ).toEqual(["__proto__"])
+    // pick and omit agree on the key set of the same object.
+    expect(
+      await valueWithStd(
+        `const obj = { a: 1, b: 2, c: 3 }; return [Object.keys(std.pick(obj, ["a", "b"])).sort(), Object.keys(std.omit(obj, ["a", "b"])).sort()]`,
+      ),
+    ).toEqual([["a", "b"], ["c"]])
+  })
+
   test("freezes the library namespace and its global binding", async () => {
     expect(await valueWithStd(`return Object.isFrozen(std)`)).toBe(true)
     expect(await valueWithStd(`try { std.extra = 1; return "wrote" } catch { return "frozen" }`)).toBe("frozen")
