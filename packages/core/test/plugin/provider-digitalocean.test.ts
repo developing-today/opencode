@@ -216,6 +216,15 @@ describe("DigitalOceanPlugin", () => {
       expect(expiresInSeconds(spelling)).toBe(Number.NaN)
   })
 
+  test("clamps oversized expires_in to the shared 30-day bound (#899)", () => {
+    // A millisecond-scale lifetime (7200000) stored verbatim would fabricate
+    // an ~83-day expiry; it clamps to MAX_EXPIRES_IN_SECONDS (30 days).
+    expect(expiresInSeconds("7200000")).toBe(30 * 24 * 60 * 60)
+    expect(expiresInSeconds("2592000")).toBe(2592000)
+    expect(expiresInSeconds("2592001")).toBe(2592000)
+    expect(expiresInSeconds("3600")).toBe(3600)
+  })
+
   it.live("completes browser OAuth independently of router discovery and releases the listener", () =>
     Effect.gen(function* () {
       const fixture = yield* discovery

@@ -11,6 +11,7 @@
  * for the providers that never got the guard. Since #892 the xAI provider
  * uses it for its token/device lifetimes too (its local helper remains
  * only for the poll interval), and Poe clamps to the same bound.
+ * DigitalOcean's string-spelling parser clamps to it too (#899).
  */
 
 /**
