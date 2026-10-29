@@ -63,8 +63,8 @@ const layer = Layer.effect(
       let continuing = input.continuation !== undefined
       let step = input.continuation?.step ?? 1
       // A step that hit the output token limit with tools left to run ends and continues in the next step; the
-      // response's root and chunk index carry over until new input is promoted.
-      let stepContinuation: SessionStep.ContinuationLink | undefined
+      // response's root and chunk index carry over until new input is promoted, including across a Location handoff.
+      let stepContinuation: SessionStep.ContinuationLink | undefined = input.continuation?.link
       let entering = true
       const promotable = input.promotable ?? "input"
       if (!force && !continuing) {
@@ -83,7 +83,12 @@ const layer = Layer.effect(
             while (true) {
               if (lifecycle.isClosed()) {
                 yield* restore(modelTransport.close(sessionID))
-                return DrainResult.Reloaded({ force, continuation: continuing ? { step } : undefined })
+                return DrainResult.Reloaded({
+                  force,
+                  continuation: continuing
+                    ? { step, ...(stepContinuation ? { link: stepContinuation } : {}) }
+                    : undefined,
+                })
               }
               // Location entry and idle boundaries allow queued controls, not necessarily queued prompts.
               const pending = yield* SessionInbox.serialized(
@@ -117,7 +122,11 @@ const layer = Layer.effect(
                 step = 1
               }
               if (pending?.type === "move")
-                return DrainResult.Moved({ continuation: continuing ? { step } : undefined })
+                return DrainResult.Moved({
+                  continuation: continuing
+                    ? { step, ...(stepContinuation ? { link: stepContinuation } : {}) }
+                    : undefined,
+                })
               if (pending?.type === "compaction") {
                 const compacted = yield* restore(
                   Effect.gen(function* () {

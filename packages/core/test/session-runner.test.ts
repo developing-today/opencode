@@ -5839,6 +5839,51 @@ describe("SessionRunnerLLM", () => {
     expect(continuation?.row.continuation_index).toBe(1)
   })
 
+  scenario("keeps the continuation link when a move hands off before the continued step", function* (s) {
+    const recorded: ModelRouteLog.Event[] = []
+    ModelRouteLog.setSink((event) => recorded.push(event))
+    yield* Effect.addFinalizer(() => Effect.sync(() => ModelRouteLog.setSink(undefined)))
+    // The truncated step ends with the link and the next step continues the response, but a move delivered in
+    // between hands the drain off to a new Location first, so the link has to travel in the drain result.
+    yield* s.admit("Echo before moving")
+    yield* s.llm.push(
+      TestLLM.complete(
+        { reason: { normalized: "length" } },
+        LLMEvent.toolCall({ id: "call-move", name: "echo", input: { text: "moving" } }),
+        LLMEvent.textStart({ id: "partial" }),
+        LLMEvent.textDelta({ id: "partial", text: "Partial" }),
+        LLMEvent.textEnd({ id: "partial" }),
+      ),
+      TestLLM.text("Continued", "continued-after-move"),
+    )
+    const tools = yield* s.blockTools()
+    const run = yield* s.resume.pipe(Effect.forkChild)
+    yield* tools.started
+    yield* s.sessionInbox.admit({
+      id: SessionMessage.ID.create(),
+      sessionID,
+      item: {
+        type: "move",
+        payload: {
+          location: Location.Ref.make({ directory: AbsolutePath.make("/project") }),
+          projectID: Project.ID.global,
+        },
+        delivery: "steer",
+      },
+    })
+    yield* tools.release
+    yield* Fiber.join(run)
+
+    const attempts = recorded.flatMap((event) => (event.kind === "attempt" ? [event] : []))
+    expect(attempts).toHaveLength(2)
+    const [root, continuation] = attempts
+    const rootMessageID = root?.row.assistant_message_id ?? undefined
+    expect(root?.row.continuation_index).toBeUndefined()
+    expect(rootMessageID).toBeDefined()
+    expect(continuation?.continuationOfMessageID).toBe(rootMessageID)
+    expect(continuation?.row.continuation_index).toBe(1)
+  })
+
   for (const tools of ["hosted", "unfinished"] as const) {
     scenario(`caps output token limit continuations and resets for new input (${tools})`, function* (s) {
       const toolEvents =
