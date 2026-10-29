@@ -225,7 +225,7 @@ const credentialEntry = (target: Model.Ref, credentialID: string) => {
  * clears it, exactly like `cooldownUntil` for targets. */
 export const credentialCooldownUntil = (target: Model.Ref, credentialID: string, now = Date.now()) => {
   const state = credentialHealth.get(credentialKey(target, credentialID))
-  if (state) recover(target, state, now)
+  if (state) recover(target, state, now, credentialID)
   return state?.cooldownUntil ?? 0
 }
 
@@ -266,11 +266,18 @@ const logHealth = (
     row: { time: Date.now(), provider_id: target.providerID, model_id: target.id, kind, reason, until },
   })
 
-const recover = (target: Model.Ref, state: { samples: boolean[]; cooldownUntil: number }, now: number) => {
+const recover = (
+  target: Model.Ref,
+  state: { samples: boolean[]; cooldownUntil: number },
+  now: number,
+  credentialID?: string,
+) => {
   if (state.cooldownUntil === 0 || state.cooldownUntil > now) return
   state.cooldownUntil = 0
   state.samples = []
-  logHealth(target, "cooldown-end", "expired")
+  // Credential expirations are tagged so restart replay ends that credential's restored
+  // cooldown, never the target's (#870).
+  logHealth(target, "cooldown-end", credentialID ? `expired credential:${credentialID}` : "expired")
 }
 
 // A provider-wide fault looks different from a model-specific one. When several models of the same
@@ -537,7 +544,7 @@ export const completed = (
     const credentialState = credentialEntry(target, credentialID)
     credentialState.outcomes = pushOutcome(credentialState.outcomes, true)
     credentialState.consecutiveFailures = 0
-    recover(target, credentialState, now)
+    recover(target, credentialState, now, credentialID)
   }
   const state = entry(target)
   state.outcomes = pushOutcome(state.outcomes, true)
@@ -792,9 +799,20 @@ export const observeRateLimit = (
 }
 
 /** Drops a recorded rate-limit hold: a credential (or target) that just succeeded without
- * advertising any limit has replaced the provider's last word with a healthy response (#870). */
-export const clearRateLimit = (target: Model.Ref, credentialID?: string) => {
-  limits.delete(credentialID ? credentialKey(target, credentialID) : key(target))
+ * advertising any limit has replaced the provider's last word with a healthy response (#870).
+ * The release is persisted as a rate-limit-window row with no hold left, so restart replay
+ * applies it after the original window row instead of resurrecting the cleared hold. */
+export const clearRateLimit = (target: Model.Ref, credentialID?: string, now = Date.now()) => {
+  const id = credentialID ? credentialKey(target, credentialID) : key(target)
+  const existing = limits.get(id)
+  limits.delete(id)
+  if (existing && existing.until > now)
+    logHealth(
+      target,
+      "rate-limit-window",
+      credentialID ? `provider-released credential:${credentialID}` : "provider-released",
+      0,
+    )
 }
 
 /** Until when the provider's own numbers say to leave the target alone; 0 when they don't.
@@ -807,6 +825,30 @@ export const limitedUntil = (target: Model.Ref, now = Date.now(), credentialID?:
 /** The latest rate-limit snapshot seen for the target, if any. */
 export const rateLimitOf = (target: Model.Ref, credentialID?: string) =>
   limits.get(credentialID ? credentialKey(target, credentialID) : key(target))?.snapshot
+
+/** The longest rate-limit hold on a target across its target-level and per-credential entries,
+ * for diagnostics (route_stats) that report per target rather than per serving credential (#870). */
+export const limitedUntilAny = (target: Model.Ref, now = Date.now()) => {
+  const prefix = `${key(target)}#`
+  let until = 0
+  for (const [id, state] of limits) {
+    if (id !== key(target) && !id.startsWith(prefix)) continue
+    if (state.until > now) until = Math.max(until, state.until)
+  }
+  return until
+}
+
+/** The newest rate-limit snapshot recorded for a target under any key (its own, or one of its
+ * credentials'), for the same per-target diagnostics. */
+export const rateLimitOfAny = (target: Model.Ref) => {
+  const prefix = `${key(target)}#`
+  let snapshot: ModelRouteLimits.Snapshot | undefined
+  for (const [id, state] of limits) {
+    if (id !== key(target) && !id.startsWith(prefix)) continue
+    if (state.snapshot) snapshot = state.snapshot
+  }
+  return snapshot
+}
 
 /** Re-applies windows that were still holding targets back when the process last stopped, with the
  * snapshot that produced them, so a cold target still has the provider's last word. */

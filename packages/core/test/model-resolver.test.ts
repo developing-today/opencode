@@ -2065,6 +2065,55 @@ describe("ModelResolver routes", () => {
     )
   })
 
+  it.effect("credentialFallback does not add an account header to a catalog that never carried one (#870)", () => {
+    ModelRoute.resetHealth()
+    const a = leaf("pa")
+    const route = routed([a], { ...single })
+    let activeID = "cred-a"
+    const conn = (id: string) => ({
+      type: "credential" as const,
+      id: Credential.ID.make(id),
+      label: id,
+      method: "oauth" as const,
+    })
+    const integration = {
+      revision: () => 0,
+      get: (id: Integration.ID) => Effect.succeed({ id, connections: [conn("cred-a"), conn("cred-b")] }),
+      connection: {
+        active: () => Effect.succeed(conn(activeID)),
+        resolve: (connection: { id: Credential.ID }) =>
+          Effect.succeed(
+            Credential.OAuth.make({
+              type: "oauth",
+              methodID: Integration.MethodID.make("chatgpt-browser"),
+              access: `token-${String(connection.id)}`,
+              refresh: "refresh",
+              expires: Date.now() + 60_000,
+              metadata: { accountID: String(connection.id) === "cred-a" ? "acct-a" : "acct-b" },
+            }),
+          ),
+        activate: (id: Credential.ID) =>
+          Effect.sync(() => {
+            activeID = String(id)
+          }),
+      },
+    }
+    return withResolver(
+      [a],
+      (resolver) =>
+        Effect.gen(function* () {
+          const resolved = yield* resolver.resolveModel(route)
+          const switched = yield* resolved.routing!.credentialFallback!()
+          expect(String(switched?.routing?.credentialID)).toBe("cred-b")
+          // The leaf's catalog has no chatgpt-account-id (its credentials are key fixtures in
+          // other tests, but the header rule is provider-agnostic): the switch must not invent
+          // one from cred-b's accountID metadata.
+          expect(switched!.model.route.defaults.headers).not.toHaveProperty("chatgpt-account-id")
+        }),
+      integration,
+    )
+  })
+
   it.effect("credentialFallback excludes the serving credential, not one another session activated (#6)", () => {
     ModelRoute.resetHealth()
     const a = leaf("pa")

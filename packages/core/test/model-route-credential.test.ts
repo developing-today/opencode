@@ -128,11 +128,16 @@ describe("ModelRoute credential threading (#870)", () => {
     expect(ModelRoute.rateLimitOf(target, "cred-lab")?.remaining).toEqual({ requests: "0" })
     expect(ModelRoute.rateLimitOf(target, "cred-personal")).toBeUndefined()
 
+    // The per-target aggregate read (route_stats) still sees the credential's hold.
+    expect(ModelRoute.limitedUntilAny(target, 10_000)).toBe(55_000)
+    expect(ModelRoute.rateLimitOfAny(target)?.remaining).toEqual({ requests: "0" })
+
     // A success on the other credential clears only its own (absent) hold.
     ModelRoute.clearRateLimit(target, "cred-personal")
     expect(ModelRoute.limitedUntil(target, 10_000, "cred-lab")).toBe(55_000)
     ModelRoute.clearRateLimit(target, "cred-lab")
     expect(ModelRoute.limitedUntil(target, 10_000, "cred-lab")).toBe(0)
+    expect(ModelRoute.limitedUntilAny(target, 10_000)).toBe(0)
   })
 })
 

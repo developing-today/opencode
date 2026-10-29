@@ -433,8 +433,10 @@ export const make = Effect.gen(function* () {
             input.model.routing?.credentialID,
           )
         // A success that advertised no limit headers replaces the serving credential's hold:
-        // the provider's last word for that credential is now a healthy response (#870).
-        if (!failed && rateLimit.capture.snapshot === undefined)
+        // the provider's last word for that credential is now a healthy response (#870). Only
+        // a successful stream counts: an interrupted one never got the provider's answer, so
+        // it must not release a hold the provider may still be enforcing.
+        if (!failed && Exit.isSuccess(stream) && rateLimit.capture.snapshot === undefined)
           ModelRoute.clearRateLimit(input.model.ref, input.model.routing?.credentialID)
         const routeFailure =
           llmFailure !== undefined &&

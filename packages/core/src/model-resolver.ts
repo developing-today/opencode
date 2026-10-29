@@ -687,13 +687,19 @@ export const layer = Layer.effect(
                     .resolve(candidate)
                     .pipe(Effect.orElseSucceed(() => undefined))
                   const account = value?.metadata?.accountID
+                  const sourceEntries = Object.entries(source.headers ?? {})
+                  // Only a catalog that already carries the account header gets it rewritten:
+                  // other providers' credentials can also expose an accountID metadata value
+                  // (the OpenCode provider stores user.id there), and it must not leak into a
+                  // chatgpt-account-id header on a non-ChatGPT catalog (#870).
+                  const hadAccountHeader = sourceEntries.some(
+                    ([name]) => name.toLowerCase() === "chatgpt-account-id",
+                  )
                   const headers = Object.fromEntries(
-                    Object.entries(source.headers ?? {}).filter(
-                      ([name]) => name.toLowerCase() !== "chatgpt-account-id",
-                    ),
+                    sourceEntries.filter(([name]) => name.toLowerCase() !== "chatgpt-account-id"),
                   )
                   const refreshed =
-                    typeof account === "string"
+                    hadAccountHeader && typeof account === "string"
                       ? { ...source, headers: { ...headers, "chatgpt-account-id": account } }
                       : { ...source, headers }
                   const retried = yield* Effect.result(

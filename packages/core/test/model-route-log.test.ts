@@ -824,6 +824,30 @@ describe("credential cooldown restore (#870)", () => {
   )
 })
 
+describe("rate-limit hold release restore (#870)", () => {
+  it.live("a cleared hold stays cleared after a restart", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      ModelRoute.resetHealth()
+      const now = Date.now()
+      const target = ModelRoute.ref({ providerID: "limit-released", model: "m" })
+      const spent = { at: now, remaining: { requests: "0" }, reset: { requests: "45s" } }
+      ModelRoute.observeRateLimit(target, spent, now, "cred-a")
+      expect(ModelRoute.limitedUntil(target, now, "cred-a")).toBe(now + 45_000)
+      // The serving credential then succeeds without limit headers: the hold is released,
+      // and the release is persisted so replay does not resurrect the original window row.
+      ModelRoute.clearRateLimit(target, "cred-a")
+      expect(ModelRoute.limitedUntil(target, now, "cred-a")).toBe(0)
+      yield* Effect.sleep("100 millis")
+
+      ModelRoute.resetHealth()
+      yield* ModelRouteLog.restoreCooldownsFrom(db)
+      expect(ModelRoute.limitedUntil(target, Date.now(), "cred-a")).toBe(0)
+      expect(ModelRoute.limitedUntilAny(target, Date.now())).toBe(0)
+    }),
+  )
+})
+
 describe("rate-limit window restore", () => {
   it.live("holds targets back again after a restart while the provider's window is still open", () =>
     Effect.gen(function* () {
