@@ -6,7 +6,7 @@ import { EventManifest } from "@opencode/schema/event-manifest"
 import type { Event } from "@opencode/schema/event"
 import { ServerConfig } from "@opencode/schema/mcp"
 import { App } from "../app.js"
-import { Effect, Schema, Stream } from "effect"
+import { DateTime, Effect, Schema, Stream } from "effect"
 import { Agent } from "../agent.js"
 import { AISDK } from "../aisdk.js"
 import { Command } from "../command.js"
@@ -36,8 +36,22 @@ import { WorktreeStrategies } from "../worktree/strategies.js"
 import { Generate } from "../generate.js"
 import { Permission } from "../permission.js"
 import { PluginHooks } from "./hooks.js"
+import { PluginServerUrl } from "./server-url.js"
+import {
+  decodeSessionListCursor,
+  encodeSessionListCursor,
+  type DecodedSessionListCursor,
+  type SessionListFilter,
+  type SessionListInput,
+} from "./session-list.js"
 import type { Interface } from "../plugin.js"
 import { LayerNode } from "@opencode/util/effect/layer-node"
+
+/** Provider.Info plus its resolved models — the InfoWithModels HTTP/domain shape (#560). */
+const embedModels = (definition: Provider.Definition) => ({
+  ...definition.provider,
+  models: Array.from(definition.models.values()),
+})
 
 const mutable = <T>(value: T) => value as DeepMutable<T>
 type RpcEvent = Event.Payload & {
@@ -120,6 +134,9 @@ export const make = Effect.fn("PluginHost.make")(function* (
     app,
     location: locationInfo(),
     options: {},
+    get serverUrl() {
+      return PluginServerUrl.getServerUrl()
+    },
     rpc: Object.assign(rpc.client, { register: rpc.register }),
     agent: {
       get: (input) => {
@@ -191,17 +208,24 @@ export const make = Effect.fn("PluginHost.make")(function* (
       },
     },
     provider: {
-      list: () => response(providers.available()),
+      // The provider domain serves the InfoWithModels shape (#560), composed from the
+      // snapshot exactly as the HTTP handler does (handlers/provider.ts): get serves
+      // precisely the set list serves (#661).
+      list: () =>
+        response(
+          providers
+            .snapshot()
+            .pipe(Effect.map((snapshot) => snapshot.available.map((definition) => embedModels(definition)))),
+        ),
       get: (input) =>
-        providers
-          .get(Provider.ID.make(input.providerID))
-          .pipe(
-            Effect.flatMap((provider) =>
-              provider === undefined
-                ? Effect.fail(new Error(`Provider not found: ${input.providerID}`))
-                : response(Effect.succeed(provider)),
-            ),
-          ),
+        providers.snapshot().pipe(
+          Effect.flatMap((snapshot) => {
+            const definition = snapshot.available.find((item) => item.provider.id === input.providerID)
+            return definition === undefined
+              ? Effect.fail(new Error(`Provider not found: ${input.providerID}`))
+              : response(Effect.succeed(embedModels(definition)))
+          }),
+        ),
       reload: providers.reload,
       transform: (callback) =>
         providers.transform((editor) => {
@@ -236,6 +260,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
         models.transform((editor) =>
           callback({
             list: (providerID) => editor.list(providerID === undefined ? undefined : Provider.ID.make(providerID)),
+            ids: (providerID) => editor.ids(Provider.ID.make(providerID)),
             get: (providerID, modelID) => editor.get(Provider.ID.make(providerID), Model.ID.make(modelID)),
             update: (providerID, modelID, update) =>
               editor.update(Provider.ID.make(providerID), Model.ID.make(modelID), update),
@@ -577,6 +602,36 @@ export const make = Effect.fn("PluginHost.make")(function* (
     },
     session: {
       hook: (name, callback, options) => hooks.register("session", name, callback, options),
+      list: Effect.fn("PluginHost.session.list")(function* (input) {
+        const query: SessionListInput = input ?? {}
+        // A cursor replaces the request filters, matching the HTTP handler: it already embeds them.
+        const decoded = query.cursor === undefined ? undefined : yield* decodeSessionListCursor(query.cursor)
+        const filter = withoutAnchor(decoded ?? query)
+        const { data } = yield* sessions.list(sessionListInput(filter, query.limit, decoded?.anchor))
+        const first = data[0]
+        const last = data.at(-1)
+        return {
+          data,
+          cursor: {
+            previous:
+              first === undefined
+                ? undefined
+                : encodeSessionListCursor(filter, {
+                    id: first.id,
+                    time: DateTime.toEpochMillis(first.time.updated),
+                    direction: "previous",
+                  }),
+            next:
+              last === undefined
+                ? undefined
+                : encodeSessionListCursor(filter, {
+                    id: last.id,
+                    time: DateTime.toEpochMillis(last.time.updated),
+                    direction: "next",
+                  }),
+          },
+        }
+      }),
       create: (input) =>
         sessions.create({
           id: input?.id,
@@ -679,6 +734,27 @@ export function storage(kv: KV.Interface, pluginID: string): Plugin.Context["sto
           }),
         ),
   }
+}
+
+function sessionListInput(
+  filter: SessionListFilter,
+  limit: number | undefined,
+  anchor?: Session.ListAnchor,
+): Session.ListInput {
+  const { directory, project, subpath, ...rest } = filter
+  const bounded = limit
+  // The store applies every present scope condition; keep them all instead of picking one.
+  if (directory !== undefined && project !== undefined)
+    return { ...rest, directory, project, subpath, limit: bounded, anchor } as Session.ListInput
+  if (directory !== undefined) return { ...rest, directory, limit: bounded, anchor }
+  if (project !== undefined) return { ...rest, project, subpath, limit: bounded, anchor }
+  return { ...rest, limit: bounded, anchor }
+}
+
+function withoutAnchor(filter: SessionListFilter | DecodedSessionListCursor): SessionListFilter {
+  if (!("anchor" in filter)) return filter
+  const { anchor: _anchor, ...rest } = filter
+  return rest
 }
 
 function methodImplementation(input: IntegrationMethodRegistration): Integration.Implementation {

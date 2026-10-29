@@ -50,10 +50,16 @@ export type Outcome = Data.TaggedEnum<{
 }>
 export const Outcome = Data.taggedEnum<Outcome>()
 
+/** The attempt that started a response continued after an output token limit, and which chunk this request is. */
+export type ContinuationLink = { readonly of: SessionMessage.ID; readonly index: number }
+
 interface Input {
   readonly isLocationClosed: () => boolean
   readonly sessionID: SessionSchema.ID
   readonly assistantMessageID: SessionMessage.ID
+  /** Set when this request continues a response that hit the output token limit: the assistant message of the
+   * attempt that started the response, and this chunk's index (1 for the first continuation). */
+  readonly continuation?: ContinuationLink
   readonly agent: Agent.ID
   readonly model: SessionRunnerModel.Resolved
   /** Prompt-size estimate for budget accounting when a hedge is cancelled before provider usage arrives. */
@@ -123,13 +129,15 @@ export const captureRateLimit = (target: ModelRoute.Target) => {
   return { capture, options: seen.options }
 }
 
-/** Cooldown input from a provider error: a stated retry-after, or an exhausted quota. */
+/** Cooldown input from a provider error: a stated retry-after, an exhausted quota, or an
+ * authentication refusal (the `Authentication` tag, an HTTP 401/403, or the org-disabled
+ * refusal shape), which cannot heal by itself and so takes the long first bench. */
 export const failureHint = (failure: AIError): ModelRoute.FailureHint => {
   const reason = failure.reason as {
     _tag: string
     retryAfterMs?: number
     rateLimit?: { retryAfterMs?: number }
-    http?: unknown
+    http?: { status?: number }
     code?: string
     message?: string
     body?: string
@@ -140,6 +148,11 @@ export const failureHint = (failure: AIError): ModelRoute.FailureHint => {
       reason.rateLimit?.retryAfterMs ??
       ModelRouteLimits.retryHintFromMessage(reason.message ?? reason.body, Date.now()),
     quota: reason._tag === "QuotaExceeded",
+    auth:
+      reason._tag === "Authentication" ||
+      reason.http?.status === 401 ||
+      reason.http?.status === 403 ||
+      /organization has disabled/i.test(`${reason.message ?? ""} ${reason.body ?? ""}`),
     network:
       reason._tag === "Transport" &&
       reason.http === undefined &&
@@ -345,7 +358,9 @@ export const make = Effect.gen(function* () {
               retryable: false,
               output_started: false,
               response_ms: streamedAt - requestStarted,
+              continuation_index: input.continuation?.index,
             },
+            continuationOfMessageID: input.continuation?.of,
           })
           return Outcome.Compacted()
         }
@@ -417,7 +432,9 @@ export const make = Effect.gen(function* () {
               tokens_cache_read: tokens?.cache.read,
               tokens_cache_write: tokens?.cache.write,
               cost_usd: tokens ? SessionUsage.calculateCost(input.model.cost, tokens) : undefined,
+              continuation_index: input.continuation?.index,
             },
+            continuationOfMessageID: input.continuation?.of,
           })
         }
         if (
@@ -664,7 +681,9 @@ export const make = Effect.gen(function* () {
           response_ms: raced.loserElapsedMs,
           tokens_input: input.estimatedInputTokens,
           tokens_estimated: true,
+          continuation_index: input.continuation?.index,
         },
+        continuationOfMessageID: input.continuation?.of,
       })
     }
     const winner = raced.winner === "hedge" ? raced.value : undefined

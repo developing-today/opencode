@@ -15,11 +15,20 @@ const PositiveFinite = Schema.Finite.check(Schema.isGreaterThan(0))
 export const NOTE_LINE = /^[^:\r\n]*[^\s:][^:\r\n]*:[^\r\n]*\S[^\r\n]*$/
 
 /** An ordered model target: either `provider/model`, `provider/model#variant`, or an object with
- * per-target variant defaults and remaps. */
+ * per-target variant defaults and remaps. A target whose provider is `*` is a door-set target
+ * (#637): it runs its model on every door (provider) whose catalog lists the model, minus the
+ * doors named in the target's `exclude` list. */
 const TargetObject = Schema.Struct({
   model: ConfigModel.Selection.annotate({
-    description: "Provider/model reference. A route may reference another route.",
+    description:
+      "Provider/model reference. A route may reference another route. The provider may be `*` (a door-set target, #637): the model runs on every door that lists it, except the doors in `exclude`.",
   }),
+  exclude: Schema.Array(Schema.String)
+    .annotate({
+      description:
+        "Doors (provider ids) excluded from a door-set target (a target whose provider is `*`). Exclusions always win over the door set: an excluded door never contributes a leaf, even when its catalog lists the model. Providers removed by `disabled_providers` never reach expansion at all. Has no effect on a target that names a single provider.",
+    })
+    .pipe(optional),
   defaultVariant: Schema.String.annotate({
     description: "Variant used when the route is selected without an explicit variant.",
   }).pipe(optional),

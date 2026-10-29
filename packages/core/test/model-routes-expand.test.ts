@@ -9,6 +9,7 @@ import {
 } from "@opencode/core/config/plugin/model-routes"
 import type { Entry } from "@opencode/schema/config"
 import { Model } from "@opencode/core/model"
+import { ModelRoute } from "@opencode/core/model-route"
 import { Provider } from "@opencode/core/provider"
 import { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
 
@@ -659,5 +660,114 @@ describe("cache formats", () => {
   test("leaves carry no cache format when neither the route nor the target declares one", () => {
     const { leaves } = expand("r", route(["anthropic/claude-opus-4-1", "openai/gpt-6-luna"]), definitions)
     expect(leaves.every((leaf) => leaf.cacheFormat === undefined)).toBe(true)
+  })
+})
+
+describe("door-set targets (#637)", () => {
+  const cline = Provider.ID.make("cline-pass")
+  const go = Provider.ID.make("opencode-go")
+  const doors = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>([
+    [anthropic, models(["deepseek-v4-flash", "claude-sonnet-4-5"])],
+    [cline, models(["deepseek-v4-flash", "mimo-flash"])],
+    [go, models(["deepseek-v4-flash"])],
+    [ModelRoute.PROVIDER_ID, models(["deepseek-v4-flash"])],
+  ])
+  const doorRoute = (targets: unknown[]) =>
+    new Map<string, ConfigModelRoutes.Route>([["r", { targets } as unknown as ConfigModelRoutes.Route]])
+  const refs = (leaves: ReturnType<typeof expand>["leaves"]) =>
+    leaves.map((leaf) => `${leaf.ref.providerID}/${leaf.ref.id}`)
+
+  test("a door-set target runs its model on every door that lists it, in catalog order, and never on the routes provider", () => {
+    const { leaves } = expand("r", doorRoute([{ model: { providerID: "*", model: "deepseek-v4-flash" } }]), doors)
+    expect(refs(leaves)).toEqual([
+      "anthropic/deepseek-v4-flash",
+      "cline-pass/deepseek-v4-flash",
+      "opencode-go/deepseek-v4-flash",
+    ])
+  })
+
+  test("exclusions always win, even for a door that lists the model", () => {
+    const { leaves } = expand(
+      "r",
+      doorRoute([{ model: { providerID: "*", model: "deepseek-v4-flash" }, exclude: ["cline-pass"] }]),
+      doors,
+    )
+    expect(refs(leaves)).toEqual(["anthropic/deepseek-v4-flash", "opencode-go/deepseek-v4-flash"])
+  })
+
+  test("a door that does not list the model contributes nothing, and a model no door lists contributes nothing", () => {
+    expect(refs(expand("r", doorRoute([{ model: { providerID: "*", model: "claude-sonnet-4-5" } }]), doors).leaves)).toEqual([
+      "anthropic/claude-sonnet-4-5",
+    ])
+    expect(expand("r", doorRoute([{ model: { providerID: "*", model: "no-such-model" } }]), doors).leaves).toEqual([])
+  })
+
+  test("a glob model pattern expands over the door set", () => {
+    const { leaves } = expand(
+      "r",
+      doorRoute([{ model: { providerID: "*", model: "deepseek-*" }, exclude: ["opencode-go"] }]),
+      doors,
+    )
+    expect(refs(leaves)).toEqual(["anthropic/deepseek-v4-flash", "cline-pass/deepseek-v4-flash"])
+  })
+
+  test("a disabled catalog model is skipped on its door", () => {
+    const withDisabled = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>([
+      [anthropic, models(["deepseek-v4-flash"])],
+      [
+        go,
+        new Map([
+          [
+            "deepseek-v4-flash",
+            { ...Model.Info.default(go, Model.ID.make("deepseek-v4-flash")), enabled: false },
+          ] as const,
+        ]),
+      ],
+    ])
+    const { leaves } = expand("r", doorRoute([{ model: { providerID: "*", model: "deepseek-v4-flash" } }]), withDisabled)
+    expect(refs(leaves)).toEqual(["anthropic/deepseek-v4-flash"])
+  })
+
+  test("an enumerated target reached again by a door set appears once", () => {
+    const { leaves } = expand(
+      "r",
+      doorRoute([
+        { model: { providerID: "anthropic", model: "deepseek-v4-flash" } },
+        { model: { providerID: "*", model: "deepseek-v4-flash" } },
+      ]),
+      doors,
+    )
+    expect(refs(leaves)).toEqual([
+      "anthropic/deepseek-v4-flash",
+      "cline-pass/deepseek-v4-flash",
+      "opencode-go/deepseek-v4-flash",
+    ])
+  })
+
+  test("a door-set target composes with variant remaps: a leaf that cannot produce the remapped variant is pruned", () => {
+    const withVariants = (providerID: Provider.ID, variants: string[]) =>
+      new Map([
+        [
+          "deepseek-v4-flash",
+          {
+            ...Model.Info.default(providerID, Model.ID.make("deepseek-v4-flash")),
+            variants: variants.map((variant) => ({ id: Model.VariantID.make(variant) })),
+          },
+        ] as const,
+      ])
+    const variantDoors = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>([
+      [anthropic, withVariants(anthropic, ["high"])],
+      [cline, withVariants(cline, [])],
+    ])
+    const { leaves } = expand(
+      "r",
+      doorRoute([
+        { model: { providerID: "*", model: "deepseek-v4-flash", variant: "low" }, variants: { low: "high" } },
+      ]),
+      variantDoors,
+    )
+    expect(leaves.map((leaf) => `${leaf.ref.providerID}/${leaf.ref.id}#${leaf.ref.variant}`)).toEqual([
+      "anthropic/deepseek-v4-flash#high",
+    ])
   })
 })

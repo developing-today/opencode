@@ -171,6 +171,28 @@ export const Plugin = define({
         models,
       })
     })
+
+    // Pools are built by the provider transform above, which runs before any model
+    // transform, so its targets resolve against provider definitions only. Models a
+    // model transform creates (Azure deployments are the named case, #236) do not
+    // exist yet at that point and can never be placed. This plugin registers in the
+    // post group, after every provider plugin, so a model transform registered here
+    // runs after those creators: re-expand each route against definition ids union
+    // current model ids and rewrite the stored targets in place.
+    yield* ctx.model.transform((models) => {
+      const routes = configuredRoutes(loaded.entries)
+      if (routes.size === 0) return
+      const windows = configuredWindows(loaded.entries)
+      for (const routeModel of models.list(ModelRoute.PROVIDER_ID)) {
+        const current = ModelRoute.definition(routeModel)
+        if (!current) continue
+        const next = retargetDefinition(current, routes, models, windows)
+        if (!next) continue
+        models.update(ModelRoute.PROVIDER_ID, routeModel.id, (draft) => {
+          draft.settings = { ...draft.settings, [ModelRoute.SETTING]: next }
+        })
+      }
+    })
   }),
 })
 
@@ -391,7 +413,19 @@ export function expand(
         }
         continue
       }
-      for (const [id, model] of ModelRouteExpansion.matchingModels(ref.id, definitions.get(ref.providerID))) {
+      // A door-set target (`*/model`, #637) runs its model on every door whose catalog lists
+      // it, minus the target's exclusions; any other target names exactly one provider. The
+      // per-leaf logic below is identical either way, with the leaf's own provider.
+      const doors: ReadonlyArray<readonly [Provider.ID, ReadonlyMap<string, Model.Info> | undefined]> =
+        ref.providerID === "*"
+          ? ModelRouteExpansion.matchingProviders(
+              definitions,
+              "exclude" in spec ? (spec.exclude ?? []) : [],
+              ModelRoute.PROVIDER_ID,
+            )
+          : [[ref.providerID, definitions.get(ref.providerID)]]
+      for (const [door, doorModels] of doors) {
+        for (const [id, model] of ModelRouteExpansion.matchingModels(ref.id, doorModels)) {
         if (!model.enabled) continue
         const requested = ref.variant ?? inheritedVariant
         // A pinned variant is producible natively or through the target's remap table, matching
@@ -408,7 +442,7 @@ export function expand(
                 : undefined
         if (requested && !variant) continue
         const resolved = Model.Ref.make({
-          providerID: ref.providerID,
+          providerID: door,
           id: Model.ID.make(id),
           ...(variant ? { variant } : {}),
         })
@@ -473,6 +507,7 @@ export function expand(
           ...(cacheFormat ? { cacheFormat } : {}),
           ...(ceiling !== undefined ? { contextLimit: ceiling } : {}),
         })
+        }
       }
     }
     return node.children.length > 0 ? nodeIndex : undefined
@@ -480,6 +515,76 @@ export function expand(
 
   visit(id, undefined, new Set(), undefined, undefined)
   return { leaves: result, nodes }
+}
+
+/** Re-expands one route's stored definition against the models that exist after model
+ * transforms have run: the union of provider-definition ids and current model ids
+ * (#236). Transform-created models are resolved from the editor's current state;
+ * their ids are enumerated with `ids()` so no catalog model is drafted just to list
+ * it. Returns the replacement definition, or undefined when the expanded target set
+ * is unchanged (or still empty). A route the provider transform never built — one
+ * whose targets were all transform-created — cannot be created here: model edits
+ * cannot create a provider, so such a route still needs a definition-visible target
+ * (a glob or a catalog sibling) to exist before it can be retargeted. */
+export function retargetDefinition(
+  current: ModelRoute.Definition,
+  routes: ReadonlyMap<string, ConfigModelRoutes.Route>,
+  editor: {
+    readonly ids: (providerID: Provider.ID) => readonly string[]
+    readonly get: (providerID: Provider.ID, modelID: Model.ID) => Model.Info | undefined
+    readonly provider: {
+      readonly list: () => readonly {
+        readonly provider: { readonly id: Provider.ID }
+        readonly models: ReadonlyMap<string, Model.Info>
+      }[]
+    }
+  },
+  windows: ReadonlyMap<string, ModelRouteSchedule.Window> = new Map(),
+): ModelRoute.Definition | undefined {
+  const definitions = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>(
+    editor.provider.list().map((record) => [record.provider.id, record.models] as const),
+  )
+  const targeted = new Set<Provider.ID>()
+  for (const route of routes.values()) {
+    for (const target of route.targets) {
+      const ref = targetRef(targetSpec(target).model)
+      if (ref.providerID !== ModelRoute.PROVIDER_ID) targeted.add(ref.providerID)
+    }
+  }
+  for (const providerID of targeted) {
+    const merged = new Map<string, Model.Info>(definitions.get(providerID) ?? [])
+    for (const id of editor.ids(providerID)) {
+      const model = editor.get(providerID, Model.ID.make(id))
+      if (model) merged.set(String(id), model)
+    }
+    definitions.set(providerID, merged)
+  }
+  const { leaves, nodes } = expand(String(current.id), routes, definitions, windows)
+  if (leaves.length === 0) return undefined
+  const targets = leaves.map((leaf) => leaf.ref)
+  const same =
+    targets.length === current.targets.length &&
+    targets.every(
+      (target, index) =>
+        target.providerID === current.targets[index]?.providerID &&
+        target.id === current.targets[index]?.id &&
+        target.variant === current.targets[index]?.variant,
+    )
+  if (same) return undefined
+  const targetCacheFormats = leaves.map((leaf) => (leaf.cacheFormat ? { cacheFormat: leaf.cacheFormat } : {}))
+  const { targetCacheFormats: _stored, ...rest } = current
+  const next: ModelRoute.Definition = {
+    ...rest,
+    targets,
+    targetVariants: leaves.map((leaf) => ({
+      ...(leaf.defaultVariant ? { default: leaf.defaultVariant } : {}),
+      ...(leaf.variantMap ? { map: leaf.variantMap } : {}),
+    })),
+    budgets: leaves.map((leaf) => leaf.budget ?? {}),
+    nodes,
+    ...(targetCacheFormats.some((item) => item.cacheFormat !== undefined) ? { targetCacheFormats } : {}),
+  }
+  return next
 }
 
 /** Settings are stored as JSON, which has no undefined: keep only the allowances actually set. */

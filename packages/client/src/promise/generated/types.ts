@@ -370,18 +370,6 @@ export type ConfigModelReasoning =
   | { supported: false }
   | { supported: true; toggle?: boolean; effort?: Array<string>; budget?: { min?: number; max?: number } }
 
-export type ConfigModelRouteTarget =
-  | string
-  | { providerID: string; model: string; variant?: string }
-  | {
-      model: string | { providerID: string; model: string; variant?: string }
-      defaultVariant?: string
-      variants?: { [x: string]: string }
-      until?: number
-      limit?: { context: number }
-      window?: string | { name: string; invert?: boolean }
-    }
-
 export type ConfigModelRouteWindows = {
   [x: string]: {
     daysOfWeek?: Array<
@@ -763,6 +751,20 @@ export type ProviderCompatibility = {
   cacheFormat?: ModelCacheFormat
 }
 
+export type ConfigModelRouteTarget =
+  | string
+  | { providerID: string; model: string; variant?: string }
+  | {
+      model: string | { providerID: string; model: string; variant?: string }
+      exclude?: Array<string>
+      defaultVariant?: string
+      variants?: { [x: string]: string }
+      until?: number
+      limit?: { context: number }
+      cache_format?: ModelCacheFormat
+      window?: string | { name: string; invert?: boolean }
+    }
+
 export type ModelCost = {
   tier?: { type: "context"; size: number }
   input: MoneyUSDPerMillionTokens
@@ -1023,74 +1025,6 @@ export type ConfigModelCapabilities = {
   output?: Array<string>
   temperature?: boolean
   reasoning?: ConfigModelReasoning
-}
-
-export type ConfigModelRoutes = {
-  [x: string]: {
-    name?: string
-    targets: Array<ConfigModelRouteTarget>
-    health?: {
-      firstTokenTimeoutMs?: number | false
-      maxResponseTimeMs?: number
-      minOutputTokensPerSecond?: number
-      sampleWindow?: number
-      slowThreshold?: number
-      cooldownMs?: number
-      quotaCooldownMs?: number
-    }
-    budgets?: {
-      [x: string]: {
-        requestsPerMinute?: number
-        requestsPerDay?: number
-        tokensPerMinute?: number
-        tokensPerDay?: number
-        softLimit?: number
-      }
-    }
-    hedgeAfterMs?: number
-    attempts?: number
-    autonomy?: "fixed" | "rules" | "adaptive" | "predictive" | "agent"
-    selection?: "ordered" | "round-robin" | "weighted"
-    weights?: { [x: string]: number }
-    schedules?: Array<{
-      id?: string
-      targets?: Array<string>
-      when:
-        | {
-            daysOfWeek?: Array<
-              | "sun"
-              | "sunday"
-              | "mon"
-              | "monday"
-              | "tue"
-              | "tuesday"
-              | "tues"
-              | "wed"
-              | "wednesday"
-              | "thu"
-              | "thursday"
-              | "thur"
-              | "thurs"
-              | "fri"
-              | "friday"
-              | "sat"
-              | "saturday"
-              | number
-            >
-            daysOfMonth?: Array<-1 | number>
-            start?: string
-            end?: string
-            timezone?: string
-            from?: number
-            until?: number
-          }
-        | string
-      factor?: number
-      weight?: number
-      note?: string
-    }>
-    limit?: { context: number }
-  }
 }
 
 export type SessionMessageLocationSwitched = {
@@ -1806,6 +1740,15 @@ export type FilesystemChanged = {
   data: { file: string; event: "add" | "change" | "unlink" }
 }
 
+export type FilesystemWatcherDegraded = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "filesystem.watcher-degraded"
+  location?: LocationRef
+  data: { directory: string; cause: "timeout" | "inotify-limit" | "unsupported" | "error" }
+}
+
 export type ReferenceUpdated = {
   id: EventID
   created: number
@@ -2200,18 +2143,73 @@ export type CredentialKey = {
   configuration?: FormAnswer
 }
 
-export type ProviderInfo = {
-  id: ProviderID
-  canonical?: ProviderID
-  integrationID?: IntegrationID
-  instanceOf?: ProviderID
-  name: string
-  activation: "auto" | "enabled" | "disabled"
-  package: string
-  compatibility?: ProviderCompatibility
-  settings?: ProviderSettings
-  headers?: { [x: string]: string }
-  body?: { [x: string]: any }
+export type ConfigModelRoutes = {
+  [x: string]: {
+    name?: string
+    targets: Array<ConfigModelRouteTarget>
+    cache_format?: ModelCacheFormat
+    health?: {
+      firstTokenTimeoutMs?: number | false
+      maxResponseTimeMs?: number
+      minOutputTokensPerSecond?: number
+      sampleWindow?: number
+      slowThreshold?: number
+      cooldownMs?: number
+      quotaCooldownMs?: number
+    }
+    budgets?: {
+      [x: string]: {
+        requestsPerMinute?: number
+        requestsPerDay?: number
+        tokensPerMinute?: number
+        tokensPerDay?: number
+        softLimit?: number
+      }
+    }
+    hedgeAfterMs?: number
+    attempts?: number
+    autonomy?: "fixed" | "rules" | "adaptive" | "predictive" | "agent"
+    selection?: "ordered" | "round-robin" | "weighted"
+    weights?: { [x: string]: number }
+    schedules?: Array<{
+      id?: string
+      targets?: Array<string>
+      when:
+        | {
+            daysOfWeek?: Array<
+              | "sun"
+              | "sunday"
+              | "mon"
+              | "monday"
+              | "tue"
+              | "tuesday"
+              | "tues"
+              | "wed"
+              | "wednesday"
+              | "thu"
+              | "thursday"
+              | "thur"
+              | "thurs"
+              | "fri"
+              | "friday"
+              | "sat"
+              | "saturday"
+              | number
+            >
+            daysOfMonth?: Array<-1 | number>
+            start?: string
+            end?: string
+            timezone?: string
+            from?: number
+            until?: number
+          }
+        | string
+      factor?: number
+      weight?: number
+      note?: string
+    }>
+    limit?: { context: number }
+  }
 }
 
 export type ConnectionInfo = ConnectionCredentialInfo | ConnectionEnvInfo
@@ -2457,6 +2455,55 @@ export type SessionPermissions = {
   location?: LocationRef
   data: { sessionID: SessionID; permissions: PermissionRuleset }
 }
+
+export type SessionInboxUser = {
+  id: SessionMessageID
+  sessionID: SessionID
+  time: { created: number }
+  type: "user"
+  payload: SessionInboxUserPayload
+  delivery: SessionInboxDelivery
+}
+
+export type SessionMessageAssistantTool = {
+  type: "tool"
+  id: string
+  name: string
+  executed?: boolean
+  providerState?: SessionMessageProviderState
+  providerResultState?: SessionMessageProviderState
+  state:
+    | SessionMessageToolStateStreaming
+    | SessionMessageToolStateRunning
+    | SessionMessageToolStateCompleted
+    | SessionMessageToolStateError
+  time: { created: number; ran?: number; completed?: number }
+}
+
+export type SessionInboxItem =
+  | { type: "user"; payload: SessionInboxUserPayload1; delivery: SessionInboxDelivery }
+  | { type: "synthetic"; payload: SessionInboxSyntheticPayload1; delivery: SessionInboxDelivery }
+  | { type: "compaction"; payload: SessionInboxCompactionPayload; delivery: SessionInboxDelivery }
+  | { type: "move"; payload: SessionInboxMovePayload1; delivery: SessionInboxDelivery }
+
+export type SessionMessageAssistantTool1 = {
+  type: "tool"
+  id: string
+  name: string
+  executed?: boolean
+  providerState?: SessionMessageProviderState1
+  providerResultState?: SessionMessageProviderState1
+  state:
+    | SessionMessageToolStateStreaming
+    | SessionMessageToolStateRunning1
+    | SessionMessageToolStateCompleted1
+    | SessionMessageToolStateError1
+  time: { created: number; ran?: number; completed?: number }
+}
+
+export type FormFields = [FormField, ...Array<FormField>]
+
+export type CredentialValue = CredentialOAuth | CredentialKey | CredentialExternal
 
 export type ConfigEntry =
   | {
@@ -2729,55 +2776,6 @@ export type ConfigEntry =
     }
   | { type: "directory"; path: AbsolutePath }
 
-export type SessionInboxUser = {
-  id: SessionMessageID
-  sessionID: SessionID
-  time: { created: number }
-  type: "user"
-  payload: SessionInboxUserPayload
-  delivery: SessionInboxDelivery
-}
-
-export type SessionMessageAssistantTool = {
-  type: "tool"
-  id: string
-  name: string
-  executed?: boolean
-  providerState?: SessionMessageProviderState
-  providerResultState?: SessionMessageProviderState
-  state:
-    | SessionMessageToolStateStreaming
-    | SessionMessageToolStateRunning
-    | SessionMessageToolStateCompleted
-    | SessionMessageToolStateError
-  time: { created: number; ran?: number; completed?: number }
-}
-
-export type SessionInboxItem =
-  | { type: "user"; payload: SessionInboxUserPayload1; delivery: SessionInboxDelivery }
-  | { type: "synthetic"; payload: SessionInboxSyntheticPayload1; delivery: SessionInboxDelivery }
-  | { type: "compaction"; payload: SessionInboxCompactionPayload; delivery: SessionInboxDelivery }
-  | { type: "move"; payload: SessionInboxMovePayload1; delivery: SessionInboxDelivery }
-
-export type SessionMessageAssistantTool1 = {
-  type: "tool"
-  id: string
-  name: string
-  executed?: boolean
-  providerState?: SessionMessageProviderState1
-  providerResultState?: SessionMessageProviderState1
-  state:
-    | SessionMessageToolStateStreaming
-    | SessionMessageToolStateRunning1
-    | SessionMessageToolStateCompleted1
-    | SessionMessageToolStateError1
-  time: { created: number; ran?: number; completed?: number }
-}
-
-export type FormFields = [FormField, ...Array<FormField>]
-
-export type CredentialValue = CredentialOAuth | CredentialKey | CredentialExternal
-
 export type FormFields2 = [FormField1, ...Array<FormField1>]
 
 export type MessagingTopicList = { topics: Array<MessagingTopic>; total: number }
@@ -2844,6 +2842,21 @@ export type SessionMessageCompaction =
   | SessionMessageCompactionRunning
   | SessionMessageCompactionCompleted
   | SessionMessageCompactionFailed
+
+export type ProviderInfoWithModels = {
+  id: ProviderID
+  canonical?: ProviderID
+  integrationID?: IntegrationID
+  instanceOf?: ProviderID
+  name: string
+  activation: "auto" | "enabled" | "disabled"
+  package: string
+  compatibility?: ProviderCompatibility
+  settings?: ProviderSettings
+  headers?: { [x: string]: string }
+  body?: { [x: string]: any }
+  models: Array<ModelInfo>
+}
 
 export type SessionInboxInfo = SessionInboxUser | SessionInboxSynthetic | SessionInboxCompaction | SessionInboxMove
 
@@ -3074,6 +3087,7 @@ export type V2Event =
   | SessionRevertCleared
   | SessionRevertCommitted
   | FilesystemChanged
+  | FilesystemWatcherDegraded
   | ReferenceUpdated
   | PermissionAsked
   | PermissionReplied
@@ -5493,8 +5507,8 @@ export type SessionLogOutput = SessionLogItem
 
 export type SessionInterruptInput = {
   readonly sessionID: { readonly sessionID: string }["sessionID"]
-  readonly resume?: { readonly resume?: boolean | undefined }["resume"]
-  readonly force?: { readonly force?: boolean | undefined }["force"]
+  readonly resume?: { readonly resume?: boolean | undefined; readonly force?: boolean | undefined }["resume"]
+  readonly force?: { readonly resume?: boolean | undefined; readonly force?: boolean | undefined }["force"]
 }
 
 export type SessionInterruptOutput = SessionInterruptResponse
@@ -6506,14 +6520,14 @@ export type ProviderListInput = {
   readonly location?: { readonly location?: { readonly directory?: string | undefined } | undefined }["location"]
 }
 
-export type ProviderListOutput = { location: LocationPublicRef; data: Array<ProviderInfo> }
+export type ProviderListOutput = { location: LocationPublicRef; data: Array<ProviderInfoWithModels> }
 
 export type ProviderGetInput = {
   readonly providerID: { readonly providerID: string }["providerID"]
   readonly location?: { readonly location?: { readonly directory?: string | undefined } | undefined }["location"]
 }
 
-export type ProviderGetOutput = { location: LocationPublicRef; data: ProviderInfo }
+export type ProviderGetOutput = { location: LocationPublicRef; data: ProviderInfoWithModels }
 
 export type IntegrationListInput = {
   readonly location?: { readonly location?: { readonly directory?: string | undefined } | undefined }["location"]
