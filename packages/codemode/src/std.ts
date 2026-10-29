@@ -99,8 +99,21 @@ function bind(target, defaults) {
   }
   if (typeof target === "function") {
     const bound = (input) => target(mergeInput(defaults, input));
-    for (const key of Object.keys(target)) bound[key] = bind(target[key], defaults);
-    return bound;
+    let collision = false;
+    for (const key of Object.keys(target)) {
+      try {
+        bound[key] = bind(target[key], defaults);
+      } catch {
+        // A child named "name" or "length" cannot be assigned over a
+        // function's read-only metadata; fall back to the namespace form.
+        collision = true;
+        break;
+      }
+    }
+    if (!collision) return bound;
+    const out = {};
+    for (const key of Object.keys(target)) out[key] = bind(target[key], defaults);
+    return out;
   }
   const out = {};
   for (const key of Object.keys(target)) {

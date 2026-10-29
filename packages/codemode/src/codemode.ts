@@ -155,10 +155,22 @@ export const execute = <const Provided extends Record<string, unknown>>(
 
 const libraryNamePattern = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
+// Words a program cannot bind or reference as an identifier, including
+// "this" (whose global binding a library would silently overwrite).
+const reservedLibraryNames: ReadonlySet<string> = new Set([
+  "await", "break", "case", "catch", "class", "const", "continue", "debugger",
+  "default", "delete", "do", "else", "enum", "export", "extends", "false",
+  "finally", "for", "function", "if", "import", "in", "instanceof", "new",
+  "null", "return", "super", "switch", "this", "throw", "true", "try",
+  "typeof", "var", "void", "while", "with", "yield", "let", "static",
+  "implements", "interface", "package", "private", "protected", "public",
+  "arguments", "eval",
+])
+
 const requireLibraries = (libraries: ReadonlyArray<Library>): ReadonlyArray<Library> => {
   const seen = new Set<string>()
   for (const library of libraries) {
-    if (!libraryNamePattern.test(library.name))
+    if (!libraryNamePattern.test(library.name) || reservedLibraryNames.has(library.name))
       throw new TypeError(`Library name "${library.name}" must be a valid JavaScript identifier.`)
     if (library.version.length === 0) throw new TypeError(`Library "${library.name}" version must not be empty.`)
     if (library.source.trim().length === 0) throw new TypeError(`Library "${library.name}" source must not be empty.`)

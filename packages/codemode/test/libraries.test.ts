@@ -58,6 +58,15 @@ describe("program-source libraries", () => {
     expect(() => CodeMode.make({ libraries: [{ name: "Array", version: "1.0.0", source: `return {}` }] })).toThrow(
       'Library "Array" global is already defined.',
     )
+    for (const reserved of ["class", "return", "this"]) {
+      expect(() =>
+        CodeMode.make({ libraries: [{ name: reserved, version: "1.0.0", source: `return {}` }] }),
+      ).toThrow(`Library name "${reserved}" must be a valid JavaScript identifier.`)
+    }
+  })
+
+  test("leaves top-level this undefined", async () => {
+    expect(await valueWithStd(`return typeof this`)).toBe("undefined")
   })
 })
 
@@ -84,6 +93,21 @@ describe("std.bind", () => {
       ),
     )
     expect(explicit).toMatchObject({ ok: true, value: "prod:hi" })
+  })
+
+  test("binds namespace children named name and length", async () => {
+    const runtime = CodeMode.make({
+      tools: { api: { name: echo, length: echo } },
+      libraries: [Std.library],
+    })
+    const named = await Effect.runPromise(
+      runtime.execute(`const bound = std.bind(tools.api, {}); return await bound.name({ text: "n" })`),
+    )
+    expect(named).toMatchObject({ ok: true, value: "none:n", toolCalls: [{ name: "api.name" }] })
+    const lengthed = await Effect.runPromise(
+      runtime.execute(`const bound = std.bind(tools.api, {}); return await bound.length({ text: "l" })`),
+    )
+    expect(lengthed).toMatchObject({ ok: true, value: "none:l", toolCalls: [{ name: "api.length" }] })
   })
 
   test("wraps a single tool callable and records the original tool", async () => {

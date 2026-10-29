@@ -4,10 +4,11 @@ import type { DataValue, Diagnostic, Library, ResolvedExecutionLimits, Result } 
 import { toBoundary } from "../data.js"
 import { ToolRuntime } from "../tool-runtime.js"
 import { normalizeError } from "./errors.js"
-import { Arr, Bytes, Obj, type Value } from "./objects.js"
 import { createBuiltins } from "./intrinsics.js"
 import { Pending } from "./promises.js"
 import { Interpreter } from "./interpreter.js"
+import { freezeValue } from "../stdlib/object.js"
+import type { Value } from "./objects.js"
 
 export const executeProgram = <R>(
   code: string,
@@ -43,7 +44,7 @@ export const executeProgram = <R>(
           const ctx = new Interpreter<R>({ tools, pending, builtins, logs, globals })
           for (const library of libraries) {
             const exported = yield* ctx.run(parseProgram(library.source))
-            ctx.defineGlobal(library.name, freezeLibraryValue(exported))
+            ctx.defineGlobal(library.name, freezeValue(exported))
           }
           const result = (yield* toBoundary(ctx, yield* ctx.run(program))) ?? null
           returned = { value: result, pending }
@@ -119,21 +120,6 @@ const parseProgram = (code: string): Program => {
     allowAwaitOutsideFunction: true,
     locations: true,
   })
-}
-
-// SetIntegrityLevel(freeze) for one library namespace: shallow, like `Object.freeze`.
-const freezeLibraryValue = (value: Value): Value => {
-  if (!(value instanceof Obj)) return value
-  value.extensible = false
-  if (value instanceof Bytes && value.bytes.length > 0) {
-    throw new TypeError("Cannot freeze array buffer views with elements.")
-  }
-  for (const slot of value.props.values()) {
-    slot.configurable = false
-    if ("value" in slot) slot.writable = false
-  }
-  if (value instanceof Arr) value.elements = { writable: false, enumerable: true, configurable: false }
-  return value
 }
 
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).byteLength
