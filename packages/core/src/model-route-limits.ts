@@ -195,8 +195,10 @@ export const windows = (value: Snapshot): Window[] =>
     if (raw.trim() === "") return []
     const remaining = plainCount(raw)
     if (!Number.isFinite(remaining)) return []
-    const limit = plainCount(value.limit?.[name])
-    const reset = value.reset?.[name] === undefined ? undefined : resetMs(value.reset[name], value.at)
+    const limitValue = Object.hasOwn(value.limit ?? {}, name) ? value.limit?.[name] : undefined
+    const resetValue = Object.hasOwn(value.reset ?? {}, name) ? value.reset?.[name] : undefined
+    const limit = plainCount(limitValue)
+    const reset = resetValue === undefined ? undefined : resetMs(resetValue, value.at)
     return [
       {
         name,
