@@ -556,10 +556,11 @@ export const layer = Layer.effect(
             // reason, and only a limit-only exclusion is attributed to the limit.
             const isOverLimit = ModelRoute.overLimit(definition, index, requestTokens)
             if (isOverLimit) overLimit.add(index)
-            const limited = rules ? ModelRoute.limitedUntil(target, now) : 0
-            // A burst hold steers new sessions away but leaves a session on the target it is already using.
-            const kept = limited > now && ModelRoute.keepsThrough(definition.id, sessionID, target, now)
             const credentialID = credentialByProvider.get(target.providerID)
+            const limited = rules ? ModelRoute.limitedUntil(target, now, credentialID) : 0
+            // A burst hold steers new sessions away but leaves a session on the target it is already using.
+            const kept =
+              limited > now && ModelRoute.keepsThrough(definition.id, sessionID, target, now, credentialID)
             const credentialUntil = credentialID ? ModelRoute.credentialCooldownUntil(target, credentialID, now) : 0
             const quotaBlock = credentialID ? ModelRoute.credentialQuotaBlocked(credentialID, now) : undefined
             if (until > now) unavailable.set(index, `cooldown-until:${until}`)
@@ -602,6 +603,8 @@ export const layer = Layer.effect(
             sessionID !== undefined,
             requestedVariant,
             unavailable,
+            Math.random,
+            (index) => credentialByProvider.get(definition.targets[index].providerID),
           )
           if (index === undefined) break
           triedTargets.add(index)
@@ -676,8 +679,31 @@ export const layer = Layer.effect(
                 for (const candidate of candidates) {
                   if (candidate.type !== "credential") continue
                   yield* integrations.connection.activate(candidate.id)
+                  // The catalog source still carries the previous credential's account-scoped
+                  // headers (the OpenAI plugin bakes chatgpt-account-id into the catalog
+                  // headers at load time): re-derive them from the credential just activated,
+                  // or the retry pairs the new credential's token with the old account (#870).
+                  const value = yield* integrations.connection
+                    .resolve(candidate)
+                    .pipe(Effect.orElseSucceed(() => undefined))
+                  const account = value?.metadata?.accountID
+                  const sourceEntries = Object.entries(source.headers ?? {})
+                  // Only a catalog that already carries the account header gets it rewritten:
+                  // other providers' credentials can also expose an accountID metadata value
+                  // (the OpenCode provider stores user.id there), and it must not leak into a
+                  // chatgpt-account-id header on a non-ChatGPT catalog (#870).
+                  const hadAccountHeader = sourceEntries.some(
+                    ([name]) => name.toLowerCase() === "chatgpt-account-id",
+                  )
+                  const headers = Object.fromEntries(
+                    sourceEntries.filter(([name]) => name.toLowerCase() !== "chatgpt-account-id"),
+                  )
+                  const refreshed =
+                    hadAccountHeader && typeof account === "string"
+                      ? { ...source, headers: { ...headers, "chatgpt-account-id": account } }
+                      : { ...source, headers }
                   const retried = yield* Effect.result(
-                    load(source, target.variant ?? mapped, definition.targetCacheFormats?.[index]?.cacheFormat),
+                    load(refreshed, target.variant ?? mapped, definition.targetCacheFormats?.[index]?.cacheFormat),
                   )
                   if (Result.isFailure(retried)) continue
                   // Attribution follows the credential load() actually served on, which is

@@ -90,8 +90,8 @@ export const collect = (input: Input, source: Source = NO_SOURCE) =>
         ...row,
         cooldownSeconds: Math.max(0, Math.round((ModelRoute.cooldownUntil(ref, now) - now) / 1000)),
         // What the provider last said about its rate-limit windows, and how long that holds the target.
-        rateLimit: summarizeRateLimit(ModelRoute.rateLimitOf(ref), now),
-        heldBackSeconds: Math.max(0, Math.round((ModelRoute.limitedUntil(ref, now) - now) / 1000)),
+        rateLimit: summarizeRateLimit(ModelRoute.rateLimitOfAny(ref), now),
+        heldBackSeconds: Math.max(0, Math.round((ModelRoute.limitedUntilAny(ref, now) - now) / 1000)),
         usedLastMinute: used.minute,
         usedLastDay: used.day,
       }

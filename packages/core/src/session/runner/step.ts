@@ -120,11 +120,11 @@ const wasHedged = (messageID: string) => hedgedMessages.has(messageID)
 ''/** Reads a response's rate-limit headers as it arrives, and a rejection's own headers too. Kept
  * as the step's name for it so existing callers and tests keep working; the implementation is the
  * shared observer from `ModelRouteLog`, which handles both `onResponse` and `onRejected`. */
-export const captureRateLimit = (target: ModelRoute.Target) => {
+export const captureRateLimit = (target: ModelRoute.Target, credentialID?: string) => {
   const capture: { snapshot?: ModelRouteLimits.Snapshot } = {}
   const seen = ModelRouteLog.observeRateLimits((snapshot) => {
     capture.snapshot = snapshot
-    ModelRoute.observeRateLimit(target, snapshot)
+    ModelRoute.observeRateLimit(target, snapshot, Date.now(), credentialID)
   })
   return { capture, options: seen.options }
 }
@@ -218,7 +218,7 @@ export const make = Effect.gen(function* () {
     // The start snapshot only has to exist before local tools run, which cannot happen before Step.Started,
     // so it is captured while the provider request is in flight instead of delaying it.
     const pendingStartSnapshot = yield* snapshots.capture().pipe(Effect.forkScoped)
-    const rateLimit = raced?.rateLimit ?? captureRateLimit(input.model.ref)
+    const rateLimit = raced?.rateLimit ?? captureRateLimit(input.model.ref, input.model.routing?.credentialID)
     const requestStarted = raced?.startedAt ?? performance.now()
     const wallStarted = Date.now() - (performance.now() - requestStarted)
     const firstOutput = yield* Deferred.make<void>()
@@ -429,7 +429,15 @@ export const make = Effect.gen(function* () {
               (llmFailure.reason as { rateLimit?: ModelRouteLimits.Details }).rateLimit,
               Date.now(),
             ),
+            Date.now(),
+            input.model.routing?.credentialID,
           )
+        // A success that advertised no limit headers replaces the serving credential's hold:
+        // the provider's last word for that credential is now a healthy response (#870). Only
+        // a successful stream counts: an interrupted one never got the provider's answer, so
+        // it must not release a hold the provider may still be enforcing.
+        if (!failed && Exit.isSuccess(stream) && rateLimit.capture.snapshot === undefined)
+          ModelRoute.clearRateLimit(input.model.ref, input.model.routing?.credentialID)
         const routeFailure =
           llmFailure !== undefined &&
           (SessionRunnerRetry.isRetryable(llmFailure) ||
@@ -509,7 +517,7 @@ export const make = Effect.gen(function* () {
           // A transient failure on a target with a good record gets another try; a rate limit or a
           // target that keeps failing moves the turn on immediately.
           !isRateLimited(llmFailure) &&
-          ModelRoute.steady(input.model.routing.target) &&
+          ModelRoute.steady(input.model.routing.target, input.model.routing.credentialID) &&
           (failedAttempts.get(retryKey) ?? 0) + 1 < input.model.routing.attempts
         if (sameTargetRetry) {
           countFailedAttempt(retryKey)
@@ -700,11 +708,13 @@ export const make = Effect.gen(function* () {
     // A target that keeps giving up is raced at once rather than after the hedge delay, on routes whose
     // autonomy allows it; `fixed` and `rules` routes only fail over.
     const escalate =
-      routing !== undefined && ModelRouteAutonomy.races(routing.autonomy) && ModelRoute.escalates(routing.target)
+      routing !== undefined &&
+      ModelRouteAutonomy.races(routing.autonomy) &&
+      ModelRoute.escalates(routing.target, routing.credentialID)
     // Once a turn has been hedged, its retries stay on one request rather than racing again.
     if (!routing || (!routing.hedgeAfterMs && !escalate) || !prepareFor || wasHedged(input.assistantMessageID))
       return yield* run(input)
-    const primaryLimit = captureRateLimit(input.model.ref)
+    const primaryLimit = captureRateLimit(input.model.ref, routing?.credentialID)
     markHedged(input.assistantMessageID)
     const raced = yield* SessionHedge.race({
       primary: llm.stream(input.prepared.request, primaryLimit.options(input.prepared.options)),
@@ -718,7 +728,7 @@ export const make = Effect.gen(function* () {
             ? Effect.succeed(Option.none())
             : prepareFor(next).pipe(
                 Effect.map((prepared) => {
-                  const rateLimit = captureRateLimit(next.ref)
+                  const rateLimit = captureRateLimit(next.ref, next.routing?.credentialID)
                   // A hedge has begun: both targets are named before either answers, so the race
                   // itself is visible even if the loser never produces an event.
                   ModelRouteLog.record({
