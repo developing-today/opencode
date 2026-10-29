@@ -69,7 +69,7 @@ function pick(obj, keys) {
   const out = {};
   for (const key of keys) {
     if (typeof key !== "string") throw new TypeError("std.pick keys must be strings.");
-    if (key in obj) out[key] = obj[key];
+    if (Object.hasOwn(obj, key)) out[key] = obj[key];
   }
   return out;
 }

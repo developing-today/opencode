@@ -70,6 +70,42 @@ describe("program-source libraries", () => {
   })
 })
 
+describe("std.pick", () => {
+  test("picks only own properties, never prototype members", async () => {
+    expect(await valueWithStd(`return std.pick({}, ["toString"])`)).toEqual({})
+    expect(await valueWithStd(`return std.pick({}, ["constructor"])`)).toEqual({})
+    expect(await valueWithStd(`return std.pick({}, ["hasOwnProperty"])`)).toEqual({})
+    expect(await valueWithStd(`return std.pick({}, ["valueOf"])`)).toEqual({})
+    expect(await valueWithStd(`return std.pick({ a: 1 }, ["a", "hasOwnProperty"])`)).toEqual({ a: 1 })
+    expect(await valueWithStd(`return std.pick({ a: 1 }, ["a", "missing"])`)).toEqual({ a: 1 })
+    expect(
+      await valueWithStd(
+        `const obj = Object.create({ inherited: 42 }); obj.own = 1; return std.pick(obj, ["inherited", "own"])`,
+      ),
+    ).toEqual({ own: 1 })
+  })
+
+  test("still copies own properties named constructor or __proto__", async () => {
+    expect(await valueWithStd(`return std.pick({ constructor: 1, a: 2 }, ["constructor"])`)).toEqual({
+      constructor: 1,
+    })
+    // __proto__ never crosses to the host, so assert the copy inside the program.
+    expect(
+      await valueWithStd(
+        `const out = std.pick(JSON.parse('{"__proto__":1,"a":2}'), ["__proto__", "a"]); return [Object.hasOwn(out, "__proto__"), out["__proto__"], out.a]`,
+      ),
+    ).toEqual([true, 1, 2])
+  })
+
+  test("agrees with std.omit on the key set", async () => {
+    expect(
+      await valueWithStd(
+        `const obj = { a: 1, b: 2 }; return [Object.keys(std.pick(obj, ["a"])), Object.keys(std.omit(obj, ["b"]))]`,
+      ),
+    ).toEqual([["a"], ["a"]])
+  })
+})
+
 describe("std.bind", () => {
   const echo = Tool.make({
     description: "Echo with profile",
