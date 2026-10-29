@@ -135,6 +135,38 @@ const served = (body: Uint8Array, options: { ranges: boolean }) =>
 
 const payload = Uint8Array.from({ length: 200_000 }, (_, index) => (index * 31) % 251)
 
+const oversized = Uint8Array.from({ length: 500_000 }, (_, index) => (index * 31) % 251)
+
+// Serves `body` as a stream of small chunks with no content-length, like a chunked response.
+function chunkedServer(body: Uint8Array, chunk: number) {
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      let offset = 0
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (offset >= body.byteLength) {
+            controller.close()
+            return
+          }
+          const next = body.slice(offset, offset + chunk)
+          offset += next.byteLength
+          controller.enqueue(next)
+        },
+      })
+      return new Response(stream)
+    },
+  })
+  return { server, url: `http://127.0.0.1:${server.port}/model.gguf` }
+}
+
+const chunked = (body: Uint8Array, chunk: number) =>
+  Effect.acquireRelease(
+    Effect.sync(() => chunkedServer(body, chunk)),
+    (fixture) => Effect.promise(() => fixture.server.stop(true)),
+  )
+
 describe("MessagingEmbedding.download", () => {
   it.live("resumes a partial file with a Range request", () =>
     Effect.gen(function* () {
@@ -196,6 +228,79 @@ describe("MessagingEmbedding.download", () => {
       yield* MessagingEmbedding.download({ url: fixture.url, dest, sha256: sha(payload) })
       expect(fixture.seen).toEqual(["bytes=40000-", null])
       expect((yield* Effect.promise(() => stat(dest))).size).toBe(payload.byteLength)
+    }),
+  )
+
+  it.live("fails fast when the declared length exceeds the known size", () =>
+    Effect.gen(function* () {
+      const dir = (yield* tmpdirScoped()).path
+      const fixture = yield* served(oversized, { ranges: false })
+      const dest = path.join(dir, "model.gguf")
+      const updates: Array<number> = []
+      const exit = yield* Effect.exit(
+        MessagingEmbedding.download({
+          url: fixture.url,
+          dest,
+          sha256: sha(payload),
+          size: payload.byteLength,
+          onProgress: (received) => updates.push(received),
+        }),
+      )
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(String(exit)).toContain("larger than expected")
+      // The pre-check fires before the body is read: no progress past the known size was ever reported.
+      expect(Math.max(0, ...updates)).toBeLessThanOrEqual(payload.byteLength)
+      expect(yield* Effect.promise(() => Bun.file(`${dest}.part`).exists())).toBe(false)
+      expect(yield* Effect.promise(() => Bun.file(dest).exists())).toBe(false)
+    }),
+  )
+
+  it.live("aborts a chunked body in flight once it passes the known size", () =>
+    Effect.gen(function* () {
+      const dir = (yield* tmpdirScoped()).path
+      const fixture = yield* chunked(oversized, 10_000)
+      const dest = path.join(dir, "model.gguf")
+      const updates: Array<number> = []
+      const exit = yield* Effect.exit(
+        MessagingEmbedding.download({
+          url: fixture.url,
+          dest,
+          size: payload.byteLength,
+          onProgress: (received) => updates.push(received),
+        }),
+      )
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(String(exit)).toContain("larger than expected")
+      // In-flight bound: progress never passes the known size, so the download stopped
+      // before the whole 500,000-byte body was consumed.
+      expect(Math.max(0, ...updates)).toBeLessThanOrEqual(payload.byteLength)
+      expect(Math.max(0, ...updates)).toBeLessThan(oversized.byteLength)
+      expect(yield* Effect.promise(() => Bun.file(`${dest}.part`).exists())).toBe(false)
+      expect(yield* Effect.promise(() => Bun.file(dest).exists())).toBe(false)
+    }),
+  )
+
+  it.live("bounds the llama.cpp asset shape (sha256 plus recorded size) in flight", () =>
+    Effect.gen(function* () {
+      const dir = (yield* tmpdirScoped()).path
+      const fixture = yield* chunked(oversized, 10_000)
+      const dest = path.join(dir, "llama.tar.gz")
+      const updates: Array<number> = []
+      const exit = yield* Effect.exit(
+        MessagingEmbedding.download({
+          url: fixture.url,
+          dest,
+          // The installServer call shape after LLAMA_ASSETS gained exact sizes.
+          sha256: sha(payload),
+          size: payload.byteLength,
+          onProgress: (received) => updates.push(received),
+        }),
+      )
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(String(exit)).toContain("larger than expected")
+      expect(Math.max(0, ...updates)).toBeLessThanOrEqual(payload.byteLength)
+      expect(yield* Effect.promise(() => Bun.file(`${dest}.part`).exists())).toBe(false)
+      expect(yield* Effect.promise(() => Bun.file(dest).exists())).toBe(false)
     }),
   )
 })
