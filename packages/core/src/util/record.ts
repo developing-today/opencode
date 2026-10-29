@@ -15,6 +15,6 @@ export function ownValue<V>(record: Readonly<Record<string, V>>, key: string): V
 }
 
 /** The record's own value for `key`, or `fallback` when it has none (or holds null/undefined). */
-export function ownOr<V>(record: Readonly<Record<string, V>>, key: string, fallback: V): V {
+export function ownOr<V>(record: Readonly<Record<string, V>>, key: string, fallback: NoInfer<V>): V {
   return ownValue(record, key) ?? fallback
 }

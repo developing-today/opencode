@@ -5,7 +5,7 @@ import path from "node:path"
 import { Global } from "@opencode/util/global"
 import { Schema } from "effect"
 import { ModelRouteLimits } from "./model-route-limits.js"
-import { ownOr, ownValue } from "./util/record.js"
+import { ownValue } from "./util/record.js"
 
 /**
  * The plan store: subscriptions and their quota windows, the cost tier of each model, what each pool is for,
@@ -247,7 +247,7 @@ export const setPool = (
   patch: { tier?: Tier | null; purpose?: string | null },
   now: string,
 ): Store => {
-  const existing = ownOr(store.pools, poolID, {})
+  const existing = ownValue(store.pools, poolID) ?? {}
   const entry = Schema.decodeUnknownSync(PoolEntry)(merge(existing, { ...patch, updatedAt: now }))
   return { ...store, pools: { ...store.pools, [poolID]: entry } }
 }
