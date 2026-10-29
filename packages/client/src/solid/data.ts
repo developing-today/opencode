@@ -1753,7 +1753,30 @@ export function createData(config: CreateDataInput) {
             api().session.get({ sessionID }),
             options?.children ? listChildren({ parentID: sessionID, order: "desc", limit: CHILD_PAGE }) : [],
           ])
-          publishSessions([info, ...children.filter(unread)], generation)
+          // Ancestors are never listed by the descendant walk, so a session opened directly
+          // (a deep link into a nested subagent, #631) holds no info for them: resolveRoot
+          // stops at the first missing parent, the family groups under the wrong root, and
+          // the ancestor trail truncates. Read the missing parents by ID, best effort: a
+          // parent that cannot be read leaves the walk at the furthest-known ancestor,
+          // exactly what resolveRoot already tolerates.
+          const ancestors: SessionInfo[] = []
+          const seen = new Set([sessionID])
+          let parentID = info.parentID
+          while (parentID && !seen.has(parentID)) {
+            seen.add(parentID)
+            const known = store.session.info[parentID]
+            if (known) {
+              parentID = known.parentID
+              continue
+            }
+            const parent = await api()
+              .session.get({ sessionID: parentID })
+              .catch(() => undefined)
+            if (!parent || parent.id !== parentID) break
+            ancestors.push(parent)
+            parentID = parent.parentID
+          }
+          publishSessions([info, ...ancestors, ...children.filter(unread)], generation)
           // A walk that skipped a failed branch is not kept, so the next sync lists the tree again.
           if (options?.children && !(await syncDescendants(children, new Set([sessionID]))))
             sync.invalidate(`session.family:${sessionID}`)
