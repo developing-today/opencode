@@ -452,18 +452,26 @@ export const layer = Layer.effect(
           ? LanguageModel.update(model, { route: model.route.with({ auth: Auth.none }) })
           : model
       return {
-        model: runtime,
-        ref: Ref.make({
-          id: selected.id,
-          providerID: selected.providerID,
-          ...(variant === undefined ? {} : { variant }),
-        }),
-        capabilities: selected.capabilities,
-        cost: selected.cost,
-        limit: selected.limit,
-        compaction: runtimeInfo.settings?.compaction,
-        transport: provider?.settings?.transport,
-        chunkTimeout: Provider.timeout(provider?.settings?.chunkTimeout),
+        resolved: {
+          model: runtime,
+          ref: Ref.make({
+            id: selected.id,
+            providerID: selected.providerID,
+            ...(variant === undefined ? {} : { variant }),
+          }),
+          capabilities: selected.capabilities,
+          cost: selected.cost,
+          limit: selected.limit,
+          compaction: runtimeInfo.settings?.compaction,
+          transport: provider?.settings?.transport,
+          chunkTimeout: Provider.timeout(provider?.settings?.chunkTimeout),
+        } satisfies Resolved,
+        // #6: the credential that actually served this load, captured from the same active
+        // connection the request was built from. Callers must use this — never a snapshot of
+        // the active credential taken earlier — for serving attribution and failover
+        // exclusion: a concurrent session may have activated a different credential in
+        // between, and benching or excluding the wrong one is the failure this prevents.
+        servingCredentialID: connection?.type === "credential" ? connection.id : undefined,
       }
     })
     const resolveRoute = (
@@ -481,6 +489,8 @@ export const layer = Layer.effect(
         let lastError: Error | undefined
         // The active stored credential per target provider (#6): the ready filter gates on the
         // credential that would actually serve the target, not only on the target itself.
+        // This snapshot is gate input only — serving attribution comes from load() itself,
+        // because the active credential can change between this read and the load.
         const credentialByProvider = new Map<string, Credential.ID>()
         for (const target of definition.targets) {
           if (credentialByProvider.has(target.providerID)) continue
@@ -494,7 +504,10 @@ export const layer = Layer.effect(
           current: Resolved,
           origin: (() => Effect.Effect<Resolved | undefined, Error>) | undefined,
           credentialFallback: (() => Effect.Effect<Resolved | undefined, Error>) | undefined,
-          credentialIDOverride?: Credential.ID,
+          // The credential load() actually served this resolution with (#6), authoritative
+          // even when undefined (an env connection served): the credentialByProvider
+          // snapshot is only the ready filter's gate input, never serving attribution.
+          servingCredentialID: Credential.ID | undefined,
         ): Resolved => ({
           ...current,
           // The alias advertises the safest shared request shape. Pricing and provider metadata stay
@@ -512,9 +525,7 @@ export const layer = Layer.effect(
             attempts: definition.attempts ?? 2,
             ...(definition.hedgeAfterMs ? { hedgeAfterMs: definition.hedgeAfterMs } : {}),
             autonomy: definition.autonomy,
-            ...((credentialIDOverride ?? credentialByProvider.get(current.ref.providerID))
-              ? { credentialID: credentialIDOverride ?? credentialByProvider.get(current.ref.providerID) }
-              : {}),
+            ...(servingCredentialID ? { credentialID: servingCredentialID } : {}),
             fallback: () =>
               resolveRoute(selected, definition, requestedVariant, triedTargets, false, sessionID, requestTokens),
             ...(origin ? { origin } : {}),
@@ -630,7 +641,12 @@ export const layer = Layer.effect(
             })
             continue
           }
-          const current = resolved.success
+          const current = resolved.success.resolved
+          // The credential that served this resolution, as captured by load() itself (#6):
+          // attribution and failover exclusion use this, never the credentialByProvider
+          // snapshot — a concurrent session may have switched the active credential
+          // between the snapshot and this load, and the two can name different credentials.
+          const servingCredentialID = resolved.success.servingCredentialID
           // #6 credential failover for this target: activate the next eligible stored credential
           // on the target's own integration and re-resolve the same target on it. The opencode-go
           // Lab -> Personal fall-through is this same path; there is no special case.
@@ -660,7 +676,15 @@ export const layer = Layer.effect(
                     load(source, target.variant ?? mapped, definition.targetCacheFormats?.[index]?.cacheFormat),
                   )
                   if (Result.isFailure(retried)) continue
-                  return makeResolved(retried.success, undefined, credentialFallback(candidate.id), candidate.id)
+                  // Attribution follows the credential load() actually served on, which is
+                  // the candidate just activated unless a concurrent session switched again
+                  // mid-load (#6).
+                  return makeResolved(
+                    retried.success.resolved,
+                    undefined,
+                    credentialFallback(retried.success.servingCredentialID),
+                    retried.success.servingCredentialID,
+                  )
                 }
                 return undefined
               })
@@ -681,14 +705,15 @@ export const layer = Layer.effect(
                     requestTokens,
                   )
               : undefined
-          return makeResolved(current, origin, credentialFallback(credentialByProvider.get(target.providerID)))
+          return makeResolved(current, origin, credentialFallback(servingCredentialID), servingCredentialID)
         }
         if (lastError) return yield* Effect.fail(lastError)
         return undefined
       })
 
     const resolveSelected = (selected: Info, variant?: VariantID, sessionID?: string, requestTokens?: number) => {
-      if (selected.providerID !== ModelRoute.PROVIDER_ID) return load(selected, variant)
+      if (selected.providerID !== ModelRoute.PROVIDER_ID)
+        return load(selected, variant).pipe(Effect.map((loaded) => loaded.resolved))
       const definition = ModelRoute.definition(selected)
       if (!definition || definition.targets.length === 0)
         return Effect.fail(new RouteUnavailableError({ routeID: selected.id }))

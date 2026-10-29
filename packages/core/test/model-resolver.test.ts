@@ -2063,6 +2063,56 @@ describe("ModelResolver routes", () => {
     )
   })
 
+  it.effect("serving attribution comes from the load itself, not the earlier active snapshot (#6)", () => {
+    ModelRoute.resetHealth()
+    const a = leaf("pa")
+    const route = routed([a], { ...single })
+    const activated: string[] = []
+    let activeReads = 0
+    let current = "cred-b"
+    const conn = (id: string) => ({
+      type: "credential" as const,
+      id: Credential.ID.make(id),
+      label: id,
+      method: "key" as const,
+    })
+    const integration = {
+      revision: () => 0,
+      get: (id: Integration.ID) => Effect.succeed({ id, connections: [conn("cred-a"), conn("cred-b")] }),
+      connection: {
+        // The ready filter's snapshot reads the active credential first (cred-a); a
+        // concurrent session then activates cred-b, so the load itself serves on cred-b.
+        active: () =>
+          Effect.sync(() => {
+            activeReads += 1
+            return conn(activeReads === 1 ? "cred-a" : current)
+          }),
+        resolve: () => Effect.succeed(Credential.Key.make({ type: "key", key: "secret" })),
+        activate: (id: Credential.ID) =>
+          Effect.sync(() => {
+            activated.push(String(id))
+            current = String(id)
+          }),
+      },
+    }
+    return withResolver(
+      [a],
+      (resolver) =>
+        Effect.gen(function* () {
+          const resolved = yield* resolver.resolveModel(route)
+          // Attribution names the credential the request was actually built with.
+          expect(String(resolved.routing?.credentialID)).toBe("cred-b")
+          // And the fallback excludes that serving credential, so it offers cred-a —
+          // with snapshot attribution it would have excluded cred-a and retried the
+          // exhausted cred-b.
+          const switched = yield* resolved.routing!.credentialFallback!()
+          expect(activated).toEqual(["cred-a"])
+          expect(String(switched?.routing?.credentialID)).toBe("cred-a")
+        }),
+      integration,
+    )
+  })
+
   it.effect("a known-full active credential takes its target out of the route until a good read (#6)", () => {
     ModelRoute.resetHealth()
     const a = leaf("pa")

@@ -413,9 +413,10 @@ export const make = Effect.gen(function* () {
         const failureError = llmFailure ? toSessionError(llmFailure) : undefined
         const llmError = failureError && !recorded.providerFailed ? failureError : undefined
         // Usage and rate-limit state are recorded where the outcome is first known. The attempt
-        // row itself is written after the failover decision below, so it can name where the
-        // attempt failed over to; it still precedes every return past that point, so a failure
-        // that fails over, retries or recovers is recorded like any other.
+        // row itself is written via recordAttempt below, after the failover decision, so it
+        // can name where the attempt failed over to; it still precedes every return past that
+        // point, so a failure that fails over, retries or recovers is recorded like any
+        // other — and an interruption during the retry hook records it too (see recordAttempt).
         const failed = llmFailure !== undefined
         const timedOut = failed && llmFailure.reason._tag === "Transport" && llmFailure.reason.code === "Timeout"
         const tokens = recorded.finish?.tokens
@@ -434,6 +435,55 @@ export const make = Effect.gen(function* () {
           (SessionRunnerRetry.isRetryable(llmFailure) ||
             llmFailure.reason._tag === "Authentication" ||
             llmFailure.reason._tag === "QuotaExceeded")
+        // The failover decision: where this attempt moves to, if anywhere. It is computed
+        // after the retry hook below, and the attempt row names its destination.
+        let failover: { readonly model: SessionRunnerModel.Resolved; readonly overTo: string } | undefined
+        // The attempt row is written exactly once, normally after the failover decision so
+        // it can name the destination. The retry hook runs behind restore(), so a session
+        // interrupted while the hook runs would otherwise exit before that write and the
+        // completed attempt would vanish from route history: the hook's interruption path
+        // writes the row instead, with no destination known yet.
+        let attemptRecorded = false
+        const recordAttempt = () => {
+          if (attemptRecorded) return
+          attemptRecorded = true
+          ModelRouteLog.record({
+            kind: "attempt",
+            row: {
+              time_started: wallStarted,
+              time_ended: Date.now(),
+              session_id: input.sessionID,
+              assistant_message_id: input.assistantMessageID,
+              route_id: input.model.routing?.routeID ?? "",
+              provider_id: input.model.ref.providerID,
+              model_id: input.model.ref.id,
+              variant: input.model.ref.variant,
+              outcome: streamInterrupted ? "interrupted" : timedOut ? "timeout" : failed ? "failure" : "success",
+              ...failureLog,
+              // A failed request's own details win; a successful one keeps what its response said.
+              quota: failureLog?.quota ?? (rateLimit.capture.snapshot && { ...rateLimit.capture.snapshot }),
+              retryable: failed ? SessionRunnerRetry.isRetryable(llmFailure) : undefined,
+              output_started: recorded.outputStarted,
+              failed_over_to: failover?.overTo,
+              first_token_ms: firstOutputAt === undefined ? undefined : firstOutputAt - requestStarted,
+              response_ms: streamedAt - requestStarted,
+              tokens_per_second:
+                tokens && firstOutputAt !== undefined
+                  ? ((tokens.output + tokens.reasoning) * 1_000) / Math.max(1, streamedAt - firstOutputAt)
+                  : undefined,
+              tokens_input: tokens?.input,
+              tokens_estimated: false,
+              hedged: raced !== undefined,
+              tokens_output: tokens?.output,
+              tokens_reasoning: tokens?.reasoning,
+              tokens_cache_read: tokens?.cache.read,
+              tokens_cache_write: tokens?.cache.write,
+              cost_usd: tokens ? SessionUsage.calculateCost(input.model.cost, tokens) : undefined,
+              continuation_index: input.continuation?.index,
+            },
+            continuationOfMessageID: input.continuation?.of,
+          })
+        }
         const retry =
           llmFailure && failureError && !isContextOverflowFailure(llmFailure)
             ? yield* restore(
@@ -444,7 +494,7 @@ export const make = Effect.gen(function* () {
                     (input.model.routing !== undefined && !recorded.outputStarted && routeFailure) ||
                     (recorded.outputStarted && isInterruptedStream(llmFailure)),
                 ),
-              )
+              ).pipe(Effect.onInterrupt(() => Effect.sync(recordAttempt)))
             : undefined
 
         // A target gets `attempts` requests before the route moves on. The failure only counts against
@@ -464,9 +514,8 @@ export const make = Effect.gen(function* () {
         if (sameTargetRetry) {
           countFailedAttempt(retryKey)
         } else clearFailedAttempt(retryKey)
-        // The failover decision: where this attempt moves to, if anywhere. The return itself is
-        // deferred until after the attempt row is written, so the row can name the destination.
-        let failover: { readonly model: SessionRunnerModel.Resolved; readonly overTo: string } | undefined
+        // The failover return itself is deferred until after the attempt row is written,
+        // so the row can name the destination.
         if (input.model.routing && llmFailure && failureError && routeFailure && !sameTargetRetry) {
           ModelRoute.failed(
             input.model.routing.target,
@@ -519,42 +568,7 @@ export const make = Effect.gen(function* () {
           }
         }
 
-        ModelRouteLog.record({
-          kind: "attempt",
-          row: {
-            time_started: wallStarted,
-            time_ended: Date.now(),
-            session_id: input.sessionID,
-            assistant_message_id: input.assistantMessageID,
-            route_id: input.model.routing?.routeID ?? "",
-            provider_id: input.model.ref.providerID,
-            model_id: input.model.ref.id,
-            variant: input.model.ref.variant,
-            outcome: streamInterrupted ? "interrupted" : timedOut ? "timeout" : failed ? "failure" : "success",
-            ...failureLog,
-            // A failed request's own details win; a successful one keeps what its response said.
-            quota: failureLog?.quota ?? (rateLimit.capture.snapshot && { ...rateLimit.capture.snapshot }),
-            retryable: failed ? SessionRunnerRetry.isRetryable(llmFailure) : undefined,
-            output_started: recorded.outputStarted,
-            failed_over_to: failover?.overTo,
-            first_token_ms: firstOutputAt === undefined ? undefined : firstOutputAt - requestStarted,
-            response_ms: streamedAt - requestStarted,
-            tokens_per_second:
-              tokens && firstOutputAt !== undefined
-                ? ((tokens.output + tokens.reasoning) * 1_000) / Math.max(1, streamedAt - firstOutputAt)
-                : undefined,
-            tokens_input: tokens?.input,
-            tokens_estimated: false,
-            hedged: raced !== undefined,
-            tokens_output: tokens?.output,
-            tokens_reasoning: tokens?.reasoning,
-            tokens_cache_read: tokens?.cache.read,
-            tokens_cache_write: tokens?.cache.write,
-            cost_usd: tokens ? SessionUsage.calculateCost(input.model.cost, tokens) : undefined,
-            continuation_index: input.continuation?.index,
-          },
-          continuationOfMessageID: input.continuation?.of,
-        })
+        recordAttempt()
         if (
           input.recoverContinuation &&
           llmFailure?.reason._tag === "Transport" &&
