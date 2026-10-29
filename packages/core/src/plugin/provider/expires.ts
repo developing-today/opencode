@@ -30,3 +30,19 @@ export function expiresInSeconds(value: unknown, fallback: number): number {
   const seconds = Number(value)
   return Number.isFinite(seconds) && seconds > 0 && seconds <= MAX_EXPIRES_IN_SECONDS ? seconds : fallback
 }
+
+/**
+ * The longest device-code lifetime honored, in seconds (10 minutes) — the
+ * integration layer's default attempt lifetime (`integration.ts`). A device
+ * code's server-supplied `expires_in` sets the poll deadline / attempt
+ * expiry outright (#900), so a millisecond-confused value such as 600000
+ * would poll the token endpoint for ~6.9 days. Values past this bound are
+ * treated as the bound; valid lifetimes pass through unchanged and
+ * non-positive/absent values take the provider's fallback.
+ */
+export const MAX_DEVICE_LIFETIME_SECONDS = 10 * 60
+
+export function deviceLifetimeSeconds(value: unknown, fallback: number): number {
+  const seconds = Number(value)
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, MAX_DEVICE_LIFETIME_SECONDS) : fallback
+}
