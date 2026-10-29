@@ -152,6 +152,17 @@ export interface Resolved {
     readonly hedgeAfterMs?: number
     /** The route's autonomy level: a route races its next target once a target keeps giving up only at `adaptive` and up. */
     readonly autonomy?: ModelRouteAutonomy.Level
+    /** The active stored credential for the target's integration, when there is one (#6). */
+    readonly credentialID?: Credential.ID
+    /**
+     * Activates the next eligible stored credential on the target's own integration and
+     * re-resolves the same target on it (#6 credential failover). Eligibility is the Phase A
+     * gate: not credential-cooling, not quota-known-full, not credential-demoted. The
+     * credential that served this resolution is the one excluded, even if another session
+     * has since activated a different credential. Returns undefined when no other stored
+     * credential is eligible.
+     */
+    readonly credentialFallback?: () => Effect.Effect<Resolved | undefined, Error>
     readonly fallback: () => Effect.Effect<Resolved | undefined, Error>
     /** Set just after a session failed over: the target it came from, which a hedge races instead of
      * the next fallback while the session is still new on the alternate. */
@@ -419,18 +430,15 @@ export const layer = Layer.effect(
       cacheFormat?: CacheFormat,
     ) {
       const provider = yield* providers.get(selected.providerID)
-      const connection = yield* integrations.connection.active(
-        provider?.integrationID ?? Integration.ID.make(selected.providerID),
-      )
+      const integrationID = provider?.integrationID ?? Integration.ID.make(selected.providerID)
+      const connection = yield* integrations.connection.active(integrationID)
       const credential = connection ? yield* integrations.connection.resolve(connection) : undefined
       const selectedVariant = yield* withVariant(selected, variant)
       const runtimeInfo: RuntimeInfo = {
         ...selectedVariant,
         // A route target's declared cache format overrides the model's own compatibility for this
         // resolution only; the catalog model stays as configured.
-        ...(cacheFormat === undefined
-          ? {}
-          : { compatibility: { ...selectedVariant.compatibility, cacheFormat } }),
+        ...(cacheFormat === undefined ? {} : { compatibility: { ...selectedVariant.compatibility, cacheFormat } }),
         settings: Provider.mergeOverlay(provider?.settings, Provider.modelSettings(selectedVariant.settings)),
       }
       const model = yield* fromCatalogModel(runtimeInfo, credential, {
@@ -445,18 +453,26 @@ export const layer = Layer.effect(
           ? LanguageModel.update(model, { route: model.route.with({ auth: Auth.none }) })
           : model
       return {
-        model: runtime,
-        ref: Ref.make({
-          id: selected.id,
-          providerID: selected.providerID,
-          ...(variant === undefined ? {} : { variant }),
-        }),
-        capabilities: selected.capabilities,
-        cost: selected.cost,
-        limit: selected.limit,
-        compaction: runtimeInfo.settings?.compaction,
-        transport: provider?.settings?.transport,
-        chunkTimeout: Provider.timeout(provider?.settings?.chunkTimeout),
+        resolved: {
+          model: runtime,
+          ref: Ref.make({
+            id: selected.id,
+            providerID: selected.providerID,
+            ...(variant === undefined ? {} : { variant }),
+          }),
+          capabilities: selected.capabilities,
+          cost: selected.cost,
+          limit: selected.limit,
+          compaction: runtimeInfo.settings?.compaction,
+          transport: provider?.settings?.transport,
+          chunkTimeout: Provider.timeout(provider?.settings?.chunkTimeout),
+        } satisfies Resolved,
+        // #6: the credential that actually served this load, captured from the same active
+        // connection the request was built from. Callers must use this — never a snapshot of
+        // the active credential taken earlier — for serving attribution and failover
+        // exclusion: a concurrent session may have activated a different credential in
+        // between, and benching or excluding the wrong one is the failure this prevents.
+        servingCredentialID: connection?.type === "credential" ? connection.id : undefined,
       }
     })
     const resolveRoute = (
@@ -472,6 +488,51 @@ export const layer = Layer.effect(
         const now = Date.now()
         const triedTargets = new Set(tried)
         let lastError: Error | undefined
+        // The active stored credential per target provider (#6): the ready filter gates on the
+        // credential that would actually serve the target, not only on the target itself.
+        // This snapshot is gate input only — serving attribution comes from load() itself,
+        // because the active credential can change between this read and the load.
+        const credentialByProvider = new Map<string, Credential.ID>()
+        for (const target of definition.targets) {
+          if (credentialByProvider.has(target.providerID)) continue
+          const provider = yield* providers.get(target.providerID)
+          const connection = yield* integrations.connection.active(
+            provider?.integrationID ?? Integration.ID.make(target.providerID),
+          )
+          if (connection?.type === "credential") credentialByProvider.set(target.providerID, connection.id)
+        }
+        const makeResolved = (
+          current: Resolved,
+          origin: (() => Effect.Effect<Resolved | undefined, Error>) | undefined,
+          credentialFallback: (() => Effect.Effect<Resolved | undefined, Error>) | undefined,
+          // The credential load() actually served this resolution with (#6), authoritative
+          // even when undefined (an env connection served): the credentialByProvider
+          // snapshot is only the ready filter's gate input, never serving attribution.
+          servingCredentialID: Credential.ID | undefined,
+        ): Resolved => ({
+          ...current,
+          // The alias advertises the safest shared request shape. Pricing and provider metadata stay
+          // tied to the concrete target that answered.
+          capabilities: selected.capabilities,
+          limit: selected.limit,
+          // A native provider checkpoint is not portable across the route's targets.
+          compaction: undefined,
+          routing: {
+            routeID: definition.id,
+            target: current.ref,
+            policy: definition.health,
+            // Two requests by default: a single transient failure on a steady target is retried before the
+            // route moves on. Rate limits skip the retry (see the runner). Set 1 to fail over at once.
+            attempts: definition.attempts ?? 2,
+            ...(definition.hedgeAfterMs ? { hedgeAfterMs: definition.hedgeAfterMs } : {}),
+            autonomy: definition.autonomy,
+            ...(servingCredentialID ? { credentialID: servingCredentialID } : {}),
+            fallback: () =>
+              resolveRoute(selected, definition, requestedVariant, triedTargets, false, sessionID, requestTokens),
+            ...(origin ? { origin } : {}),
+            ...(credentialFallback ? { credentialFallback } : {}),
+          },
+        })
         while (triedTargets.size < definition.targets.length) {
           const indexes = definition.targets.flatMap((_, index) => (triedTargets.has(index) ? [] : [index]))
           const unavailable = new Map<number, string>()
@@ -495,18 +556,41 @@ export const layer = Layer.effect(
             const limited = rules ? ModelRoute.limitedUntil(target, now) : 0
             // A burst hold steers new sessions away but leaves a session on the target it is already using.
             const kept = limited > now && ModelRoute.keepsThrough(definition.id, sessionID, target, now)
+            const credentialID = credentialByProvider.get(target.providerID)
+            const credentialUntil = credentialID ? ModelRoute.credentialCooldownUntil(target, credentialID, now) : 0
+            const quotaBlock = credentialID ? ModelRoute.credentialQuotaBlocked(credentialID, now) : undefined
             if (until > now) unavailable.set(index, `cooldown-until:${until}`)
+            else if (credentialUntil > now) unavailable.set(index, `credential-cooldown-until:${credentialUntil}`)
+            else if (quotaBlock) unavailable.set(index, `quota-known-full-until:${quotaBlock.until ?? "unknown"}`)
             else if (limited > now && !kept) unavailable.set(index, `provider-limit-until:${limited}`)
             else if (isSkipped) unavailable.set(index, "user-skip")
             else if (isOverBudget) unavailable.set(index, "soft-budget")
             else if (isOverLimit) unavailable.set(index, "over-limit")
-            return until <= now && (limited <= now || kept) && !isSkipped && !isOverBudget && !isOverLimit
+            return (
+              until <= now &&
+              credentialUntil <= now &&
+              quotaBlock === undefined &&
+              (limited <= now || kept) &&
+              !isSkipped &&
+              !isOverBudget &&
+              !isOverLimit
+            )
           })
           // Budgets and skips are soft limits: if every remaining target is excluded, try the
-          // configured tree as a last resort rather than refusing a turn. Context ceilings are
+          // configured tree as a last resort rather than refusing a turn. A known-full
+          // credential is not a soft limit (#6): the last resort excludes one while any
+          // remaining target's credential is not known-full. Context ceilings are
           // hard limits — the request cannot be served over a target's ceiling — so over-limit
-          // targets stay excluded even in the last resort.
-          const eligible = ready.length > 0 ? ready : allowCooling ? indexes.filter((index) => !overLimit.has(index)) : []
+          // targets stay excluded even in the last resort, and they are filtered out
+          // before the non-full choice so an over-limit target cannot mask a
+          // known-full-but-fitting target as the last resort.
+          const usable = indexes.filter((index) => !overLimit.has(index))
+          const nonFull = usable.filter((index) => {
+            const credentialID = credentialByProvider.get(definition.targets[index].providerID)
+            return credentialID === undefined || ModelRoute.credentialQuotaBlocked(credentialID, now) === undefined
+          })
+          const lastResort = nonFull.length > 0 ? nonFull : usable
+          const eligible = ready.length > 0 ? ready : allowCooling ? lastResort : []
           const index = ModelRoute.nextTarget(
             definition,
             new Set(eligible),
@@ -558,7 +642,53 @@ export const layer = Layer.effect(
             })
             continue
           }
-          const current = resolved.success
+          const current = resolved.success.resolved
+          // The credential that served this resolution, as captured by load() itself (#6):
+          // attribution and failover exclusion use this, never the credentialByProvider
+          // snapshot — a concurrent session may have switched the active credential
+          // between the snapshot and this load, and the two can name different credentials.
+          const servingCredentialID = resolved.success.servingCredentialID
+          // #6 credential failover for this target: activate the next eligible stored credential
+          // on the target's own integration and re-resolve the same target on it. The opencode-go
+          // Lab -> Personal fall-through is this same path; there is no special case.
+          // The fallback excludes the credential that served this resolved target, captured
+          // at resolution time — not whatever happens to be active when the fallback runs:
+          // another session may already have activated a healthy credential after this one
+          // resolved, and that credential stays an eligible candidate (#6).
+          const credentialFallback =
+            (servingID: Credential.ID | undefined) => (): Effect.Effect<Resolved | undefined, Error> =>
+              Effect.gen(function* () {
+                const provider = yield* providers.get(target.providerID)
+                const integrationID = provider?.integrationID ?? Integration.ID.make(target.providerID)
+                const info = yield* integrations.get(integrationID)
+                const at = Date.now()
+                const candidates = (info?.connections ?? []).filter(
+                  (connection) =>
+                    connection.type === "credential" &&
+                    connection.id !== servingID &&
+                    ModelRoute.credentialCooldownUntil(target, connection.id, at) <= at &&
+                    ModelRoute.credentialQuotaBlocked(connection.id, at) === undefined &&
+                    !ModelRoute.demoted(target, at, connection.id),
+                )
+                for (const candidate of candidates) {
+                  if (candidate.type !== "credential") continue
+                  yield* integrations.connection.activate(candidate.id)
+                  const retried = yield* Effect.result(
+                    load(source, target.variant ?? mapped, definition.targetCacheFormats?.[index]?.cacheFormat),
+                  )
+                  if (Result.isFailure(retried)) continue
+                  // Attribution follows the credential load() actually served on, which is
+                  // the candidate just activated unless a concurrent session switched again
+                  // mid-load (#6).
+                  return makeResolved(
+                    retried.success.resolved,
+                    undefined,
+                    credentialFallback(retried.success.servingCredentialID),
+                    retried.success.servingCredentialID,
+                  )
+                }
+                return undefined
+              })
           // A session that just moved off its origin races that origin rather than the next fallback.
           const home = sessionID === undefined ? undefined : ModelRoute.hedgeHome(definition.id, sessionID)
           const homeIndex =
@@ -576,35 +706,15 @@ export const layer = Layer.effect(
                     requestTokens,
                   )
               : undefined
-          return {
-            ...current,
-            // The alias advertises the safest shared request shape. Pricing and provider metadata stay
-            // tied to the concrete target that answered.
-            capabilities: selected.capabilities,
-            limit: selected.limit,
-            // A native provider checkpoint is not portable across the route's targets.
-            compaction: undefined,
-            routing: {
-              routeID: definition.id,
-              target: current.ref,
-              policy: definition.health,
-              // Two requests by default: a single transient failure on a steady target is retried before the
-              // route moves on. Rate limits skip the retry (see the runner). Set 1 to fail over at once.
-              attempts: definition.attempts ?? 2,
-              ...(definition.hedgeAfterMs ? { hedgeAfterMs: definition.hedgeAfterMs } : {}),
-              autonomy: definition.autonomy,
-              fallback: () =>
-                resolveRoute(selected, definition, requestedVariant, triedTargets, false, sessionID, requestTokens),
-              ...(origin ? { origin } : {}),
-            },
-          }
+          return makeResolved(current, origin, credentialFallback(servingCredentialID), servingCredentialID)
         }
         if (lastError) return yield* Effect.fail(lastError)
         return undefined
       })
 
     const resolveSelected = (selected: Info, variant?: VariantID, sessionID?: string, requestTokens?: number) => {
-      if (selected.providerID !== ModelRoute.PROVIDER_ID) return load(selected, variant)
+      if (selected.providerID !== ModelRoute.PROVIDER_ID)
+        return load(selected, variant).pipe(Effect.map((loaded) => loaded.resolved))
       const definition = ModelRoute.definition(selected)
       if (!definition || definition.targets.length === 0)
         return Effect.fail(new RouteUnavailableError({ routeID: selected.id }))

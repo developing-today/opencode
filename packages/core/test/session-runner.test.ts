@@ -14,6 +14,7 @@ import {
   InvalidProviderOutputError,
   InvalidRequestError,
   RateLimitError,
+  QuotaExceededError,
   UnknownProviderError,
 } from "@opencode/ai"
 import { OpenAIChat } from "@opencode/ai/protocols/openai-chat"
@@ -21,6 +22,7 @@ import { AnthropicMessages, OpenAIResponses } from "@opencode/ai/protocols"
 import { compileRequest } from "@opencode/ai/route/client"
 import { TestLLM } from "@opencode/ai/testing"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
+import { Credential } from "@opencode/core/credential"
 import { Database } from "@opencode/core/database/database"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
@@ -1041,6 +1043,122 @@ describe("SessionRunnerLLM", () => {
     expect(s.requests).toHaveLength(1)
     expect(started).toBe(0)
     expect(JSON.stringify(requireAssistant(yield* s.messages))).toContain("from the primary")
+  })
+
+  scenario("switches to the next credential on a quota failure before failing over to another target", function* (s) {
+    ModelRoute.resetHealth()
+    const options = {
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      cost: [],
+      limit: defaultModelLimit,
+    } as const
+    let switches = 0
+    let fallbacks = 0
+    const switched = SessionRunnerModel.resolved(testModel("switched-credential"), options)
+    const backup = SessionRunnerModel.resolved(replacementModel, options)
+    s.routing = {
+      routeID: Model.ID.make("pool"),
+      target: ModelRoute.ref({ providerID: "fake", model: "fake-model" }),
+      policy: ModelRoute.policy({ firstTokenTimeoutMs: false }),
+      attempts: 1,
+      credentialID: Credential.ID.make("cred-lab"),
+      credentialFallback: () => Effect.sync(() => (switches++, switched)),
+      fallback: () => Effect.sync(() => (fallbacks++, backup)),
+    }
+    yield* s.admit("Say something")
+    yield* s.llm.push(TestLLM.failAfter(new AIError({ reason: new QuotaExceededError({ message: "out of quota" }) })))
+    yield* s.llm.push(TestLLM.text("from the second credential", "t1"))
+    yield* s.resume
+
+    expect(switches).toBe(1)
+    expect(fallbacks).toBe(0)
+    expect(s.requests).toHaveLength(2)
+    expect(String(s.requests[1]?.model.id)).toBe("switched-credential")
+    expect(JSON.stringify(requireAssistant(yield* s.messages))).toContain("from the second credential")
+    // The failure benched the serving credential, not the target itself.
+    expect(ModelRoute.credentialCoolingDown(s.routing.target, Credential.ID.make("cred-lab"))).toBe(true)
+    expect(ModelRoute.coolingDown(s.routing.target)).toBe(false)
+  })
+
+  scenario("switches credential at most once per provider in one assistant message", function* (s) {
+    ModelRoute.resetHealth()
+    const options = {
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      cost: [],
+      limit: defaultModelLimit,
+    } as const
+    let switches = 0
+    let fallbacks = 0
+    const backup = SessionRunnerModel.resolved(replacementModel, options)
+    const third = SessionRunnerModel.resolved(testModel("third-credential"), options)
+    const switched = SessionRunnerModel.resolved(testModel("switched-credential"), {
+      ...options,
+      routing: {
+        routeID: Model.ID.make("pool"),
+        target: ModelRoute.ref({ providerID: "fake", model: "fake-model" }),
+        policy: ModelRoute.policy({ firstTokenTimeoutMs: false }),
+        attempts: 1,
+        credentialID: Credential.ID.make("cred-personal"),
+        credentialFallback: () => Effect.sync(() => (switches++, third)),
+        fallback: () => Effect.sync(() => (fallbacks++, backup)),
+      },
+    })
+    s.routing = {
+      routeID: Model.ID.make("pool"),
+      target: ModelRoute.ref({ providerID: "fake", model: "fake-model" }),
+      policy: ModelRoute.policy({ firstTokenTimeoutMs: false }),
+      attempts: 1,
+      credentialID: Credential.ID.make("cred-lab"),
+      credentialFallback: () => Effect.sync(() => (switches++, switched)),
+      fallback: () => Effect.sync(() => (fallbacks++, backup)),
+    }
+    yield* s.admit("Say something")
+    yield* s.llm.push(TestLLM.failAfter(new AIError({ reason: new QuotaExceededError({ message: "out of quota" }) })))
+    yield* s.llm.push(
+      TestLLM.failAfter(new AIError({ reason: new QuotaExceededError({ message: "also out of quota" }) })),
+    )
+    yield* s.llm.push(TestLLM.text("from the backup target", "t1"))
+    yield* s.resume
+
+    // One switch total: the second quota failure moves to the fallback target instead of
+    // cycling the provider's next credential in the same message.
+    expect(switches).toBe(1)
+    expect(fallbacks).toBe(1)
+    expect(s.requests).toHaveLength(3)
+    expect(String(s.requests[2]?.model.id)).toBe("replacement")
+    expect(JSON.stringify(requireAssistant(yield* s.messages))).toContain("from the backup target")
+  })
+
+  scenario("does not switch credential on a non-quota failure", function* (s) {
+    ModelRoute.resetHealth()
+    const options = {
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      cost: [],
+      limit: defaultModelLimit,
+    } as const
+    let switches = 0
+    let fallbacks = 0
+    const switched = SessionRunnerModel.resolved(testModel("switched-credential"), options)
+    const backup = SessionRunnerModel.resolved(replacementModel, options)
+    s.routing = {
+      routeID: Model.ID.make("pool"),
+      target: ModelRoute.ref({ providerID: "fake", model: "fake-model" }),
+      policy: ModelRoute.policy({ firstTokenTimeoutMs: false }),
+      attempts: 1,
+      credentialID: Credential.ID.make("cred-lab"),
+      credentialFallback: () => Effect.sync(() => (switches++, switched)),
+      fallback: () => Effect.sync(() => (fallbacks++, backup)),
+    }
+    yield* s.admit("Say something")
+    yield* s.llm.push(TestLLM.failAfter(streamDisconnected()))
+    yield* s.llm.push(TestLLM.text("from the backup target", "t1"))
+    yield* s.resume
+
+    expect(switches).toBe(0)
+    expect(fallbacks).toBe(1)
+    expect(s.requests).toHaveLength(2)
+    expect(String(s.requests[1]?.model.id)).toBe("replacement")
+    expect(JSON.stringify(requireAssistant(yield* s.messages))).toContain("from the backup target")
   })
 
   scenario("generates the title while the first model step is still running", function* (s) {

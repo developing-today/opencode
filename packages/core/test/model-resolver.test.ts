@@ -12,6 +12,7 @@ import { Provider } from "@opencode/core/provider"
 import { Variant } from "@opencode/core/variant"
 import { ModelResolver } from "@opencode/core/model-resolver"
 import { ModelRoute } from "@opencode/core/model-route"
+import type { QuotaSnapshot } from "@opencode/core/quota-snapshot"
 import { ModelRouteLog } from "@opencode/core/model-route-log"
 import { ModelRouteAutonomy } from "@opencode/core/model-route-autonomy"
 import { AISDK } from "@opencode/core/aisdk"
@@ -1639,6 +1640,7 @@ describe("ModelResolver routes", () => {
   const withResolver = <A, E>(
     leaves: ReadonlyArray<ReturnType<typeof leaf>>,
     run: (resolver: ModelResolver.Interface) => Effect.Effect<A, E>,
+    integration?: unknown,
   ) => {
     const provider = Provider.Info.make({
       ...Provider.Info.empty(leaves[0].providerID),
@@ -1654,10 +1656,13 @@ describe("ModelResolver routes", () => {
             get: (providerID, id) =>
               Effect.succeed(leaves.find((item) => item.providerID === providerID && item.id === id)),
           }),
-          Layer.mock(Integration.Service, {
-            revision: () => 0,
-            connection: { active: () => Effect.undefined },
-          } as never),
+          Layer.mock(
+            Integration.Service,
+            (integration ?? {
+              revision: () => 0,
+              connection: { active: () => Effect.undefined },
+            }) as never,
+          ),
           Layer.mock(Npm.Service, {}),
           Layer.mock(AISDK.Service, {} as never),
         ),
@@ -1959,4 +1964,264 @@ describe("ModelResolver routes", () => {
       }),
     )
   })
+
+  it.effect("credentialFallback activates the next eligible credential and re-resolves the same target (#6)", () => {
+    ModelRoute.resetHealth()
+    const a = leaf("pa")
+    const route = routed([a], { ...single })
+    const activated: string[] = []
+    let activeID = "cred-a"
+    const conn = (id: string) => ({
+      type: "credential" as const,
+      id: Credential.ID.make(id),
+      label: id,
+      method: "key" as const,
+    })
+    const integration = {
+      revision: () => 0,
+      get: (id: Integration.ID) => Effect.succeed({ id, connections: [conn("cred-a"), conn("cred-b")] }),
+      connection: {
+        active: () => Effect.succeed(conn(activeID)),
+        resolve: () => Effect.succeed(Credential.Key.make({ type: "key", key: "secret" })),
+        activate: (id: Credential.ID) =>
+          Effect.sync(() => {
+            activated.push(String(id))
+            activeID = String(id)
+          }),
+      },
+    }
+    return withResolver(
+      [a],
+      (resolver) =>
+        Effect.gen(function* () {
+          const resolved = yield* resolver.resolveModel(route)
+          expect(String(resolved.routing?.credentialID)).toBe("cred-a")
+          const switched = yield* resolved.routing!.credentialFallback!()
+          expect(activated).toEqual(["cred-b"])
+          expect(targetOf(switched!)).toBe("pa")
+          expect(String(switched?.routing?.credentialID)).toBe("cred-b")
+          // The resolver rotates to the next eligible stored credential; the runner's
+          // one-switch-per-message guard is what stops a turn cycling the pool (#6).
+          const rotated = yield* switched!.routing!.credentialFallback!()
+          expect(activated).toEqual(["cred-b", "cred-a"])
+          expect(String(rotated?.routing?.credentialID)).toBe("cred-a")
+        }),
+      integration,
+    )
+  })
+
+  it.effect("credentialFallback excludes the serving credential, not one another session activated (#6)", () => {
+    ModelRoute.resetHealth()
+    const a = leaf("pa")
+    const route = routed([a], { ...single })
+    const activated: string[] = []
+    let activeID = "cred-a"
+    const conn = (id: string) => ({
+      type: "credential" as const,
+      id: Credential.ID.make(id),
+      label: id,
+      method: "key" as const,
+    })
+    const integration = {
+      revision: () => 0,
+      get: (id: Integration.ID) => Effect.succeed({ id, connections: [conn("cred-a"), conn("cred-b")] }),
+      connection: {
+        active: () => Effect.succeed(conn(activeID)),
+        resolve: () => Effect.succeed(Credential.Key.make({ type: "key", key: "secret" })),
+        activate: (id: Credential.ID) =>
+          Effect.sync(() => {
+            activated.push(String(id))
+            activeID = String(id)
+          }),
+      },
+    }
+    return withResolver(
+      [a],
+      (resolver) =>
+        Effect.gen(function* () {
+          const resolved = yield* resolver.resolveModel(route)
+          expect(String(resolved.routing?.credentialID)).toBe("cred-a")
+          // The serving credential fails on quota and is benched; meanwhile another
+          // session activates cred-b, so cred-b is the *active* credential by the time
+          // this session's fallback runs.
+          ModelRoute.failed(
+            ModelRoute.ref({ providerID: "pa", model: a.id }),
+            ModelRoute.policy(),
+            Date.now(),
+            { quota: true },
+            "cred-a",
+          )
+          activeID = "cred-b"
+          // The fallback must still offer cred-b: it excludes the credential that
+          // served this resolution (cred-a, also credential-cooling), not the
+          // currently active one.
+          const switched = yield* resolved.routing!.credentialFallback!()
+          expect(String(switched?.routing?.credentialID)).toBe("cred-b")
+          expect(targetOf(switched!)).toBe("pa")
+        }),
+      integration,
+    )
+  })
+
+  it.effect("serving attribution comes from the load itself, not the earlier active snapshot (#6)", () => {
+    ModelRoute.resetHealth()
+    const a = leaf("pa")
+    const route = routed([a], { ...single })
+    const activated: string[] = []
+    let activeReads = 0
+    let current = "cred-b"
+    const conn = (id: string) => ({
+      type: "credential" as const,
+      id: Credential.ID.make(id),
+      label: id,
+      method: "key" as const,
+    })
+    const integration = {
+      revision: () => 0,
+      get: (id: Integration.ID) => Effect.succeed({ id, connections: [conn("cred-a"), conn("cred-b")] }),
+      connection: {
+        // The ready filter's snapshot reads the active credential first (cred-a); a
+        // concurrent session then activates cred-b, so the load itself serves on cred-b.
+        active: () =>
+          Effect.sync(() => {
+            activeReads += 1
+            return conn(activeReads === 1 ? "cred-a" : current)
+          }),
+        resolve: () => Effect.succeed(Credential.Key.make({ type: "key", key: "secret" })),
+        activate: (id: Credential.ID) =>
+          Effect.sync(() => {
+            activated.push(String(id))
+            current = String(id)
+          }),
+      },
+    }
+    return withResolver(
+      [a],
+      (resolver) =>
+        Effect.gen(function* () {
+          const resolved = yield* resolver.resolveModel(route)
+          // Attribution names the credential the request was actually built with.
+          expect(String(resolved.routing?.credentialID)).toBe("cred-b")
+          // And the fallback excludes that serving credential, so it offers cred-a —
+          // with snapshot attribution it would have excluded cred-a and retried the
+          // exhausted cred-b.
+          const switched = yield* resolved.routing!.credentialFallback!()
+          expect(activated).toEqual(["cred-a"])
+          expect(String(switched?.routing?.credentialID)).toBe("cred-a")
+        }),
+      integration,
+    )
+  })
+
+  it.effect("a known-full active credential takes its target out of the route until a good read (#6)", () => {
+    ModelRoute.resetHealth()
+    const a = leaf("pa")
+    const b = leaf("pb")
+    const route = routed([a, b], { ...ordered })
+    const conn = { type: "credential" as const, id: Credential.ID.make("cred-a"), label: "lab", method: "key" as const }
+    const integration = {
+      revision: () => 0,
+      connection: {
+        active: (id: Integration.ID) => Effect.succeed(String(id) === "pa" ? conn : undefined),
+        resolve: () => Effect.succeed(Credential.Key.make({ type: "key", key: "secret" })),
+      },
+    }
+    const targetA = ModelRoute.ref({ providerID: "pa", model: a.id })
+    const snapshot = (percent: number): QuotaSnapshot.Snapshot => ({
+      planID: "pa-plan",
+      window: "monthly",
+      providerID: "pa",
+      percent,
+      remaining: percent >= 100 ? 0 : 50,
+      resetAt: Date.now() + 3_600_000,
+      observedAt: Date.now(),
+      stale: false,
+    })
+    return withResolver(
+      [a, b],
+      (resolver) =>
+        Effect.gen(function* () {
+          expect(targetOf(yield* resolver.resolveModel(route))).toBe("pa")
+          ModelRoute.observeCredentialQuota(targetA, "cred-a", snapshot(100))
+          expect(targetOf(yield* resolver.resolveModel(route))).toBe("pb")
+          ModelRoute.observeCredentialQuota(targetA, "cred-a", snapshot(40))
+          expect(targetOf(yield* resolver.resolveModel(route))).toBe("pa")
+        }),
+      integration,
+    )
+  })
+
+  it.effect("a known-full credential is the last resort when nothing else remains (#6)", () => {
+    ModelRoute.resetHealth()
+    const a = leaf("pa")
+    const route = routed([a], { ...single })
+    const conn = { type: "credential" as const, id: Credential.ID.make("cred-a"), label: "lab", method: "key" as const }
+    const integration = {
+      revision: () => 0,
+      connection: {
+        active: () => Effect.succeed(conn),
+        resolve: () => Effect.succeed(Credential.Key.make({ type: "key", key: "secret" })),
+      },
+    }
+    ModelRoute.observeCredentialQuota(ModelRoute.ref({ providerID: "pa", model: a.id }), "cred-a", {
+      planID: "pa-plan",
+      window: "monthly",
+      providerID: "pa",
+      percent: 100,
+      remaining: 0,
+      resetAt: Date.now() + 3_600_000,
+      observedAt: Date.now(),
+      stale: false,
+    })
+    return withResolver(
+      [a],
+      (resolver) =>
+        Effect.gen(function* () {
+          // Only target in the route: the gate yields rather than refusing the turn.
+          expect(targetOf(yield* resolver.resolveModel(route))).toBe("pa")
+        }),
+      integration,
+    )
+  })
+
+  it.effect("an over-limit non-full target does not mask a known-full last resort that fits (#6)", () => {
+    ModelRoute.resetHealth()
+    const a = leaf("pa")
+    const b = leaf("pb")
+    const route = routed([a, b], {
+      ...ordered,
+      targetLimits: [{ context: 200_000 }, { context: 100_000 }],
+    })
+    const conn = { type: "credential" as const, id: Credential.ID.make("cred-a"), label: "lab", method: "key" as const }
+    const integration = {
+      revision: () => 0,
+      connection: {
+        active: (id: Integration.ID) => Effect.succeed(String(id) === "pa" ? conn : undefined),
+        resolve: () => Effect.succeed(Credential.Key.make({ type: "key", key: "secret" })),
+      },
+    }
+    ModelRoute.observeCredentialQuota(ModelRoute.ref({ providerID: "pa", model: a.id }), "cred-a", {
+      planID: "pa-plan",
+      window: "monthly",
+      providerID: "pa",
+      percent: 100,
+      remaining: 0,
+      resetAt: Date.now() + 3_600_000,
+      observedAt: Date.now(),
+      stale: false,
+    })
+    return withResolver(
+      [a, b],
+      (resolver) =>
+        Effect.gen(function* () {
+          // pa's credential is known-full but pa fits the request; pb is not quota-blocked
+          // but its ceiling is below the request. The last resort is pa: an over-limit
+          // target is unusable, so it cannot count as the non-full alternative that
+          // excludes the known-full credential.
+          expect(targetOf(yield* resolver.resolveModel(route, undefined, "s-mask", 110_000))).toBe("pa")
+        }),
+      integration,
+    )
+  })
 })
+

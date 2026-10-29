@@ -175,13 +175,23 @@ describe("QuotaSnapshot", () => {
 
   test("well-formed daily rules keep their next-occurrence behaviour, including single-digit hours", () => {
     const later = QuotaSnapshot.derive(
-      { plan, window: { ...window, resetRule: "daily 23:59 UTC" } as ModelPlan.QuotaWindow, totals: totals(), observedAt: now },
+      {
+        plan,
+        window: { ...window, resetRule: "daily 23:59 UTC" } as ModelPlan.QuotaWindow,
+        totals: totals(),
+        observedAt: now,
+      },
       { now },
     )
     expect(later.resetAt).toBe(Date.parse("2026-10-27T23:59:00.000Z"))
 
     const single = QuotaSnapshot.derive(
-      { plan, window: { ...window, resetRule: "daily 9:05 UTC" } as ModelPlan.QuotaWindow, totals: totals(), observedAt: now },
+      {
+        plan,
+        window: { ...window, resetRule: "daily 9:05 UTC" } as ModelPlan.QuotaWindow,
+        totals: totals(),
+        observedAt: now,
+      },
       { now },
     )
     expect(single.resetAt).toBe(Date.parse("2026-10-28T09:05:00.000Z"))
@@ -212,5 +222,43 @@ describe("QuotaSnapshot", () => {
       "openai-plus/5-hour",
     ])
     expect(snapshots.every((snapshot) => snapshot.percent === 25)).toBe(true)
+  })
+
+  describe("isKnownFull (#6 gate)", () => {
+    const snap = (overrides: Partial<QuotaSnapshot.Snapshot> = {}): QuotaSnapshot.Snapshot => ({
+      planID: "anthropic-max",
+      window: "5-hour",
+      providerID: "anthropic",
+      percent: 100,
+      remaining: 0,
+      resetAt: now + 3_600_000,
+      observedAt: now,
+      stale: false,
+      ...overrides,
+    })
+
+    test("a fresh 100% reading is full until its reset", () => {
+      expect(QuotaSnapshot.isKnownFull(snap(), now)).toBe(true)
+      expect(QuotaSnapshot.isKnownFull(snap(), now + 3_599_999)).toBe(true)
+    })
+
+    test("the reset passing re-admits on its own", () => {
+      expect(QuotaSnapshot.isKnownFull(snap(), now + 3_600_000)).toBe(false)
+      expect(QuotaSnapshot.isKnownFull(snap(), now + 7_200_000)).toBe(false)
+    })
+
+    test("below the limit is not full", () => {
+      expect(QuotaSnapshot.isKnownFull(snap({ percent: 99.9, remaining: 1 }), now)).toBe(false)
+    })
+
+    test("unknown and stale readings are never full", () => {
+      expect(QuotaSnapshot.isKnownFull(snap({ percent: null, remaining: null }), now)).toBe(false)
+      expect(QuotaSnapshot.isKnownFull(snap({ stale: true }), now)).toBe(false)
+    })
+
+    test("a full reading with no derivable reset stays full until a fresher read", () => {
+      expect(QuotaSnapshot.isKnownFull(snap({ resetAt: null }), now)).toBe(true)
+      expect(QuotaSnapshot.isKnownFull(snap({ resetAt: null }), now + 86_400_000)).toBe(true)
+    })
   })
 })

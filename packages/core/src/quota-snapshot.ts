@@ -112,3 +112,17 @@ export const deriveAll = (
 
 /** Whether a snapshot carries a usable reading: a known percent that is still fresh. */
 export const known = (snapshot: Snapshot): boolean => snapshot.percent !== null && !snapshot.stale
+
+/**
+ * Whether a snapshot is a known-full reading at `now` (#6 gate): a fresh percent at or over the
+ * limit whose reset is still ahead. A null reset stays full until a fresher snapshot reads below
+ * the limit — the clock alone cannot re-admit what it never dated. A reset that has passed
+ * re-admits on its own: eligibility is recomputed from the latest snapshot at every check, so a
+ * known-full reading is never a wall past its own reset. Unknown or stale snapshots are never
+ * full: per the contract above they are neither headroom nor a wall.
+ */
+export const isKnownFull = (snapshot: Snapshot, now: number): boolean =>
+  known(snapshot) &&
+  snapshot.percent !== null &&
+  snapshot.percent >= 100 &&
+  (snapshot.resetAt === null || snapshot.resetAt > now)

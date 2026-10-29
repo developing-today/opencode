@@ -9,6 +9,7 @@ import { ModelRouteAutonomy } from "./model-route-autonomy.js"
 import { ModelRouteLog } from "./model-route-log.js"
 import { ModelRouteOverrides } from "./model-route-overrides.js"
 import { ModelRouteSchedule } from "./model-route-schedule.js"
+import { QuotaSnapshot } from "./quota-snapshot.js"
 import { optional, PositiveInt } from "@opencode/schema/schema"
 
 export const PROVIDER_ID = Provider.ID.make("opencode-route")
@@ -199,6 +200,37 @@ const health = new Map<
   string,
   { samples: boolean[]; outcomes: boolean[]; cooldownUntil: number; consecutiveFailures: number }
 >()
+
+/** Health of one credential serving one target (#6): two credentials behind one provider are
+ * distinct here even though they share the target's entry above, so a failure on one never
+ * benches the other. Process-local like `health`; transitions are logged through the same
+ * health channel. */
+const credentialHealth = new Map<
+  string,
+  { samples: boolean[]; outcomes: boolean[]; cooldownUntil: number; consecutiveFailures: number }
+>()
+
+const credentialKey = (target: Model.Ref, credentialID: string) => `${target.providerID}/${target.id}#${credentialID}`
+
+const credentialEntry = (target: Model.Ref, credentialID: string) => {
+  const id = credentialKey(target, credentialID)
+  const current = credentialHealth.get(id) ?? { samples: [], outcomes: [], cooldownUntil: 0, consecutiveFailures: 0 }
+  credentialHealth.delete(id)
+  credentialHealth.set(id, current)
+  while (credentialHealth.size > HEALTH_LIMIT) credentialHealth.delete(credentialHealth.keys().next().value!)
+  return current
+}
+
+/** Until when one credential of a target is benched; 0 when it is not. Reading an expired bench
+ * clears it, exactly like `cooldownUntil` for targets. */
+export const credentialCooldownUntil = (target: Model.Ref, credentialID: string, now = Date.now()) => {
+  const state = credentialHealth.get(credentialKey(target, credentialID))
+  if (state) recover(target, state, now)
+  return state?.cooldownUntil ?? 0
+}
+
+export const credentialCoolingDown = (target: Model.Ref, credentialID: string, now = Date.now()) =>
+  credentialCooldownUntil(target, credentialID, now) > now
 const HEALTH_LIMIT = 2_000
 // Recent finished requests per target (true = answered). A target with at most one give-up in this
 // window is steady: a single failure there is treated as transient before the route moves on.
@@ -219,7 +251,13 @@ const entry = (target: Model.Ref) => {
 
 const logHealth = (
   target: Model.Ref,
-  kind: "cooldown-start" | "cooldown-end" | "network-suspect" | "rate-limit-window",
+  kind:
+    | "cooldown-start"
+    | "cooldown-end"
+    | "network-suspect"
+    | "rate-limit-window"
+    | "quota-gated"
+    | "quota-readmitted",
   reason: string,
   until?: number,
 ) =>
@@ -284,33 +322,22 @@ export interface FailureHint {
   readonly auth?: boolean
 }
 
-export const failed = (target: Model.Ref, policy: Policy, now = Date.now(), hint?: FailureHint) => {
-  // Quota, rate-limit and provider HTTP errors are not evidence of an internet outage.
-  if (hint?.quota) recordQuota(target, now)
-  if (hint?.network) recentFailures.push({ provider: target.providerID, target: key(target), time: now })
-  while (recentFailures.length > 200 || (recentFailures[0] && now - recentFailures[0].time > NETWORK_WINDOW_MS))
-    recentFailures.shift()
-  if (hint?.network && networkSuspect(now)) {
-    // Undo the cooldowns from the earlier correlated transport errors too: those requests likely
-    // shared the same local outage, so treating each provider as independently unhealthy is wrong.
-    for (const failure of recentFailures) {
-      const prior = health.get(failure.target)
-      if (prior && prior.cooldownUntil > now) {
-        prior.cooldownUntil = 0
-        prior.samples = []
-      }
-    }
-    logHealth(target, "network-suspect", "transport failures across unrelated providers; target cooldowns cleared")
-    return
-  }
-  const state = entry(target)
+/** Benches one health state (a target's, or one credential's of a target) after a failure.
+ * A stated retry-after is believed as-is and never multiplied; every other class doubles its
+ * bench per consecutive failure (auth and quota start from the long bench), capped at a day.
+ * The count survives recover() and resets only on a success, so a permanently failing target
+ * backs off instead of being retried at full rate forever. */
+const bench = (
+  target: Model.Ref,
+  state: { samples: boolean[]; outcomes: boolean[]; cooldownUntil: number; consecutiveFailures: number },
+  policy: Policy,
+  now: number,
+  hint?: FailureHint,
+  credentialID?: string,
+) => {
   state.samples = []
   state.outcomes = pushOutcome(state.outcomes, false)
   state.consecutiveFailures += 1
-  // A stated retry-after is believed as-is and never multiplied; every other class doubles its
-  // bench per consecutive failure (auth and quota start from the long bench), capped at a day.
-  // The count survives recover() and resets only on a success, so a permanently failing target
-  // backs off instead of being retried at full rate forever.
   const base = hint?.quota || hint?.auth ? policy.quotaCooldownMs : policy.cooldownMs
   const cooldown =
     hint?.retryAfterMs !== undefined && hint.retryAfterMs > 0
@@ -320,9 +347,50 @@ export const failed = (target: Model.Ref, policy: Policy, now = Date.now(), hint
   logHealth(
     target,
     "cooldown-start",
-    hint?.retryAfterMs ? "retry-after" : hint?.quota ? "quota" : hint?.auth ? "auth" : "failure",
+    `${hint?.retryAfterMs ? "retry-after" : hint?.quota ? "quota" : hint?.auth ? "auth" : "failure"}${
+      credentialID ? ` credential:${credentialID}` : ""
+    }`,
     state.cooldownUntil,
   )
+}
+
+export const failed = (
+  target: Model.Ref,
+  policy: Policy,
+  now = Date.now(),
+  hint?: FailureHint,
+  credentialID?: string,
+) => {
+  // Quota, rate-limit and provider HTTP errors are not evidence of an internet outage.
+  if (hint?.quota) recordQuota(target, now, credentialID)
+  if (hint?.network)
+    recentFailures.push({
+      provider: target.providerID,
+      target: credentialID ? credentialKey(target, credentialID) : key(target),
+      time: now,
+    })
+  while (recentFailures.length > 200 || (recentFailures[0] && now - recentFailures[0].time > NETWORK_WINDOW_MS))
+    recentFailures.shift()
+  if (hint?.network && networkSuspect(now)) {
+    // Undo the cooldowns from the earlier correlated transport errors too: those requests likely
+    // shared the same local outage, so treating each provider as independently unhealthy is wrong.
+    for (const failure of recentFailures) {
+      const prior = health.get(failure.target) ?? credentialHealth.get(failure.target)
+      if (prior && prior.cooldownUntil > now) {
+        prior.cooldownUntil = 0
+        prior.samples = []
+      }
+    }
+    logHealth(target, "network-suspect", "transport failures across unrelated providers; target cooldowns cleared")
+    return
+  }
+  // With a credential dimension the failure belongs to the credential that served the attempt:
+  // benching the target as well would bench every other credential behind the provider too (#6).
+  if (credentialID) {
+    bench(target, credentialEntry(target, credentialID), policy, now, hint, credentialID)
+    return
+  }
+  bench(target, entry(target), policy, now, hint)
 }
 
 /** Counts a request that was given up on for being slow, so a target that keeps losing hedges
@@ -390,16 +458,66 @@ export const escalates = (target: Model.Ref) => settings.escalation.enabled && !
 // of every order, instead of being retried first on each new session.
 const quotaEvents = new Map<string, number[]>()
 
-/** True when a target has hit its quota errors often enough recently to be put last. */
-export const demoted = (target: Model.Ref, now = Date.now()) => {
-  const recent = (quotaEvents.get(key(target)) ?? []).filter((at) => now - at <= settings.quota.windowMs)
+/** True when a target has hit its quota errors often enough recently to be put last. With a
+ * credentialID, only that credential's quota errors count: the demotion is per credential (#6). */
+export const demoted = (target: Model.Ref, now = Date.now(), credentialID?: string) => {
+  const recent = (quotaEvents.get(credentialID ? credentialKey(target, credentialID) : key(target)) ?? []).filter(
+    (at) => now - at <= settings.quota.windowMs,
+  )
   return recent.length >= settings.quota.demoteAfter
 }
 
-const recordQuota = (target: Model.Ref, now: number) => {
-  const id = key(target)
+const recordQuota = (target: Model.Ref, now: number, credentialID?: string) => {
+  const id = credentialID ? credentialKey(target, credentialID) : key(target)
   const recent = (quotaEvents.get(id) ?? []).filter((at) => now - at <= settings.quota.windowMs)
   quotaEvents.set(id, [...recent, now].slice(-50))
+}
+
+// The proactive half of #6: the latest quota snapshot observed per credential, and whether it
+// currently gates the credential out of routes. Snapshots stay derived at their producers
+// (#587); this is only the gate state consumers read. An unknown or stale observation never
+// replaces a known one, so a gated credential is re-admitted only by its reset passing or by a
+// fresher known snapshot below the limit — never by losing the signal.
+const credentialQuota = new Map<string, { snapshot: QuotaSnapshot.Snapshot; target: Model.Ref; gated: boolean }>()
+
+/** Feeds one credential's latest quota snapshot into the gate. */
+export const observeCredentialQuota = (
+  target: Model.Ref,
+  credentialID: string,
+  snapshot: QuotaSnapshot.Snapshot,
+  now = Date.now(),
+) => {
+  const previous = credentialQuota.get(credentialID)
+  if (previous && !QuotaSnapshot.known(snapshot)) return
+  // Out-of-order delivery must not rewind the gate: an observation older than the retained
+  // one carries no new information, even when it is still fresh — a below-limit reading
+  // taken before the retained known-full reading cannot re-admit the credential (#6).
+  if (previous && snapshot.observedAt < previous.snapshot.observedAt) return
+  const full = QuotaSnapshot.isKnownFull(snapshot, now)
+  credentialQuota.set(credentialID, { snapshot, target, gated: full })
+  if (full && !previous?.gated)
+    logHealth(target, "quota-gated", `credential:${credentialID} quota-known-full`, snapshot.resetAt ?? undefined)
+  if (!full && previous?.gated) logHealth(target, "quota-readmitted", `credential:${credentialID}`)
+}
+
+/** The gate on one credential at `now`: `{ until }` (the snapshot's reset, null when it gave
+ * none) while a known-full snapshot holds it out of routes, undefined while it is eligible.
+ * Passing the reset re-admits and logs it, like a cooldown expiring. */
+export const credentialQuotaBlocked = (
+  credentialID: string,
+  now = Date.now(),
+): { readonly until: number | null } | undefined => {
+  const state = credentialQuota.get(credentialID)
+  if (!state) return undefined
+  if (QuotaSnapshot.isKnownFull(state.snapshot, now)) {
+    state.gated = true
+    return { until: state.snapshot.resetAt }
+  }
+  if (state.gated) {
+    state.gated = false
+    logHealth(state.target, "quota-readmitted", `credential:${credentialID}`)
+  }
+  return undefined
 }
 
 export const completed = (
@@ -407,7 +525,16 @@ export const completed = (
   policy: Policy,
   sample: { readonly firstTokenMs: number; readonly responseMs: number; readonly tokensPerSecond: number },
   now = Date.now(),
+  credentialID?: string,
 ) => {
+  // A success clears the serving credential's failure count and bench (#6); the target-level
+  // accounting below is unchanged, since the target did serve the request.
+  if (credentialID) {
+    const credentialState = credentialEntry(target, credentialID)
+    credentialState.outcomes = pushOutcome(credentialState.outcomes, true)
+    credentialState.consecutiveFailures = 0
+    recover(target, credentialState, now)
+  }
   const state = entry(target)
   state.outcomes = pushOutcome(state.outcomes, true)
   state.consecutiveFailures = 0
@@ -432,6 +559,8 @@ export const resetHealth = () => {
   usage.clear()
   adjustments = []
   health.clear()
+  credentialHealth.clear()
+  credentialQuota.clear()
   quotaEvents.clear()
   continuity.clear()
   recentFailures.length = 0
