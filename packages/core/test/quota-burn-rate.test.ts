@@ -56,6 +56,37 @@ describe("QuotaBurnRate.estimate", () => {
     expect(estimate.effort).toBeNull()
   })
 
+  test.each(["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"])(
+    "a prototype-named effort (%s) with no own prior falls back to the default prior",
+    (effort) => {
+      const estimate = QuotaBurnRate.estimate([], { providerID: "meta", modelID: "muse-wonder", effort })
+      expect(estimate.source).toBe("prior-default")
+      expect(estimate.percentPerSession).toBe(QuotaBurnRate.DEFAULT_PRIOR)
+      expect(typeof estimate.percentPerSession).toBe("number")
+    },
+  )
+
+  test("a prototype-named effort still falls back to the default prior when caller priors are present", () => {
+    const estimate = QuotaBurnRate.estimate(
+      [],
+      { providerID: "meta", modelID: "muse-wonder", effort: "constructor" },
+      { priors: { low: 2 } },
+    )
+    expect(estimate.source).toBe("prior-default")
+    expect(estimate.percentPerSession).toBe(QuotaBurnRate.DEFAULT_PRIOR)
+  })
+
+  test("an own-property prior named 'constructor' is still honoured", () => {
+    const priors = Object.fromEntries([["constructor", 7]])
+    const estimate = QuotaBurnRate.estimate(
+      [],
+      { providerID: "meta", modelID: "muse-wonder", effort: "constructor" },
+      { priors },
+    )
+    expect(estimate.source).toBe("prior-effort")
+    expect(estimate.percentPerSession).toBe(7)
+  })
+
   test("configured priors override the defaults", () => {
     const estimate = QuotaBurnRate.estimate(
       [],
