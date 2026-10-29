@@ -1738,6 +1738,15 @@ export type FilesystemChanged = {
   data: { file: string; event: "add" | "change" | "unlink" }
 }
 
+export type FilesystemWatcherDegraded = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "filesystem.watcher-degraded"
+  location?: LocationRef
+  data: { directory: string; cause: "timeout" | "inotify-limit" | "unsupported" | "error" }
+}
+
 export type ReferenceUpdated = {
   id: EventID
   created: number
@@ -2130,20 +2139,6 @@ export type CredentialKey = {
   key: string
   metadata?: { [x: string]: JsonValue }
   configuration?: FormAnswer
-}
-
-export type ProviderInfo = {
-  id: ProviderID
-  canonical?: ProviderID
-  integrationID?: IntegrationID
-  instanceOf?: ProviderID
-  name: string
-  activation: "auto" | "enabled" | "disabled"
-  package: string
-  compatibility?: ProviderCompatibility
-  settings?: ProviderSettings
-  headers?: { [x: string]: string }
-  body?: { [x: string]: any }
 }
 
 export type ConfigModelRoutes = {
@@ -2846,6 +2841,21 @@ export type SessionMessageCompaction =
   | SessionMessageCompactionCompleted
   | SessionMessageCompactionFailed
 
+export type ProviderInfoWithModels = {
+  id: ProviderID
+  canonical?: ProviderID
+  integrationID?: IntegrationID
+  instanceOf?: ProviderID
+  name: string
+  activation: "auto" | "enabled" | "disabled"
+  package: string
+  compatibility?: ProviderCompatibility
+  settings?: ProviderSettings
+  headers?: { [x: string]: string }
+  body?: { [x: string]: any }
+  models: Array<ModelInfo>
+}
+
 export type SessionInboxInfo = SessionInboxUser | SessionInboxSynthetic | SessionInboxCompaction | SessionInboxMove
 
 export type SessionMessageAssistant = {
@@ -3075,6 +3085,7 @@ export type V2Event =
   | SessionRevertCleared
   | SessionRevertCommitted
   | FilesystemChanged
+  | FilesystemWatcherDegraded
   | ReferenceUpdated
   | PermissionAsked
   | PermissionReplied
@@ -6507,14 +6518,14 @@ export type ProviderListInput = {
   readonly location?: { readonly location?: { readonly directory?: string | undefined } | undefined }["location"]
 }
 
-export type ProviderListOutput = { location: LocationPublicRef; data: Array<ProviderInfo> }
+export type ProviderListOutput = { location: LocationPublicRef; data: Array<ProviderInfoWithModels> }
 
 export type ProviderGetInput = {
   readonly providerID: { readonly providerID: string }["providerID"]
   readonly location?: { readonly location?: { readonly directory?: string | undefined } | undefined }["location"]
 }
 
-export type ProviderGetOutput = { location: LocationPublicRef; data: ProviderInfo }
+export type ProviderGetOutput = { location: LocationPublicRef; data: ProviderInfoWithModels }
 
 export type IntegrationListInput = {
   readonly location?: { readonly location?: { readonly directory?: string | undefined } | undefined }["location"]

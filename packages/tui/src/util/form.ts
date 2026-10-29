@@ -69,6 +69,21 @@ export function formSelected(field: FormField | undefined, value: FormValue | un
   return 0
 }
 
+/** Convert typed text for a number/integer field with the strict plain-decimal
+ * grammar /^-?\d+(?:\.\d+)?$/ (the #682/#711 precedent family, as in
+ * ToolInputRepair), applied to the trimmed text. Empty/whitespace text yields
+ * undefined, so a required field reports "Answer required" and an optional
+ * field is skipped; any other non-decimal spelling ("0x10", "0b101", "1e3",
+ * "Infinity", "+1", ".5") yields NaN, which the validators report as
+ * "Expected a number", instead of the different value bare Number() would
+ * silently reinterpret it as (#844). Integer-ness stays with the validators:
+ * "1.5" converts to 1.5 and they report "Expected an integer". */
+export function formNumberValue(text: string): number | undefined {
+  const trimmed = text.trim()
+  if (!trimmed) return undefined
+  return /^-?\d+(?:\.\d+)?$/.test(trimmed) ? Number(trimmed) : Number.NaN
+}
+
 export function formValidateValue(field: FormAnswerField, value: FormValue | undefined): string | undefined {
   if (value === undefined) return field.required ? "Answer required" : undefined
   if (field.required && (value === "" || (Array.isArray(value) && value.length === 0)))
