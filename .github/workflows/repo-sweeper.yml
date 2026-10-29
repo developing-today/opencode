@@ -34,6 +34,8 @@ name: repo-sweeper
 # daily-gated closers resume the next day (closed items leave the
 # pool, so progress is never lost).
 
+# Daily closers run on schedule only: a manual dispatch exercises the
+# 15-minute duties and LLM passes but never closes issues/PRs.
 on:
   schedule:
     - cron: "*/15 * * * *"
@@ -167,7 +169,7 @@ jobs:
         run: |
           # Schedule events carry no timestamp input; gate on the clock.
           HOUR=$(date -u +%H)
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ "$HOUR" != "02" ]; then
+          if [ "$GITHUB_EVENT_NAME" != "schedule" ] || [ "$HOUR" != "02" ]; then
             echo "Not the 02:00 UTC window (hour=$HOUR); skipping stale-issue close"
             exit 0
           fi
@@ -176,14 +178,11 @@ jobs:
       - name: Close old PRs without enough positive reactions (daily, 22:00 UTC window)
         run: |
           HOUR=$(date -u +%H)
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ "$HOUR" != "22" ]; then
+          if [ "$GITHUB_EVENT_NAME" != "schedule" ] || [ "$HOUR" != "22" ]; then
             echo "Not the 22:00 UTC window (hour=$HOUR); skipping old-PR close"
             exit 0
           fi
-          args=("--threshold" "2" "--age-months" "1" "--sleep-ms" "20000" "--max-close" "50")
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            args+=("--execute")
-          fi
+          args=("--threshold" "2" "--age-months" "1" "--sleep-ms" "20000" "--max-close" "50" "--execute")
           bun script/github/close-prs.ts "${args[@]}"
 
       # ---- LLM candidate discovery (20-minute lookback) ----
