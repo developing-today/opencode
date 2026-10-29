@@ -125,6 +125,42 @@ describe("ModelRouteLimits.holdUntil", () => {
     expect(ModelRouteLimits.holdUntil(whitespace, at)).toBe(0)
     expect(ModelRouteLimits.holdUntil(snap({ remaining: { requests: "0" } }), at)).toBe(at + 60_000)
   })
+
+  test("looks up limit and reset entries only when they are own properties", () => {
+    const constructor = snap({
+      limit: { requests: "100" },
+      remaining: { constructor: "5", requests: "50" },
+    })
+    expect(ModelRouteLimits.windows(constructor)).toEqual([
+      { name: "constructor", remaining: 5, limit: undefined, resetAt: undefined },
+      { name: "requests", remaining: 50, limit: 100, resetAt: undefined },
+    ])
+    expect(ModelRouteLimits.holdUntil(constructor, at)).toBe(0)
+
+    const toString = snap({
+      limit: { requests: "100" },
+      remaining: { toString: "0", requests: "50" },
+      reset: { requests: "30s" },
+    })
+    expect(ModelRouteLimits.windows(toString)).toEqual([
+      { name: "toString", remaining: 0, limit: undefined, resetAt: undefined },
+      { name: "requests", remaining: 50, limit: 100, resetAt: at + 30_000 },
+    ])
+    expect(ModelRouteLimits.holdUntil(toString, at)).toBe(at + 60_000)
+  })
+
+  test("handles a JSON-parsed snapshot with an own __proto__ window", () => {
+    const value = JSON.parse(
+      `{"at":${at},"remaining":{"__proto__":"0","requests":"3"},"limit":{"requests":"100"}}`,
+    ) as ModelRouteLimits.Snapshot
+
+    expect(Object.hasOwn(value.remaining ?? {}, "__proto__")).toBe(true)
+    expect(ModelRouteLimits.windows(value)).toEqual([
+      { name: "__proto__", remaining: 0, limit: undefined, resetAt: undefined },
+      { name: "requests", remaining: 3, limit: 100, resetAt: undefined },
+    ])
+    expect(ModelRouteLimits.holdUntil(value, at)).toBe(at + 60_000)
+  })
 })
 
 describe("ModelRouteLimits.retryHintFromMessage", () => {
@@ -186,6 +222,20 @@ describe("ModelRouteLimits.retryHintFromMessage", () => {
     }
     // Valid boundary times still parse exactly as before.
     for (const value of ["2026-01-01T23:59:59Z", "2026-01-01T00:00:00Z", "2024-02-29T23:59:59Z"]) {
+      expect(ModelRouteLimits.parseAbsoluteTime(value)).toBe(Date.parse(value))
+    }
+  })
+
+  test("treats calendar-invalid non-ISO dates as unparseable instead of rolling them forward (#798)", () => {
+    // The ISO round-trip does not reach named or slash-ordered forms, but V8 rolls their
+    // overflow days the same way: Feb 30 states no reset in any spelling.
+    for (const value of ["Feb 30 2026", "Feb 30, 2026", "30 Feb 2026", "2026/02/30", "April 31 2026", "2026/04/31"]) {
+      expect(ModelRouteLimits.parseAbsoluteTime(value)).toBeUndefined()
+    }
+    // Hour 24 is rejected in non-ISO forms too, not only ISO ones.
+    expect(ModelRouteLimits.parseAbsoluteTime("Feb 28 2026 24:00")).toBeUndefined()
+    // Valid non-ISO forms parse exactly as before, leap day included.
+    for (const value of ["Jan 5 2026", "5 Jan 2026", "Feb 29 2024", "Wed, 21 Oct 2015 07:28:00 GMT"]) {
       expect(ModelRouteLimits.parseAbsoluteTime(value)).toBe(Date.parse(value))
     }
   })

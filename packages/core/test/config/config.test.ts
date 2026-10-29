@@ -1508,6 +1508,26 @@ describe("Config", () => {
     }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
   )
 
+  it.effect("resolves env references by own property, not through the prototype chain", () =>
+    Effect.gen(function* () {
+      const substitute = (text: string, env?: Record<string, string>) =>
+        ConfigVariable.substitute({ type: "virtual", source: "test", dir: "/", text, ...(env ? { env } : {}) })
+      for (const name of ["constructor", "toString", "hasOwnProperty", "valueOf", "__proto__"]) {
+        const text = `{ "v": "{env:${name}}", "f": "{env:${name}:-FALLBACK}" }`
+        // Not actually set in the supplied env: resolves as unset ("" / the :- fallback),
+        // never as the inherited Object.prototype member.
+        expect(JSON.parse(yield* substitute(text, {}))).toEqual({ v: "", f: "FALLBACK" })
+        // Same on the process.env path (no env supplied, the normal config-file path).
+        expect(JSON.parse(yield* substitute(text))).toEqual({ v: "", f: "FALLBACK" })
+        // Genuinely set under a prototype name in the supplied env: substitutes its real value.
+        expect(JSON.parse(yield* substitute(text, Object.fromEntries([[name, "real"]])))).toEqual({
+          v: "real",
+          f: "real",
+        })
+      }
+    }).pipe(Effect.provide(AppNodeBuilder.build(FSUtil.node))),
+  )
+
   it.effect("does not substitute env references on // comment lines", () =>
     Effect.gen(function* () {
       const substitute = (text: string, env: Record<string, string>) =>
