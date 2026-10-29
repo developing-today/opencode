@@ -2,13 +2,21 @@ import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import { Config } from "../src/config.js"
 import { ConfigAgent } from "../src/config/agent.js"
+import { ConfigAlias } from "../src/config/aliases.js"
+import { ConfigExperimental } from "../src/config/experimental.js"
 import { ConfigMCP } from "../src/config/mcp.js"
+import { ConfigMessaging } from "../src/config/messaging.js"
 import { ConfigModel } from "../src/config/model.js"
 import { ConfigModelRoutes } from "../src/config/model-routes.js"
 import { ConfigProvider } from "../src/config/provider.js"
+import { ConfigWarming } from "../src/config/warming.js"
+import { Form } from "../src/form.js"
 import { Mcp } from "../src/mcp.js"
+import { Messaging } from "../src/messaging.js"
 import { Model } from "../src/model.js"
 import { Provider } from "../src/provider.js"
+import { Question } from "../src/question.js"
+import { Skill } from "../src/skill.js"
 import { AbsolutePath } from "../src/schema.js"
 import { WebSearch } from "../src/websearch.js"
 
@@ -191,6 +199,72 @@ describe("ConfigModelRoutes field descriptions", () => {
     expect(described(ConfigModelRoutes.Budget).softLimit).toContain("Fraction of an allowance")
     expect(described(ConfigModelRoutes.Route).autonomy).toContain("How much the route may decide")
     expect(described(ConfigModelRoutes.Target).defaultVariant).toContain("Variant used when the route is selected")
+  })
+})
+
+describe("field descriptions beyond model-routes (#650)", () => {
+  // Same defect as #240, in the remaining schema files: a description annotated outside the package
+  // `optional` helper never reaches the encoded JSON schema. These cases pin the fields fixed by #650.
+  const described = (schema: Schema.Top) => {
+    const { definitions } = Schema.toJsonSchemaDocument(schema, { onExcessProperty: "error" })
+    const fields: Record<string, string | undefined> = {}
+    const walk = (node: unknown) => {
+      if (Array.isArray(node)) return node.forEach(walk)
+      if (typeof node !== "object" || node === null) return
+      const { properties, ...rest } = node as { properties?: Record<string, { description?: string }> }
+      for (const [name, property] of Object.entries(properties ?? {})) fields[name] ??= property.description
+      Object.values(rest).forEach(walk)
+    }
+    Object.values(definitions as Record<string, unknown>).forEach(walk)
+    return fields
+  }
+
+  test("every documented field carries its description in the encoded JSON schema", () => {
+    const cases: Array<[Schema.Top, string[]]> = [
+      [
+        Config.Info,
+        [
+          "shell",
+          "default_agent",
+          "username",
+          "snapshots",
+          "enterprise",
+          "agents",
+          "warming",
+          "websearch",
+          "plugins",
+          "references",
+          "commands",
+          "lsp",
+          "formatter",
+          "update",
+          "share",
+        ],
+      ],
+      [ConfigMessaging.Info, ["embedding"]],
+      [ConfigMessaging.Search, ["match", "model"]],
+      [ConfigMessaging.Embedding, ["tier", "pooling", "gpu_layers"]],
+      [ConfigMessaging.Remote, ["key"]],
+      [ConfigExperimental.Info, ["portable_shell_scanner", "subagent_depth", "shell_timeout", "model_route_schedules"]],
+      [ConfigAlias.Info, ["providers", "models", "variants"]],
+      [ConfigWarming.Info, ["prompt"]],
+      [Mcp.TimeoutConfig, ["startup", "catalog", "execution"]],
+      [Mcp.LocalConfig, ["cwd", "codemode"]],
+      [Mcp.OAuthConfig, ["auth_server_metadata_url"]],
+      [Messaging.Writer, ["children", "ancestors"]],
+      [Form.StringField, ["hidden"]],
+      [Question.Prompt, ["multiple"]],
+      [Skill.Info, ["vars"]],
+    ]
+    for (const [schema, names] of cases) {
+      const fields = described(schema)
+      for (const name of names) expect(fields[name], name).toBeString()
+    }
+    expect(JSON.stringify(Schema.toJsonSchemaDocument(WebSearch.Result, { onExcessProperty: "error" }))).toContain(
+      "Publication time in milliseconds",
+    )
+    expect(described(Messaging.Writer).children).toContain("Also allow its descendants")
+    expect(described(Config.Info).shell).toContain("Default shell to use")
   })
 })
 
