@@ -20,13 +20,16 @@ export async function rootSession<T extends SessionParent>(session: T, get: (ses
   const seen = new Set([session.id])
   let current = session
 
+  // Follow the fork link where a session has no parent, as core
+  // SessionAffinity.resolveRoot does, so a fork resolves to the source
+  // tree's root instead of stopping at the fork.
   while (true) {
     const parentID = current.parentID ?? current.fork?.sessionID
-    if (!parentID) break
+
+    if (!parentID) return current
+
     if (seen.has(parentID)) throw new Error(`Session parent cycle: ${parentID}`)
     seen.add(parentID)
     current = await get(parentID)
   }
-
-  return current
 }
