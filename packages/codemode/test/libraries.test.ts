@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Schema } from "effect"
-import { CodeMode, Std, Tool } from "../src/index.js"
+import { CodeMode, Extension, Std, Tool } from "../src/index.js"
 
 const runWithStd = (code: string) =>
   Effect.runPromise(CodeMode.make({ libraries: [Std.library] }).execute(code))
@@ -118,5 +118,169 @@ describe("std.bind", () => {
     )
     expect(result).toMatchObject({ ok: true, value: "dev:hi", toolCalls: [{ name: "host.echo" }] })
     expect(seen).toEqual([{ name: "host.echo", input: { text: "hi", aws_profile: "dev" } }])
+  })
+})
+
+describe("std async helpers (#803)", () => {
+  // A test sleep primitive standing in for core's sleep extension: it records
+  // every requested delay and actually waits, scaled down by the tests' use
+  // of small millisecond values.
+  const sleepCalls: Array<number> = []
+  const sleepExtension = Extension.make({
+    name: "sleep",
+    globals: {
+      [Std.sleepHostGlobal]: async (ms: number) => {
+        sleepCalls.push(ms)
+        await new Promise((resolve) => setTimeout(resolve, ms))
+      },
+    },
+  })
+  const runAsync = (code: string, limits?: { timeoutMs?: number; maxToolCalls?: number }) =>
+    Effect.runPromise(
+      CodeMode.make({ extensions: [sleepExtension], libraries: [Std.library], limits }).execute(code),
+    )
+  const valueAsync = async (code: string) => {
+    const result = await runAsync(code)
+    if (!result.ok) throw new Error(`expected success, got ${result.error.kind}: ${result.error.message}`)
+    return result.value
+  }
+
+  test("std.sleep waits through the host primitive and is not exposed under its own name", async () => {
+    sleepCalls.length = 0
+    expect(await valueAsync(`await std.sleep(5); return "slept"`)).toBe("slept")
+    expect(sleepCalls).toEqual([5])
+    const bare = await runAsync(`return typeof sleep`)
+    expect(bare.ok).toBe(true)
+    if (bare.ok) expect(bare.value).not.toBe("function")
+  })
+
+  test("std.sleep rejects unavailable when no runtime provides the primitive", async () => {
+    const result = await runWithStd(`await std.sleep(1); return "slept"`)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.message).toContain("std.sleep is unavailable")
+  })
+
+  test("a sleep longer than the execution budget does not extend the execution", async () => {
+    const result = await runAsync(`await std.sleep(60_000); return "slept"`, { timeoutMs: 50 })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.kind).toBe("TimeoutExceeded")
+  })
+
+  test("std.mapLimit bounds concurrency, preserves order, and stops starting after a rejection", async () => {
+    const outcome = await valueAsync(`
+      let active = 0;
+      let peak = 0;
+      const results = await std.mapLimit([30, 5, 20, 10], 2, async (ms) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await std.sleep(ms);
+        active -= 1;
+        return ms * 2;
+      });
+      return [results, peak];
+    `)
+    expect(outcome).toEqual([[60, 10, 40, 20], 2])
+
+    const started: Array<number> = []
+    const failed = await runAsync(`
+      const started = [];
+      try {
+        await std.mapLimit([1, 2, 3, 4], 1, async (n) => {
+          started.push(n);
+          if (n === 2) throw new Error("boom");
+          return n;
+        });
+        return "no-throw";
+      } catch (error) {
+        return [error.message, started];
+      }
+    `)
+    expect(failed.ok).toBe(true)
+    if (failed.ok) expect(failed.value).toEqual(["boom", [1, 2]])
+    expect(started).toEqual([])
+  })
+
+  test("std.retry retries rejections only, delays through std.sleep, and stops at attempts", async () => {
+    sleepCalls.length = 0
+    const outcome = await valueAsync(`
+      let calls = 0;
+      const value = await std.retry(async () => {
+        calls += 1;
+        if (calls < 3) throw new Error("transient " + calls);
+        return "ok-" + calls;
+      }, { attempts: 5, delayMs: 5, backoff: 2 });
+      return [value, calls];
+    `)
+    expect(outcome).toEqual(["ok-3", 3])
+    expect(sleepCalls).toEqual([5, 10])
+
+    sleepCalls.length = 0
+    const exhausted = await runAsync(`
+      let calls = 0;
+      try {
+        await std.retry(async () => { calls += 1; throw new Error("always"); }, { attempts: 2, delayMs: 1 });
+        return "no-throw";
+      } catch (error) {
+        return [error.message, calls];
+      }
+    `)
+    expect(exhausted.ok).toBe(true)
+    if (exhausted.ok) expect(exhausted.value).toEqual(["always", 2])
+    // A resolved value is never retried.
+    expect(await valueAsync(`let calls = 0; const v = await std.retry(async () => { calls += 1; return 7; }); return [v, calls]`)).toEqual([7, 1])
+  })
+
+  test("std.withTimeout rejects at the deadline while the underlying work still completes", async () => {
+    const outcome = await valueAsync(`
+      let completed = false;
+      const slow = (async () => { await std.sleep(40); completed = true; return "slow"; })();
+      let message = "";
+      try {
+        await std.withTimeout(slow, 5);
+      } catch (error) {
+        message = error.message;
+      }
+      await std.sleep(60);
+      return [message.includes("not cancelled"), completed];
+    `)
+    expect(outcome).toEqual([true, true])
+  })
+
+  test("tool calls inside helpers count and record exactly as direct calls", async () => {
+    const echo = Tool.make({
+      description: "Echo",
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.String,
+      execute: (input) => Effect.succeed(input.text),
+    })
+    const runtime = CodeMode.make({
+      tools: { echo },
+      extensions: [sleepExtension],
+      libraries: [Std.library],
+      limits: { maxToolCalls: 10 },
+    })
+    const result = await Effect.runPromise(
+      runtime.execute(`return std.mapLimit(["a", "b", "c"], 2, async (text) => tools.echo({ text }))`),
+    )
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value).toEqual(["a", "b", "c"])
+      expect(result.toolCalls).toEqual([{ name: "echo" }, { name: "echo" }, { name: "echo" }])
+    }
+    const capped = await Effect.runPromise(
+      CodeMode.make({
+        tools: { echo },
+        extensions: [sleepExtension],
+        libraries: [Std.library],
+        limits: { maxToolCalls: 2 },
+      }).execute(`return std.mapLimit(["a", "b", "c"], 2, async (text) => tools.echo({ text }))`),
+    )
+    expect(capped.ok).toBe(false)
+    if (!capped.ok) {
+      // The limit error surfaces through the helper's worker promise, wrapped
+      // as an execution failure naming the tool call limit.
+      expect(capped.error.message).toContain("tool-call limit")
+      expect(capped.toolCalls).toHaveLength(2)
+    }
   })
 })
