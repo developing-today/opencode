@@ -239,6 +239,94 @@ export interface DayReport {
   >
 }
 
+/** One request as far as turn stitching needs it: the link to the attempt it continues, plus what it cost. */
+export interface TurnAttemptRow {
+  readonly id: number
+  readonly continuationOf: number | null
+  readonly continuationIndex: number | null
+  readonly assistantMessageID: string | null
+  readonly sessionID: string | null
+  readonly providerID: string
+  readonly modelID: string
+  readonly timeStarted: number
+  readonly timeEnded: number
+  readonly outcome: string
+  readonly input: number | null
+  readonly output: number | null
+  readonly reasoning: number | null
+  readonly cacheRead: number | null
+  readonly cacheWrite: number | null
+  readonly costUsd: number | null
+}
+
+export interface TurnRow extends Totals {
+  /** Id of the attempt that started the turn; for a partial turn whose root fell outside the window, the id it names. */
+  readonly rootID: number
+  readonly sessionID: string | null
+  /** The target the response started on; a failover mid-turn does not move the turn to another model. */
+  readonly providerID: string
+  readonly modelID: string
+  /** Response segments: the root attempt plus each output-token-limit continuation, however many requests each took. */
+  readonly chunks: number
+  readonly first: number
+  readonly last: number
+  readonly durationMs: number
+}
+
+/** Rolls attempts up into turns: a root attempt plus every attempt whose `continuation_of` names it. Retries and hedge
+ * legs share the assistant message of the chunk they belong to, so the newest standalone attempt of a message is that
+ * chunk's root and the others join it; `requests` therefore counts every billed attempt, while `chunks` counts response
+ * segments, so a response split by output-token-limit continuations reads as one cost instead of several rows. */
+export const turns = (rows: readonly TurnAttemptRow[]): TurnRow[] => {
+  // Each chunk's root is the newest standalone attempt of its assistant message; retries and hedge legs of the same
+  // chunk share the message and join it instead of forming turns of their own.
+  const roots = new Map<string, number>()
+  for (const row of rows) {
+    if ((row.continuationIndex ?? 0) !== 0 || row.assistantMessageID === null) continue
+    roots.set(row.assistantMessageID, Math.max(roots.get(row.assistantMessageID) ?? 0, row.id))
+  }
+  const rootOf = (row: TurnAttemptRow) =>
+    row.continuationOf ?? (row.assistantMessageID === null ? row.id : (roots.get(row.assistantMessageID) ?? row.id))
+  const grouped = new Map<number, { readonly lead: TurnAttemptRow; readonly attempts: TurnAttemptRow[] }>()
+  for (const row of rows) {
+    const rootID = rootOf(row)
+    const group = grouped.get(rootID)
+    if (group) group.attempts.push(row)
+    else grouped.set(rootID, { lead: row, attempts: [row] })
+  }
+  return [...grouped]
+    .map(([rootID, { lead, attempts }]) => {
+      // The lead row stands in when the root fell outside the window, so the turn keeps a target to report.
+      const root = attempts.find((attempt) => attempt.id === rootID) ?? lead
+      const totals = sum(
+        attempts.map((attempt) => ({
+          requests: 1,
+          failures: attempt.outcome === "failure" || attempt.outcome === "timeout" ? 1 : 0,
+          input: attempt.input ?? 0,
+          output: attempt.output ?? 0,
+          reasoning: attempt.reasoning ?? 0,
+          cacheRead: attempt.cacheRead ?? 0,
+          cacheWrite: attempt.cacheWrite ?? 0,
+          costUsd: attempt.costUsd ?? 0,
+        })),
+      )
+      const first = Math.min(...attempts.map((attempt) => attempt.timeStarted))
+      const last = Math.max(...attempts.map((attempt) => attempt.timeEnded))
+      return {
+        ...totals,
+        rootID,
+        sessionID: root.sessionID,
+        providerID: root.providerID,
+        modelID: root.modelID,
+        chunks: 1 + Math.max(...attempts.map((attempt) => attempt.continuationIndex ?? 0)),
+        first,
+        last,
+        durationMs: last - first,
+      }
+    })
+    .sort((a, b) => b.last - a.last || b.rootID - a.rootID)
+}
+
 export const dayReports = (rows: readonly DayRow[]): DayReport[] => {
   const days = new Map<string, DayRow[]>()
   for (const row of rows) days.set(row.day, [...(days.get(row.day) ?? []), row])
