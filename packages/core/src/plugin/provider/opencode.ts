@@ -1,4 +1,5 @@
 import { Duration, Effect, Equal, Option, Schema, SchemaGetter, Scope, Semaphore, Stream } from "effect"
+import { expiresInSeconds } from "./expires.js"
 import type { IntegrationOAuthMethodRegistration } from "@opencode/plugin/effect/integration"
 import { define } from "@opencode/plugin/effect/plugin"
 import type { SessionHttpResponse } from "@opencode/plugin/effect/session"
@@ -182,7 +183,7 @@ function oauth(http: HttpClient.HttpClient, integrationID: Integration.ID) {
           ...credential,
           access: token.access_token,
           refresh: token.refresh_token,
-          expires: Date.now() + token.expires_in * 1000,
+          expires: Date.now() + expiresInSeconds(token.expires_in, 3600) * 1000,
           metadata:
             token.org_id == null
               ? credential.metadata
@@ -711,7 +712,7 @@ function credential(http: HttpClient.HttpClient, server: string, token: typeof T
       methodID,
       access: token.access_token,
       refresh: token.refresh_token,
-      expires: Date.now() + token.expires_in * 1000,
+      expires: Date.now() + expiresInSeconds(token.expires_in, 3600) * 1000,
       metadata: {
         server,
         accountID: user.id,

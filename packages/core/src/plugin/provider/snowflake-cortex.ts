@@ -1,4 +1,5 @@
 import { define } from "@opencode/plugin/effect/plugin"
+import { expiresInSeconds } from "./expires.js"
 import { Form } from "@opencode/schema/form"
 import { Clock, Deferred, Effect, Option, Schema, Stream } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
@@ -72,7 +73,7 @@ export const SnowflakeCortexPlugin = define({
         methodID,
         access: tokens.access_token,
         refresh,
-        expires: (yield* Clock.currentTimeMillis) + (tokens.expires_in ?? 600) * 1000,
+        expires: (yield* Clock.currentTimeMillis) + expiresInSeconds(tokens.expires_in, 600) * 1000,
         metadata: { account },
       })
     })
