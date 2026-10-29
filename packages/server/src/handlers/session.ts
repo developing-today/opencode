@@ -646,7 +646,12 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
       .handle(
         "session.interrupt",
         Effect.fn(function* (ctx) {
-          return { interrupted: yield* session.interrupt(ctx.params.sessionID, { resume: ctx.query.resume }) }
+          return {
+            interrupted: yield* session.interrupt(ctx.params.sessionID, {
+              resume: ctx.query.resume,
+              force: ctx.query.force,
+            }),
+          }
         }),
       )
       .handle(

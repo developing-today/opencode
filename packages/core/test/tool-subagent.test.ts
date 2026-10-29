@@ -320,7 +320,7 @@ describe("SubagentTool", () => {
     ),
   )
 
-  it.live("lets a subagent launch its own subagent in the foreground by default", () =>
+  it.live("lets a subagent background its own subagent", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),
       (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
@@ -342,15 +342,15 @@ describe("SubagentTool", () => {
               type: "tool-call",
               id: "call-nested-subagent",
               name: SubagentTool.name,
-              // A nested launch blocks even when asked to background, so the parent's answer includes it.
+              // A nested launch may background; the child notifies its direct parent.
               input: { agent: "reviewer", description: "nested", prompt: "should run", background: true },
             },
           })
 
           expect(settled).toMatchObject({
             status: "completed",
-            metadata: { status: "completed" },
-            content: [{ type: "text", text: expect.stringContaining(childText) }],
+            metadata: { status: "running" },
+            content: [{ type: "text", text: expect.stringContaining("background") }],
           })
           expect((yield* sessions.get(outputSessionID(settled.metadata))).parentID).toBe(parent.id)
         }),
