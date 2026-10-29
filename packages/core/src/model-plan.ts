@@ -230,7 +230,9 @@ export const setModel = (
   patch: { tier?: Tier; coveredBy?: readonly string[] | null; note?: string | null },
   now: string,
 ): Store => {
-  const existing = store.models[model]
+  // Own-property reads: an id named for an inherited key ("constructor", "toString") must
+  // start from an empty entry rather than merging whatever the prototype chain answers.
+  const existing = Object.hasOwn(store.models, model) ? store.models[model] : undefined
   const tier = patch.tier ?? existing?.tier
   if (!tier) throw new Error(`${model} needs a tier: cheap, standard or frontier.`)
   const entry = Schema.decodeUnknownSync(ModelEntry)(merge(existing ?? {}, { ...patch, tier, updatedAt: now }))
@@ -244,7 +246,8 @@ export const setPool = (
   patch: { tier?: Tier | null; purpose?: string | null },
   now: string,
 ): Store => {
-  const entry = Schema.decodeUnknownSync(PoolEntry)(merge(store.pools[poolID] ?? {}, { ...patch, updatedAt: now }))
+  const existing = Object.hasOwn(store.pools, poolID) ? store.pools[poolID] : {}
+  const entry = Schema.decodeUnknownSync(PoolEntry)(merge(existing, { ...patch, updatedAt: now }))
   return { ...store, pools: { ...store.pools, [poolID]: entry } }
 }
 
