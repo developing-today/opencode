@@ -16,7 +16,7 @@ export const name = "route_stats"
 export const description = `Read how routed models (opencode-route/*) have actually performed, to explain a routing problem or tune it.
 
 Returns, for the last \`hours\` (default 24): attempts, failures, timeouts and average first-output latency and speed per provider/model; failures grouped by exact error tag, code and HTTP status with the latest provider message; current cooldowns; request and token usage; and the adjustments in force.
-It also returns each pool: its configuration, and per member how often it was offered and chosen, how often its new-session draws matched its weight, why it was left out (cooldown, provider limit, budget, user skip), and its latency, speed, errors and request sizes. Set \`route\` to one pool id to narrow that view. The tuner's notes come back too.
+It also returns each pool: its configuration, and per member how often it was offered and chosen, how often its new-session draws matched its weight, why it was left out (cooldown, provider limit, budget, user skip, context limit), and its latency, speed, errors and request sizes. Set \`route\` to one pool id to narrow that view. The tuner's notes come back too.
 It lists suggested adjustments derived from that history (a high failure rate, repeated quota errors, unusually slow first output). Set \`apply\` to true to put the suggestions in force; they only lower a target's share or skip it, expire in 30 minutes, and are replaced by the next run. Apply them only when asked to tune routing or when the data clearly shows a problem.`
 
 export const Input = Schema.Struct({
@@ -148,6 +148,7 @@ const describeRoute = (route: ModelRouteReview.RouteSummary) => {
 const describeMember = (member: ModelRouteReview.Member) => {
   const parts: string[] = []
   if (member.configuredWeight !== null) parts.push(`weight ${member.configuredWeight}`)
+  if (member.configuredLimit !== null) parts.push(`ceiling ${member.configuredLimit}`)
   if (member.attempts === 0 && member.offered === 0 && Object.keys(member.excluded).length === 0) {
     return `  ${member.target}: ${parts.join(", ") || "not listed"}, no traffic in this window`
   }

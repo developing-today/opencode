@@ -188,7 +188,7 @@ describe("ConfigModelRoutes field descriptions", () => {
       [ConfigModelRoutes.Schedule, ["id", "targets", "factor", "weight", "note"]],
       [ConfigModelRoutes.GlobalSchedule, ["providers", "models", "targets", "routes", "factor", "weight"]],
       [ConfigModelRoutes.Route, ["budgets", "hedgeAfterMs", "attempts", "autonomy", "selection", "weights", "schedules", "limit"]],
-      [ConfigModelRoutes.Target, ["defaultVariant", "variants", "until"]],
+      [ConfigModelRoutes.Target, ["defaultVariant", "variants", "until", "limit"]],
       [ConfigModelRoutes.Tuning, ["enabled", "intervalMinutes", "windowHours", "notes"]],
       [ConfigModelRoutes.Log, ["captureErrorBodies"]],
     ]
