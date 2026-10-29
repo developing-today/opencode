@@ -201,9 +201,14 @@ describe("OpencodePlugin", () => {
             answer: { server: `${server.url.origin}/console///?ignored=true#ignored` },
           })
           expect(attempt.url).toBe(`${server.url.origin}/console/device?user_code=user&client_id=opencode-cli`)
+          // The mock server reports interval: 0, which the poll now floors
+          // to the 5-second fallback plus the 3-second safety margin
+          // (#880), so the first token poll lands ~8s after connect —
+          // far past eventually's default ~1s window.
           yield* eventually(
             integrations.oauth.status({ integrationID, attemptID: attempt.attemptID }),
             (status) => status.status === "complete",
+            20000,
           )
 
           expect(requests).toContain("POST /console/auth/device/code")
@@ -267,9 +272,12 @@ describe("OpencodePlugin", () => {
               methodID: Integration.MethodID.make("device"),
               answer: { server: server.url.origin },
             })
+            // Same #880 poll delay as the canonical-server test above:
+            // interval: 0 now means ~8s before the first token poll.
             const status = yield* eventually(
               integrations.oauth.status({ integrationID, attemptID: attempt.attemptID }),
               (status) => status.status !== "pending",
+              20000,
             )
             if (orgID === "org-missing") {
               expect(status).toMatchObject({
