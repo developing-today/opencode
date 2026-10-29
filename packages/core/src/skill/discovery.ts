@@ -8,7 +8,15 @@ import { Global } from "@opencode/util/global"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { httpClient } from "@opencode/util/effect/app-node-platform"
 import { AbsolutePath } from "../schema.js"
+import { collectBoundedResponseBody } from "../tool/http-body.js"
 import { Hash } from "@opencode/util/hash"
+
+/**
+ * Cap on one downloaded skill file. Skill files are markdown and reference text fetched from a remote,
+ * third-party index, so the body is untrusted; 5 MiB matches the webfetch tool's `MAX_RESPONSE_BYTES`
+ * bound for the same kind of content and is far above any real skill file.
+ */
+export const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024
 
 const skillConcurrency = 4
 const fileConcurrency = 8
@@ -79,7 +87,13 @@ const layer = Layer.effect(
       if (yield* fs.exists(destination).pipe(Effect.orDie)) return true
       return yield* HttpClientRequest.get(url).pipe(
         http.execute,
-        Effect.flatMap((response) => response.arrayBuffer),
+        Effect.flatMap((response) =>
+          collectBoundedResponseBody(
+            response,
+            MAX_SKILL_FILE_BYTES,
+            () => new Error(`Skill file too large (exceeds ${MAX_SKILL_FILE_BYTES} byte limit): ${url}`),
+          ),
+        ),
         Effect.flatMap((body) => fs.writeWithDirs(destination, new Uint8Array(body))),
         Effect.as(true),
         Effect.catch((error) =>

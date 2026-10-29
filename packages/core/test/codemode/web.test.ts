@@ -53,3 +53,43 @@ describe("CodeModeWeb fetch response headers (#805)", () => {
     }
   })
 })
+
+describe("CodeModeWeb fetch response size cap (#923)", () => {
+  test("rejects a body over the cap and serves a normal body unchanged", async () => {
+    const big = Bun.serve({
+      port: 0,
+      fetch: () => new Response("x".repeat(CodeModeWeb.MAX_RESPONSE_BYTES + 1)),
+    })
+    try {
+      await expect(webFetch(`http://127.0.0.1:${big.port}/`)).rejects.toThrow("Response too large")
+    } finally {
+      big.stop(true)
+    }
+
+    const streamed = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(CodeModeWeb.MAX_RESPONSE_BYTES + 1))
+              controller.close()
+            },
+          }),
+        ),
+    })
+    try {
+      await expect(webFetch(`http://127.0.0.1:${streamed.port}/`)).rejects.toThrow("Response too large")
+    } finally {
+      streamed.stop(true)
+    }
+
+    const server = serve({ "content-type": "text/plain" })
+    try {
+      const response = await webFetch(server.url)
+      expect(response.status).toBe(200)
+    } finally {
+      server.stop()
+    }
+  })
+})

@@ -225,6 +225,48 @@ describe("Media", () => {
     }),
   )
 
+  it.effect("rejects url downloads over the size cap, declared or streamed", () =>
+    Effect.gen(function* () {
+      const asset = Media.url("https://cdn.example.test/huge.png")
+      const declared = yield* asset.bytes().pipe(
+        Effect.flip,
+        Effect.provide(
+          dynamicResponse((input) =>
+            Effect.succeed(
+              input.respond("small", {
+                headers: { "content-length": String(Media.MAX_DOWNLOAD_BYTES + 1) },
+              }),
+            ),
+          ),
+        ),
+      )
+      expect(declared).toBeInstanceOf(AIError)
+      expect(declared.reason._tag).toBe("InvalidProviderOutput")
+      expect(declared.message).toContain("too large")
+
+      const chunk = new Uint8Array(Media.MAX_DOWNLOAD_BYTES + 1)
+      const streamed = yield* asset.bytes().pipe(
+        Effect.flip,
+        Effect.provide(
+          dynamicResponse((input) =>
+            Effect.succeed(
+              input.respond(
+                new ReadableStream({
+                  start(controller) {
+                    controller.enqueue(chunk)
+                    controller.close()
+                  },
+                }),
+              ),
+            ),
+          ),
+        ),
+      )
+      expect(streamed).toBeInstanceOf(AIError)
+      expect(streamed.message).toContain("too large")
+    }),
+  )
+
   it.effect("reads files with sniffed media types and writes materialized assets", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
