@@ -12,6 +12,7 @@ import { Provider } from "@opencode/core/provider"
 import { Variant } from "@opencode/core/variant"
 import { ModelResolver } from "@opencode/core/model-resolver"
 import { ModelRoute } from "@opencode/core/model-route"
+import { ModelRouteLog } from "@opencode/core/model-route-log"
 import { ModelRouteAutonomy } from "@opencode/core/model-route-autonomy"
 import { AISDK } from "@opencode/core/aisdk"
 import { Npm } from "@opencode/util/npm"
@@ -1884,6 +1885,58 @@ describe("ModelResolver routes", () => {
         // A predictive route takes both, and a route with no level keeps every rule on.
         expect(targetOf(yield* resolver.resolveModel(levelled("predictive")))).toBe("pc")
         expect(targetOf(yield* resolver.resolveModel(levelled(undefined)))).toBe("pc")
+      }),
+    )
+  })
+
+  it.effect("skips a route target whose ceiling the request does not fit", () => {
+    ModelRoute.resetHealth()
+    ModelRoute.resetSelection()
+    const a = leaf("pa")
+    const b = leaf("pb")
+    const route = routed([a, b], {
+      ...ordered,
+      limit: { context: 120_000 },
+      targetLimits: [{ context: 100_000 }, { context: 200_000 }],
+    })
+    const events: ModelRouteLog.Event[] = []
+    ModelRouteLog.setSink((event) => {
+      events.push(event)
+    })
+    return Effect.ensuring(
+      withResolver([a, b], (resolver) =>
+        Effect.gen(function* () {
+          // Effective ceilings are min(route cap, leaf ceiling): 100k for pa, 120k for pb.
+          expect(targetOf(yield* resolver.resolveModel(route, undefined, "s-limit-small", 50_000))).toBe("pa")
+          expect(targetOf(yield* resolver.resolveModel(route, undefined, "s-limit-big", 110_000))).toBe("pb")
+          // The skip is attributed to the limit specifically in the resolved-route dump.
+          const decision = events.find((event) => event.kind === "decision" && event.row.chosen === "pb/test-model")
+          expect(decision?.row).toMatchObject({
+            candidates: ["pb/test-model"],
+            detail: { excluded: [{ candidate: "pa/test-model", reason: "over-limit" }] },
+          })
+          // Without a request size every target stays eligible, as before.
+          expect(targetOf(yield* resolver.resolveModel(route, undefined, "s-limit-plain"))).toBe("pa")
+        }),
+      ),
+      Effect.sync(() => ModelRouteLog.setSink(undefined)),
+    )
+  })
+
+  it.effect("does not restore an over-limit target as a last resort", () => {
+    ModelRoute.resetHealth()
+    ModelRoute.resetSelection()
+    const a = leaf("pa")
+    const route = routed([a], { ...single, targetLimits: [{ context: 100_000 }] })
+    return withResolver([a], (resolver) =>
+      Effect.gen(function* () {
+        // The only target's ceiling is below the request: resolution fails rather than
+        // falling back to the over-limit target.
+        const exit = yield* Effect.exit(resolver.resolveModel(route, undefined, "s-too-big", 110_000))
+        expect(exit._tag).toBe("Failure")
+        if (exit._tag === "Failure") expect(exit.cause).toBeDefined()
+        // A request that fits still resolves to the target.
+        expect(targetOf(yield* resolver.resolveModel(route, undefined, "s-fits", 90_000))).toBe("pa")
       }),
     )
   })
