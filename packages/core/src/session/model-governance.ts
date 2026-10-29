@@ -175,7 +175,9 @@ export type Catalog = ReadonlyMap<string, ReadonlyMap<string, CatalogModel>>
  * The target SET mirrors the runtime too (#530): a target whose `until` has
  * passed is dropped, a target naming a `*` pattern expands to every matching
  * catalog model via the shared `ModelRouteExpansion.matchingModels` the
- * plugin runs, and catalog models that are disabled are dropped. Per leaf,
+ * plugin runs, a door-set target (provider `*`, #637) expands over every
+ * catalog door via the shared `matchingProviders` minus its exclusions, and
+ * catalog models that are disabled are dropped. Per leaf,
  * the effective variant is filtered the way the plugin expansion filters it
  * before the resolver runs: a fixed (selection/inherited) variant the leaf
  * does not offer drops the leaf; a requested variant runs at its remap only
@@ -225,11 +227,13 @@ function routeTargets(
     const models = catalog?.get(selection.providerID)
     // The variant a known catalog leaf actually runs, or undefined when the
     // leaf is dropped (disabled, or its fixed variant is not offered).
-    const leaf = (id: string, model: CatalogModel): Model.Ref[] => {
+    const leaf = (providerID: string, id: string, model: CatalogModel): Model.Ref[] => {
       if (!model.enabled) return []
       const offers = (variant: string) => model.variants.some((item) => item.id === variant)
       if (selectionVariant !== undefined)
-        return offers(selectionVariant) ? [{ ...literal, id: Model.ID.make(id), variant: selectionVariant }] : []
+        return offers(selectionVariant)
+          ? [{ id: Model.ID.make(id), providerID: Provider.ID.make(providerID), variant: selectionVariant }]
+          : []
       if (requested !== undefined) {
         const remapped = object?.variants?.[requested]
         const variant =
@@ -241,7 +245,7 @@ function routeTargets(
         return [
           {
             id: Model.ID.make(id),
-            providerID: Provider.ID.make(selection.providerID),
+            providerID: Provider.ID.make(providerID),
             ...(variant === undefined ? {} : { variant }),
           },
         ]
@@ -253,17 +257,31 @@ function routeTargets(
       return [
         {
           id: Model.ID.make(id),
-          providerID: Provider.ID.make(selection.providerID),
+          providerID: Provider.ID.make(providerID),
           ...(variant === undefined ? {} : { variant }),
         },
       ]
     }
+    // A door-set target (`*/model`, #637) is judged over every catalog door
+    // except its exclusions, via the same shared helper the plugin expands
+    // with; without a catalog it is judged literally, as patterns are.
+    if (selection.providerID === "*") {
+      if (catalog === undefined) return [literal]
+      return ModelRouteExpansion.matchingProviders(catalog, object?.exclude ?? [], "opencode-route").flatMap(
+        ([providerID, doorModels]) =>
+          ModelRouteExpansion.matchingModels(selection.model, doorModels).flatMap(([id, model]) =>
+            leaf(providerID, id, model),
+          ),
+      )
+    }
     if (!selection.model.includes("*")) {
       const known = models?.get(selection.model)
-      return known === undefined ? [literal] : leaf(selection.model, known)
+      return known === undefined ? [literal] : leaf(selection.providerID, selection.model, known)
     }
     if (models === undefined) return [literal]
-    return ModelRouteExpansion.matchingModels(selection.model, models).flatMap(([id, model]) => leaf(id, model))
+    return ModelRouteExpansion.matchingModels(selection.model, models).flatMap(([id, model]) =>
+      leaf(selection.providerID, id, model),
+    )
   })
 }
 
