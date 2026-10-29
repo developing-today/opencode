@@ -1,0 +1,154 @@
+name: main-broken
+# CI tier policy: .github/ci-policy.md (fast PR tier, full main tier).
+#
+# Phase 3 remediation chain (developing-today/code#1782, design
+# ci-fast-pr-full-main section 5): when a main-tier workflow fails on
+# main, file (or append to) exactly one `main-broken` issue per
+# Breakage-ID so the fleet queue owns the breakage at top priority.
+#
+# Breakage-ID = first 12 hex of
+#   sha256("developing-today/opencode|<workflow>|<sorted failing job names>")
+#
+# JULES LEG GAP: this repo has no JULES_API_KEY secret (checked
+# 2026-10-29, `gh secret list` is empty), so the Jules-first step of
+# the chain cannot fire here yet. Issues are filed with `queue/queued`
+# so a Muse fleet lane picks the breakage up directly. When the
+# secret is added, mirror developing-today/code's jules.yml
+# `issue-labeled` job into this repo and apply the `jules` label at
+# filing time when fewer than 3 open main-broken issues carry it.
+
+on:
+  workflow_run:
+    # The main-tier workflows only -- watching "*" is the #304 fan-out
+    # trap (a skipped no-op run for every workflow completion).
+    workflows: ["test", "check", "nix-eval"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run ID of a failed main run to process (blank = latest failed main run)"
+        required: false
+        type: string
+      dry_run:
+        description: "Compute and print the filing decision without writing any issue"
+        required: false
+        type: boolean
+        default: true
+
+# Per-run group: a watcher run must never displace another watcher run.
+# cancel-in-progress stays false, and this workflow never triggers on
+# issues/pull_request_target, so queue: max is valid here.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+jobs:
+  watch:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'failure' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: File or append the main-broken issue
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WR_RUN_ID: ${{ github.event.workflow_run.id }}
+          INPUT_RUN_ID: ${{ inputs.run_id }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          REPO="developing-today/opencode"
+          DRY="$INPUT_DRY_RUN"
+          RUN_ID="$INPUT_RUN_ID"
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            RUN_ID="$WR_RUN_ID"
+            DRY="false"
+          fi
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID=$(gh run list --repo "$REPO" --branch main --status failure --limit 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          echo "processing run $RUN_ID (dry_run=$DRY)"
+
+          gh api "repos/$REPO/actions/runs/$RUN_ID" > run.json
+          WF=$(jq -r '.name' run.json)
+          SHA=$(jq -r '.head_sha' run.json)
+          URL=$(jq -r '.html_url' run.json)
+          BRANCH=$(jq -r '.head_branch' run.json)
+          if [ "$BRANCH" != "main" ]; then
+            echo "run $RUN_ID is on branch '$BRANCH', not main -- skipping"
+            exit 0
+          fi
+
+          FAILING=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
+            --jq '[.jobs[] | select(.conclusion=="failure") | .name] | sort | join(",")')
+          if [ -z "$FAILING" ]; then
+            echo "run $RUN_ID has no failed jobs -- skipping"
+            exit 0
+          fi
+          FIRST=$(printf '%s' "$FAILING" | cut -d, -f1)
+          SHORT="${SHA:0:7}"
+          BID=$(printf '%s' "$REPO|$WF|$FAILING" | sha256sum | cut -c1-12)
+          echo "workflow=$WF sha=$SHORT failing=[$FAILING] Breakage-ID=$BID"
+
+          EXISTING=$(gh issue list --repo "$REPO" --state open --label main-broken \
+            --search "$BID" --json number --jq '.[0].number // empty')
+
+          if [ "$DRY" = "true" ]; then
+            if [ -n "$EXISTING" ]; then
+              echo "DRY RUN: would append run $URL to existing issue #$EXISTING"
+            else
+              echo "DRY RUN: would file a new main-broken issue for Breakage-ID $BID"
+            fi
+            exit 0
+          fi
+
+          # Coin the chain labels if missing (idempotent: --force updates).
+          gh label create "kind/ci" --repo "$REPO" --color fbca04 --description "CI/CD pipelines, workflows, and build automation" --force
+          gh label create "priority/critical" --repo "$REPO" --color b60205 --description "Drop everything: main broken, security exposure, repo-wide outage" --force
+          gh label create "main-broken" --repo "$REPO" --color B60205 --description "main branch full-suite (main tier) is red; remediation chain owns this" --force
+          gh label create "queue/queued" --repo "$REPO" --color 7057ff --description "Has a queued task in the Supabase agent queue" --force
+          gh label create "status/needs-triage" --repo "$REPO" --color fbca04 --description "Not yet triaged; needs a first look" --force
+
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "$REPO" --body "<!-- agent-note:v1 -->
+          agent-note:v1 -- main-broken chain (append, $NOW)
+          - same Breakage-ID \`$BID\` failed again: $URL
+          - failing jobs: $FAILING
+          - holder: unchanged (see the filing note on this issue); no duplicate filing, no duplicate remediation spend"
+            echo "appended to existing issue #$EXISTING"
+            exit 0
+          fi
+
+          cat > body.md <<BODY
+          Main-tier workflow \`$WF\` failed on \`main\`.
+
+          - Run: $URL
+          - Head commit: $SHA
+          - Failing jobs: $FAILING
+          - First failing job: $FIRST
+          - Logs / first error excerpt: see the run's failed-job logs at the run URL above.
+
+          Breakage-ID: $BID
+
+          <!-- agent-note:v1 -->
+          agent-note:v1 -- main-broken chain (filing, $NOW)
+          - holder: fleet queue (chain filing) -- filed with \`queue/queued\` for a priority Muse lane
+          - jules: NOT engaged -- this repo has no JULES_API_KEY secret, so the Jules-first leg of the chain is a known gap (developing-today/code#1782); do not apply a \`jules\` label expecting remediation until the secret and an issue-labeled Jules job exist here
+          - dedupe: Breakage-ID \`$BID\`; repeat failures with the same ID append to this issue instead of filing anew
+          BODY
+          gh issue create --repo "$REPO" \
+            --title "main-broken: $REPO $WF @$SHORT -- $FIRST" \
+            --label "kind/ci,priority/critical,main-broken,queue/queued,status/needs-triage" \
+            --body-file body.md

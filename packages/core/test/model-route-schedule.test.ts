@@ -36,6 +36,14 @@ describe("ModelRouteSchedule.parse", () => {
     expect(ModelRouteSchedule.parse({ daysOfMonth: [0, 42] })).toBeUndefined()
     // A mixed list is rejected too: dropping the unreadable entry would narrow the window.
     expect(ModelRouteSchedule.parse({ daysOfWeek: ["mon", "frieday"] })).toBeUndefined()
+    // Prototype names are not day names: a plain DAY_NAMES index would read them
+    // through Object.prototype and keep the window with a corrupted day list (#791).
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["constructor"] })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["__proto__"] })).toBeUndefined()
+    expect(ModelRouteSchedule.parse({ daysOfWeek: ["mon", "constructor"] })).toBeUndefined()
+    expect(ModelRouteSchedule.isDayOfWeek("constructor")).toBe(false)
+    expect(ModelRouteSchedule.isDayOfWeek("__proto__")).toBe(false)
+    expect(ModelRouteSchedule.isDayOfWeek("Constructor")).toBe(false)
     expect(ModelRouteSchedule.parse({ daysOfWeek: ["mon", 7] })).toBeUndefined()
     expect(ModelRouteSchedule.parse({ daysOfMonth: [1, 32] })).toBeUndefined()
     expect(ModelRouteSchedule.parse({ daysOfMonth: [15, 0] })).toBeUndefined()

@@ -62,7 +62,9 @@ const dayOfWeek = (value: unknown): number | undefined => {
   if (typeof value !== "string") return undefined
   const text = value.trim().toLowerCase()
   if (/^0?[0-6]$/.test(text)) return Number(text)
-  return DAY_NAMES[text]
+  // Own-property lookup only: a plain index reads through Object.prototype, so
+  // "constructor" and "__proto__" would resolve to inherited values (#791).
+  return Object.hasOwn(DAY_NAMES, text) ? DAY_NAMES[text] : undefined
 }
 
 /** A day of month from a number or numeric string: 1..31, or -1 for the last day. */

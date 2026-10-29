@@ -1,4 +1,5 @@
 name: nix-eval
+# CI tier policy: .github/ci-policy.md (fast PR tier, full main tier).
 # RUNNER-SWITCH (2026-10-18): runners in this workflow were switched from Blacksmith to
 # GitHub-hosted at Drew's direction. To switch back, grep the repo for RUNNER-SWITCH and
 # swap each commented Blacksmith line back in for the active line under it. To choose per
@@ -10,10 +11,18 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # PR tier (ci-policy.md class 4): evaluate only when nix inputs change.
+    # The push-to-main trigger above has no paths filter, so main always
+    # gets the full evaluation.
+    paths:
+      - "**.nix"
+      - "flake.lock"
+      - "nix/**"
+      - ".github/workflows/nix-eval.yml"
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 permissions:
