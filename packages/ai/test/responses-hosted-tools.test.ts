@@ -2,13 +2,19 @@ import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { OpenResponses } from "../src/protocols/open-responses.js"
 import { ResponsesHostedTools } from "../src/protocols/utils/responses-hosted-tools.js"
+import { it } from "./lib/effect.js"
 
 const tools = {
   web_search_call: { name: "web_search", input: (item: ResponsesHostedTools.Item) => item.action ?? {} },
 } satisfies ResponsesHostedTools.Definitions
 
 const item = (type: string) =>
-  ({ type, id: "item_1", status: "completed", action: { type: "search", query: "effect" } }) as unknown as OpenResponses.OutputItem
+  ({
+    type,
+    id: "item_1",
+    status: "completed",
+    action: { type: "search", query: "effect" },
+  }) as unknown as OpenResponses.OutputItem
 
 // Regression (#927): membership must be own-property only. `in` reads through the
 // prototype chain, so these names classified as hosted-tool items and `onDone` died
@@ -30,14 +36,18 @@ describe("ResponsesHostedTools.isItem", () => {
 })
 
 describe("ResponsesHostedTools.onDone", () => {
-  test("returns no events for Object prototype member names instead of dying", async () => {
-    for (const type of PROTOTYPE_NAMES) {
-      // The guard returns before touching state, so a bare state stand-in is enough:
-      // reaching for a Definition here is exactly the defect being pinned.
-      const [, events] = await Effect.runPromise(
-        ResponsesHostedTools.onDone({} as OpenResponses.ParserState, item(type) as ResponsesHostedTools.Item, tools),
-      )
-      expect(events).toEqual([])
-    }
-  })
+  it.effect("returns no events for Object prototype member names instead of dying", () =>
+    Effect.gen(function* () {
+      for (const type of PROTOTYPE_NAMES) {
+        // The guard returns before touching state, so a bare state stand-in is enough:
+        // reaching for a Definition here is exactly the defect being pinned.
+        const [, events] = yield* ResponsesHostedTools.onDone(
+          {} as OpenResponses.ParserState,
+          item(type) as ResponsesHostedTools.Item,
+          tools,
+        )
+        expect(events).toEqual([])
+      }
+    }),
+  )
 })
