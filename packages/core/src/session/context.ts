@@ -245,12 +245,16 @@ const layer = Layer.effect(
         initial: history.initial,
         messages,
       })
-      // If every target is over its ceiling the sized resolution fails — but automatic
-      // compaction runs after load and exists precisely to shrink an oversized history, so
-      // fall back to the unsized resolution (the pre-#891 behaviour) and let it run. If the
-      // unsized resolution also fails, that error surfaces unchanged.
+      // If the sized resolution fails, automatic compaction — which runs after load and
+      // exists precisely to shrink an oversized history — must still get its chance, so
+      // fall back to the unsized resolution (the pre-#891 behaviour) and let it run. That
+      // covers both every target being over its ceiling (RouteUnavailableError) and the
+      // mixed case where the over-limit targets are filtered out and a fitting target
+      // then fails to initialize: resolveRoute surfaces that as the target's own error
+      // (e.g. ModelConfigurationError), not RouteUnavailableError. If the unsized
+      // resolution also fails, that error surfaces unchanged.
       const resolved = yield* resolveModel(selection.session, requestTokens).pipe(
-        Effect.catchTag("SessionRunnerModel.RouteUnavailableError", () => resolveModel(selection.session)),
+        Effect.catch(() => resolveModel(selection.session)),
       )
       return {
         session: selection.session,
