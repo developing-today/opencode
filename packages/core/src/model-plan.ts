@@ -5,6 +5,7 @@ import path from "node:path"
 import { Global } from "@opencode/util/global"
 import { Schema } from "effect"
 import { ModelRouteLimits } from "./model-route-limits.js"
+import { ownOr, ownValue } from "./util/record.js"
 
 /**
  * The plan store: subscriptions and their quota windows, the cost tier of each model, what each pool is for,
@@ -232,7 +233,7 @@ export const setModel = (
 ): Store => {
   // Own-property reads: an id named for an inherited key ("constructor", "toString") must
   // start from an empty entry rather than merging whatever the prototype chain answers.
-  const existing = Object.hasOwn(store.models, model) ? store.models[model] : undefined
+  const existing = ownValue(store.models, model)
   const tier = patch.tier ?? existing?.tier
   if (!tier) throw new Error(`${model} needs a tier: cheap, standard or frontier.`)
   const entry = Schema.decodeUnknownSync(ModelEntry)(merge(existing ?? {}, { ...patch, tier, updatedAt: now }))
@@ -246,7 +247,7 @@ export const setPool = (
   patch: { tier?: Tier | null; purpose?: string | null },
   now: string,
 ): Store => {
-  const existing = Object.hasOwn(store.pools, poolID) ? store.pools[poolID] : {}
+  const existing = ownOr(store.pools, poolID, {})
   const entry = Schema.decodeUnknownSync(PoolEntry)(merge(existing, { ...patch, updatedAt: now }))
   return { ...store, pools: { ...store.pools, [poolID]: entry } }
 }

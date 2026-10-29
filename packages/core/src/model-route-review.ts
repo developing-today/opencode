@@ -1,6 +1,7 @@
 export * as ModelRouteReview from "./model-route-review.js"
 
 import type { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
+import { ownOr, ownValue } from "./util/record.js"
 
 /**
  * The per-pool view behind `route_stats`: what each pool is configured to do, what it actually did,
@@ -235,21 +236,21 @@ const memberOf = (
       // First found wins: decisions arrive newest-first (see summarize), so the first
       // layers recorded for a target are its most recent selection's. A decision without
       // layers for the target leaves the value untouched rather than clearing it.
-      if (weightLayers === null) weightLayers = layersOf(decision.detail)[target] ?? null
+      if (weightLayers === null) weightLayers = ownValue(layersOf(decision.detail), target) ?? null
       if (decision.chosen === target) chosen += 1
       if (decision.reason === "drawn") {
         const weights = weightsOf(decision.detail)
-        const total = decision.candidates.reduce((sum, candidate) => sum + (weights[candidate] ?? 1), 0)
+        const total = decision.candidates.reduce((sum, candidate) => sum + ownOr(weights, candidate, 1), 0)
         draws += 1
         if (decision.chosen === target) drawsWon += 1
         if (total > 0) {
           shares += 1
-          shareTotal += (weights[target] ?? 1) / total
+          shareTotal += ownOr(weights, target, 1) / total
         }
       }
     }
     for (const item of excludedOf(decision.detail)) {
-      if (item.candidate === target) excluded[item.reason] = (excluded[item.reason] ?? 0) + 1
+      if (item.candidate === target) excluded[item.reason] = ownOr(excluded, item.reason, 0) + 1
     }
   }
   const firstTokens = present(attempts.map((row) => row.firstTokenMs))
@@ -261,7 +262,7 @@ const memberOf = (
   const inputs = present(attempts.map((row) => row.tokensInput))
   return {
     target,
-    configuredWeight: pool?.weights[target] ?? null,
+    configuredWeight: pool ? (ownValue(pool.weights, target) ?? null) : null,
     attempts: attempts.length,
     failures,
     timeouts: attempts.filter((row) => row.outcome === "timeout").length,
@@ -288,7 +289,7 @@ const routeOf = (
   decisions: readonly Decision[],
 ): RouteSummary => {
   const reasons: Record<string, number> = {}
-  for (const decision of decisions) reasons[decision.reason] = (reasons[decision.reason] ?? 0) + 1
+  for (const decision of decisions) reasons[decision.reason] = ownOr(reasons, decision.reason, 0) + 1
   const sessions = new Set<string>()
   for (const row of attempts) if (row.sessionID) sessions.add(row.sessionID)
   for (const row of decisions) if (row.sessionID) sessions.add(row.sessionID)

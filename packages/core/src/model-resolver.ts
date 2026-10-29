@@ -17,6 +17,7 @@ import { ModelAlias } from "./model-alias.js"
 import { ModelRoute } from "./model-route.js"
 import { ModelRouteAutonomy } from "./model-route-autonomy.js"
 import { ModelRouteLog } from "./model-route-log.js"
+import { ownValue } from "./util/record.js"
 
 export class VariantUnavailableError extends Schema.TaggedError<VariantUnavailableError>()(
   "SessionRunnerModel.VariantUnavailableError",
@@ -323,7 +324,7 @@ function prepareProviderURL(
   baseURL: string,
 ): Effect.Effect<string, UnresolvedProviderVariablesError> {
   if (!baseURL.includes("${")) return Effect.succeed(baseURL)
-  const prepared = baseURL.replace(/\$\{([^}]+)\}/g, (placeholder, name: string) => process.env[name] ?? placeholder)
+  const prepared = baseURL.replace(/\$\{([^}]+)\}/g, (placeholder, name: string) => ownValue(process.env, name) ?? placeholder)
   const failure = unresolvedProviderVariables(model, prepared)
   return failure ? Effect.fail(failure) : Effect.succeed(prepared)
 }
@@ -508,7 +509,7 @@ export const layer = Layer.effect(
           // those two ways (config/plugin/model-routes.ts routeVariants).
           const mapped =
             requestedVariant !== undefined
-              ? (targetVariants?.map?.[requestedVariant] ??
+              ? (ownValue(targetVariants?.map ?? {}, requestedVariant) ??
                 (source.variants.some((item) => item.id === requestedVariant) ? requestedVariant : undefined))
               : targetVariants?.default
           const resolved = yield* Effect.result(
