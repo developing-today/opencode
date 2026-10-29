@@ -575,6 +575,240 @@ The default is `120000` (2 minutes). Set it to `0` to disable the timeout for fo
 
 ---
 
+### Model routes
+
+Use the `model_route*` options under `experimental` to define named routes: ordered sets of provider/model targets that a session can use as a single model, with failover when a target fails, runs out of quota, or gets slow. A route appears as a model on the `opencode-route` provider, so selecting `opencode-route/workhorse` uses the route named `workhorse`, and a route may reference another route as one of its targets.
+
+This family has five keys:
+
+- `model_routes` - the routes themselves, keyed by route ID.
+- `model_route_windows` - named, reusable time windows that schedules and target gates reference.
+- `model_route_schedules` - time-bound weight changes that apply across routes.
+- `model_route_tuning` - a scheduled review of routing history that adjusts routes automatically.
+- `model_route_log` - what the routing history records about failed requests.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "model_routes": {
+      "workhorse": {
+        "targets": ["openai/gpt-6-luna", "github-copilot/gpt-6-luna"],
+        "selection": "ordered",
+        "autonomy": "rules"
+      }
+    }
+  }
+}
+```
+
+#### Targets
+
+Targets are tried in order. Each target is one of:
+
+- A plain reference: `"provider/model"`.
+- A reference with a variant: `"provider/model#variant"`.
+- An object, when the target needs its own settings:
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "model_routes": {
+      "workhorse": {
+        "targets": [
+          {
+            "model": "openai/gpt-6-luna",
+            "defaultVariant": "low",
+            "variants": { "low": "high" },
+            "until": 1798761600000,
+            "limit": { "context": 100000 }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+In the object form:
+
+- `defaultVariant` is the variant used when the route is selected without an explicit variant.
+- `variants` remaps a route-level variant to this target's variant, so `{ "low": "high" }` runs this target at `high` when the route is selected at `low`.
+- `until` is epoch milliseconds after which the target leaves the route, for time-limited pool membership. It takes effect when the configuration reloads.
+- `limit.context` caps the context this target serves within the route; a request that does not fit skips this target. The route itself accepts the same cap as `limit.context`, and a cap can never raise a route above what its targets support.
+- A target whose provider is `*` is a door-set target: it runs its model on every provider whose catalog lists the model, except the providers named in its `exclude` list.
+
+#### Selection, weights, and autonomy
+
+The `selection` option controls how a session picks its target: `ordered` (the default) uses the configured order, `round-robin` rotates per new session, and `weighted` draws by the route's `weights`. Either way the choice is sticky for the session, and failover falls through the remaining targets in order.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "model_routes": {
+      "workhorse": {
+        "targets": ["openai/gpt-6-luna", "github-copilot/gpt-6-luna"],
+        "selection": "weighted",
+        "weights": { "openai/gpt-6-luna": 3, "github-copilot/gpt-6-luna": 1 }
+      }
+    }
+  }
+}
+```
+
+Targets without a weight count as 1, so the example above sends about 3/4 of new sessions to the first target.
+
+The `autonomy` option controls how much a route may decide for itself. Each level includes the ones before it, and leaving it unset keeps the behavior from before levels existed:
+
+- `fixed` - configured order with failover only.
+- `rules` - adds selection modes, weights, budgets, and provider rate-limit holds.
+- `adaptive` - adds the scheduled review, which skips or down-weights targets based on recent history.
+- `predictive` - adds time-of-day and error-text prediction to that review.
+- `agent` - adds the `route_stats` and `route_adjust` tools, so the model can inspect and steer routing.
+
+A route also accepts `attempts` (total requests against one target before failing over; defaults to 2, and retries only happen before any response output), `hedgeAfterMs` (send the same request to the next target when the current one has produced no output after this many milliseconds; off by default, and it costs a duplicate request whenever the first target is slow), and a `health` object with per-target circuit-breaker thresholds such as `firstTokenTimeoutMs` (defaults to 10000), `cooldownMs` (defaults to 60000), and `quotaCooldownMs` (defaults to 900000).
+
+#### Budgets
+
+Use `budgets` to give targets request and token allowances, keyed by target model reference. A target that reaches `softLimit` of any allowance is passed over until it recovers, so traffic moves before the provider starts refusing it. `softLimit` is a fraction between 0.125 and 1 and defaults to 0.9.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "model_routes": {
+      "workhorse": {
+        "targets": ["openai/gpt-6-luna"],
+        "budgets": {
+          "openai/gpt-6-luna": { "requestsPerDay": 500, "tokensPerMinute": 200000, "softLimit": 0.9 }
+        }
+      }
+    }
+  }
+}
+```
+
+The other allowances are `requestsPerMinute` and `tokensPerDay`. Usage is counted from every request OpenCode makes to the target and is restored from history after a restart.
+
+#### Windows
+
+A window is a recurring local-time period. Define windows once under `model_route_windows`, keyed by name, and reference them by name from schedules and target gates - windows belong to the meter, not the model, so every rule that follows the same clock names the same window.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "model_route_windows": {
+      "deepseek-peak": {
+        "daysOfWeek": ["mon", "tue", "wed", "thu", "fri"],
+        "start": "06:00",
+        "end": "10:00",
+        "timezone": "UTC"
+      }
+    }
+  }
+}
+```
+
+Every field is optional:
+
+- `daysOfWeek` - weekday names (`"mon"`, `"monday"`, and so on) or numbers from 0 (Sunday) to 6 (Saturday). Empty or unset means every day.
+- `daysOfMonth` - days from 1 to 31, or `-1` for the last day of the month. Empty or unset means every day. When both day fields are set, both have to match, so `daysOfMonth: [1, 2, 3, 4, 5, 6, 7]` with `daysOfWeek: ["mon"]` is the first Monday of the month.
+- `start` and `end` - the daily bounds as `"HH:mm"` local time. `end` is exclusive. Unset means the start or end of the day, and a `start` later than the `end` runs past midnight into the following morning.
+- `timezone` - an IANA timezone such as `"America/Chicago"`. Unset means the host's local timezone.
+- `from` and `until` - epoch milliseconds before or after which the window never applies.
+
+A target can gate its eligibility on a window with its `window` option, either as a window name or as an object with `invert`:
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "model_routes": {
+      "workhorse": {
+        "targets": [
+          { "model": "deepseek/deepseek-chat", "window": { "name": "deepseek-peak", "invert": true } },
+          { "model": "deepseek/deepseek-chat", "window": "deepseek-peak" }
+        ]
+      }
+    }
+  }
+}
+```
+
+The first target above is a candidate only off-peak (while the window is **not** active); the second is a candidate only during the peak window itself. An unknown window name drops the gate, leaving the target always eligible - check window names carefully, because the mistake is silent.
+
+#### Schedules
+
+A schedule is a time-bound weight change. Inside a route, use the route's `schedules` list; across routes, use the top-level `model_route_schedules` list, which can also be scoped with `providers`, `models`, `targets`, and `routes`. Each schedule names its window with `when` - an inline window object, or the name of a window from `model_route_windows` - and exactly one of `factor` (multiply the target's weight) or `weight` (set it outright). Outside the window, everything is unchanged.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "model_route_schedules": [
+      {
+        "id": "deepseek-peak-lighten",
+        "targets": ["deepseek/*"],
+        "when": "deepseek-peak",
+        "factor": 0.5,
+        "note": "DeepSeek is busiest in this window"
+      }
+    ]
+  }
+}
+```
+
+In a route-level schedule, `targets` lists the target references the change covers (`*` patterns allowed); empty or unset means every target of the route. Weights order every selection mode: inside an active window the targets are ranked by effective weight, and equal weights keep their configured order.
+
+:::caution
+An unknown window name in a schedule drops the whole rule, and a window that cannot be parsed makes its rule disappear rather than apply at the wrong time. A typo here fails silently - double-check names and shapes.
+:::
+
+#### Tuning
+
+Use `model_route_tuning` to review routing history on a schedule and put the resulting adjustments in force without asking. The adjustments only lower a target's share or skip it, and they lapse on their own. Tuning is off by default.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "model_route_tuning": {
+      "enabled": true,
+      "intervalMinutes": 15,
+      "windowHours": 24,
+      "notes": ["deepseek: back in 3 hours"]
+    }
+  }
+}
+```
+
+- `enabled` - turn the scheduled review on. It applies to every route that uses `rules`, as well as routes at `adaptive` or higher. Defaults to `false`.
+- `intervalMinutes` - minutes between reviews, up to 1440. Defaults to 15.
+- `windowHours` - how much history each review looks at, up to 336. Defaults to 24.
+- `notes` - what the history cannot say, one note per entry, in the form `match: text`, where `match` is a case-insensitive substring of provider/model. A text that states when a limit returns, such as `reset at 2026-01-01` or `back in 3 hours`, skips the matching targets until then; the rest is shown to the agent by `route_stats`. A note that does not match this form is dropped when the config loads, so keep the `match: text` shape exact - one note per entry, with a non-empty match and non-empty text.
+
+#### Routing log
+
+Use `model_route_log` to control what the routing history records about failed requests.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "model_route_log": {
+      "captureErrorBodies": false
+    }
+  }
+}
+```
+
+`captureErrorBodies` keeps the first 2 KB of a failed request's error body in the routing history, with credentials redacted. A provider body can echo the request, so this is off by default.
+
+---
+
 ### Commands
 
 You can configure custom commands for repetitive tasks through the `command` option.
@@ -868,7 +1102,7 @@ If a provider appears in both `enabled_providers` and `disabled_providers`, the 
 
 ### Experimental
 
-The `experimental` key contains options that are under active development.
+The `experimental` key contains options that are under active development. It also holds the [model routes](#model-routes) family: `model_routes`, `model_route_schedules`, `model_route_windows`, `model_route_tuning`, and `model_route_log`.
 
 ```json title="opencode.json"
 {
