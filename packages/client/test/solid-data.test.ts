@@ -99,6 +99,54 @@ test("counts every subagent page in a root session's cost", async () => {
   }
 })
 
+test("registers fork descendants in the source family and includes their cost", async () => {
+  const sessions: Record<string, SessionInfo> = {
+    ses_root: { ...session(0), id: "ses_root", cost: 0.5 },
+    ses_child: { ...session(0), id: "ses_child", parentID: "ses_root", cost: 1 },
+    ses_fork: {
+      ...session(0),
+      id: "ses_fork",
+      fork: { sessionID: "ses_child", boundary: { type: "through", messageID: "msg_boundary" } },
+      cost: 2,
+    },
+    ses_grandchild: { ...session(0), id: "ses_grandchild", parentID: "ses_fork", cost: 3 },
+  }
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      const sessionID = url.pathname.match(/^\/api\/session\/(.+)$/)?.[1]
+      if (sessionID) return Response.json({ data: sessions[sessionID] })
+
+      const parentID = url.searchParams.get("parentID")
+      return Response.json({
+        data: Object.values(sessions).filter((item) => item.parentID === parentID),
+        cursor: {},
+      })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    await setup.data.session.sync("ses_root", { children: true })
+    await setup.data.session.sync("ses_fork", { children: true })
+
+    expect(setup.data.session.root("ses_grandchild")).toBe("ses_root")
+    expect(setup.data.session.family("ses_root").toSorted()).toEqual([
+      "ses_child",
+      "ses_fork",
+      "ses_grandchild",
+      "ses_root",
+    ])
+    expect(setup.data.session.cost("ses_root")).toBe(6.5)
+  } finally {
+    setup.dispose()
+  }
+})
+
 test("discovers nested subagents at any depth, publishing each listing as it resolves", async () => {
   const parents: Record<string, string> = {
     ses_a: "ses_root",

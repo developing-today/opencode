@@ -14,16 +14,18 @@ export function requireServerKey(segment: string | undefined) {
   return ServerConnection.Key.make(key)
 }
 
-type SessionParent = { id: string; parentID?: string }
+type SessionParent = { id: string; parentID?: string; fork?: { sessionID: string } }
 
 export async function rootSession<T extends SessionParent>(session: T, get: (sessionID: string) => Promise<T>) {
   const seen = new Set([session.id])
   let current = session
 
-  while (current.parentID) {
-    if (seen.has(current.parentID)) throw new Error(`Session parent cycle: ${current.parentID}`)
-    seen.add(current.parentID)
-    current = await get(current.parentID)
+  while (true) {
+    const parentID = current.parentID ?? current.fork?.sessionID
+    if (!parentID) break
+    if (seen.has(parentID)) throw new Error(`Session parent cycle: ${parentID}`)
+    seen.add(parentID)
+    current = await get(parentID)
   }
 
   return current

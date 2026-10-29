@@ -623,20 +623,20 @@ export function createData(config: CreateDataInput) {
     })
   }
 
-  // Walk parentID upward through loaded session info to the family root. When a
-  // parent's info is missing, that missing ID is the furthest-known ancestor and
-  // is returned so orphan subtrees group under it until the parent arrives. A
-  // seen set guards against parent cycles, stopping at the last non-repeating
-  // ancestor.
+  // Walk parentID or fork.sessionID upward through loaded session info to the
+  // family root. When an ancestor's info is missing, that missing ID is the
+  // furthest-known ancestor and is returned so orphan subtrees group under it
+  // until the ancestor arrives. A seen set guards against cycles, stopping at
+  // the last non-repeating ancestor.
   function resolveRoot(sessionID: string) {
     let current = sessionID
-    let parentID = store.session.info[sessionID]?.parentID
+    let parentID = store.session.info[sessionID]?.parentID ?? store.session.info[sessionID]?.fork?.sessionID
     const seen = new Set([sessionID])
     while (parentID) {
       if (seen.has(parentID)) break
       seen.add(parentID)
       current = parentID
-      parentID = store.session.info[parentID]?.parentID
+      parentID = store.session.info[parentID]?.parentID ?? store.session.info[parentID]?.fork?.sessionID
     }
     return current
   }

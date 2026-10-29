@@ -33,6 +33,25 @@ describe("session routes", () => {
     ).toBe(sessions.root)
   })
 
+  test("resolves the root across a fork link", async () => {
+    const sessions: Record<string, { id: string; parentID?: string; fork?: { sessionID: string } }> = {
+      grandchild: { id: "grandchild", parentID: "fork" },
+      fork: { id: "fork", fork: { sessionID: "child" } },
+      child: { id: "child", parentID: "root" },
+      root: { id: "root" },
+    }
+
+    expect(
+      await rootSession(sessions.grandchild, async (id) => {
+        const session = sessions[id]
+
+        if (!session) throw new Error(`Missing session: ${id}`)
+
+        return session
+      }),
+    ).toBe(sessions.root)
+  })
+
   test("rejects a parent cycle", async () => {
     const sessions: Record<string, { id: string; parentID?: string }> = {
       child: { id: "child", parentID: "parent" },
@@ -41,6 +60,17 @@ describe("session routes", () => {
 
     await expect(rootSession(sessions.child, async (id) => sessions[id]!)).rejects.toThrow(
       "Session parent cycle: child",
+    )
+  })
+
+  test("rejects a fork-link cycle", async () => {
+    const sessions: Record<string, { id: string; fork?: { sessionID: string } }> = {
+      fork: { id: "fork", fork: { sessionID: "source" } },
+      source: { id: "source", fork: { sessionID: "fork" } },
+    }
+
+    await expect(rootSession(sessions.fork, async (id) => sessions[id]!)).rejects.toThrow(
+      "Session parent cycle: fork",
     )
   })
 })
