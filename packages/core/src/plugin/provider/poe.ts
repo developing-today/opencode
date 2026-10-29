@@ -5,6 +5,7 @@ import type { ServerResponse } from "node:http"
 import { Credential } from "../../credential.js"
 import { Integration } from "../../integration.js"
 import { OauthCallbackPage } from "../../oauth/page.js"
+import { MAX_EXPIRES_IN_SECONDS } from "./expires.js"
 
 const integrationID = Integration.ID.make("poe")
 const methodID = Integration.MethodID.make("browser")
@@ -154,8 +155,14 @@ function exchangeCode(http: HttpClient.HttpClient, input: { code: string; redire
     const token = yield* HttpClientResponse.schemaBodyJson(Token)(response).pipe(
       Effect.mapError(() => new Error("Invalid Poe token response")),
     )
+    // An implausibly long lifetime (the classic millisecond-scale value) would store a
+    // fabricated expiry the consumer trusts for weeks (#892): clamp it to the shared sane
+    // bound from #879 instead of the JS Date maximum. An absent value keeps Poe's
+    // never-expires semantics.
     const expires =
-      token.api_key_expires_in == null ? maxExpiry : (yield* Clock.currentTimeMillis) + token.api_key_expires_in * 1000
+      token.api_key_expires_in == null
+        ? maxExpiry
+        : (yield* Clock.currentTimeMillis) + Math.min(token.api_key_expires_in, MAX_EXPIRES_IN_SECONDS) * 1000
     if (!Number.isSafeInteger(expires) || expires > maxExpiry)
       return yield* Effect.fail(new Error("Invalid Poe API key expiry"))
     return Credential.OAuth.make({ type: "oauth", methodID, access: token.api_key, refresh: "", expires })

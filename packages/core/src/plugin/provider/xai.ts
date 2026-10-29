@@ -5,6 +5,7 @@ import { App } from "../../app.js"
 import { Credential } from "../../credential.js"
 import { Integration } from "../../integration.js"
 import { Provider } from "../../provider.js"
+import { expiresInSeconds } from "./expires.js"
 
 const clientID = "b1a00492-073a-47ea-816f-4c329264a828"
 const issuer = "https://auth.x.ai/oauth2"
@@ -58,7 +59,7 @@ const device = (app: App.Info) =>
         Effect.flatMap((value) =>
           Clock.currentTimeMillis.pipe(
             Effect.map((created) => {
-              const lifetime = positiveSeconds(value.expires_in, 0)
+              const lifetime = expiresInSeconds(value.expires_in, 0)
               return {
                 mode: "auto" as const,
                 url: value.verification_uri_complete ?? value.verification_uri,
@@ -125,7 +126,7 @@ function refresh(methodID: Integration.MethodID, value: Credential.OAuth, app: A
 function poll(device: typeof Device.Type, app: App.Info): Effect.Effect<Token, unknown> {
   return Effect.gen(function* () {
     const started = yield* Clock.currentTimeMillis
-    const expires = started + positiveSeconds(device.expires_in, 300) * 1000
+    const expires = started + expiresInSeconds(device.expires_in, 300) * 1000
     const loop = (interval: number): Effect.Effect<Token, unknown> =>
       Effect.gen(function* () {
         if ((yield* Clock.currentTimeMillis) >= expires) {
@@ -212,7 +213,7 @@ function credential(
 }
 
 function tokenExpiration(tokens: Token) {
-  if (tokens.expires_in) return Date.now() + positiveSeconds(tokens.expires_in, 3600) * 1000
+  if (tokens.expires_in) return Date.now() + expiresInSeconds(tokens.expires_in, 3600) * 1000
   const payload = tokens.access_token.split(".")[1]
   if (!payload) return Date.now() + 3600 * 1000
   const claims = Schema.decodeUnknownOption(
