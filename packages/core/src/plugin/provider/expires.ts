@@ -8,7 +8,9 @@
  * disabled refresh for weeks, because the consumer treats the credential
  * as valid until the stored expiry. The xAI provider's local
  * `positiveSeconds` (xai.ts) is the precedent; this is the shared version
- * for the providers that never got the guard.
+ * for the providers that never got the guard. Since #892 the xAI provider
+ * uses it for its token/device lifetimes too (its local helper remains
+ * only for the poll interval), and Poe clamps to the same bound.
  */
 
 /**
