@@ -1422,14 +1422,66 @@ export interface GenerateApi<E = never> {
 }
 
 export type ProviderListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
-export type ProviderListOutput = { readonly location: Location.PublicRef; readonly data: ReadonlyArray<Provider.Info> }
+export type ProviderListOutput = {
+  readonly location: Location.PublicRef
+  readonly data: ReadonlyArray<{
+    readonly id: Provider.ID
+    readonly canonical?: Provider.ID | undefined
+    readonly integrationID?: Integration.ID | undefined
+    readonly instanceOf?: Provider.ID | undefined
+    readonly name: string
+    readonly activation: "auto" | "enabled" | "disabled"
+    readonly package: string
+    readonly compatibility?:
+      | {
+          readonly reasoningField?: Model.ReasoningField | undefined
+          readonly requireReasoning?: boolean | undefined
+          readonly maxTokensField?: Model.MaxTokensField | undefined
+          readonly requireFinishReason?: boolean | undefined
+          readonly requireAssistantAfterTool?: boolean | undefined
+          readonly supportsPromptCacheKey?: boolean | undefined
+          readonly cacheFormat?: ("anthropic" | "alibaba") | undefined
+        }
+      | undefined
+    readonly settings?: Provider.Settings | undefined
+    readonly headers?: { readonly [x: string]: string } | undefined
+    readonly body?: { readonly [x: string]: any } | undefined
+    readonly models: ReadonlyArray<Model.Info>
+  }>
+}
 export type ProviderListOperation<E = never> = (input?: ProviderListInput) => Effect.Effect<ProviderListOutput, E>
 
 export type ProviderGetInput = {
   readonly providerID: Provider.ID
   readonly location?: { readonly directory?: string | undefined } | undefined
 }
-export type ProviderGetOutput = { readonly location: Location.PublicRef; readonly data: Provider.Info }
+export type ProviderGetOutput = {
+  readonly location: Location.PublicRef
+  readonly data: {
+    readonly id: Provider.ID
+    readonly canonical?: Provider.ID | undefined
+    readonly integrationID?: Integration.ID | undefined
+    readonly instanceOf?: Provider.ID | undefined
+    readonly name: string
+    readonly activation: "auto" | "enabled" | "disabled"
+    readonly package: string
+    readonly compatibility?:
+      | {
+          readonly reasoningField?: Model.ReasoningField | undefined
+          readonly requireReasoning?: boolean | undefined
+          readonly maxTokensField?: Model.MaxTokensField | undefined
+          readonly requireFinishReason?: boolean | undefined
+          readonly requireAssistantAfterTool?: boolean | undefined
+          readonly supportsPromptCacheKey?: boolean | undefined
+          readonly cacheFormat?: ("anthropic" | "alibaba") | undefined
+        }
+      | undefined
+    readonly settings?: Provider.Settings | undefined
+    readonly headers?: { readonly [x: string]: string } | undefined
+    readonly body?: { readonly [x: string]: any } | undefined
+    readonly models: ReadonlyArray<Model.Info>
+  }
+}
 export type ProviderGetOperation<E = never> = (input: ProviderGetInput) => Effect.Effect<ProviderGetOutput, E>
 
 export interface ProviderApi<E = never> {

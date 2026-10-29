@@ -260,15 +260,23 @@ export function agentHost(agent: Agent.Interface): Plugin.Context["agent"] {
 }
 
 export function providerHost(providers: Provider.Interface): Plugin.Context["provider"] {
+  const embedModels = (definition: Provider.Definition) => ({
+    ...definition.provider,
+    models: Array.from(definition.models.values()),
+  })
   return {
-    list: () => providers.available().pipe(Effect.map(located)),
+    list: () =>
+      providers
+        .snapshot()
+        .pipe(Effect.map((snapshot) => located(snapshot.available.map((definition) => embedModels(definition))))),
     get: (input) =>
-      providers.get(Provider.ID.make(input.providerID)).pipe(
-        Effect.flatMap((provider) =>
-          provider === undefined
+      providers.snapshot().pipe(
+        Effect.flatMap((snapshot) => {
+          const definition = snapshot.available.find((item) => item.provider.id === input.providerID)
+          return definition === undefined
             ? Effect.fail(new Error(`Provider not found: ${input.providerID}`))
-            : Effect.succeed(located(provider)),
-        ),
+            : Effect.succeed(located(embedModels(definition)))
+        }),
       ),
     reload: providers.reload,
     transform: (callback) =>
@@ -307,6 +315,7 @@ export function modelHost(models: Model.Interface): Plugin.Context["model"] {
       models.transform((editor) =>
         callback({
           list: (id) => editor.list(id === undefined ? undefined : Provider.ID.make(id)),
+          ids: (providerID) => editor.ids(Provider.ID.make(providerID)),
           get: (providerID, modelID) => editor.get(Provider.ID.make(providerID), Model.ID.make(modelID)),
           update: (providerID, modelID, update) =>
             editor.update(Provider.ID.make(providerID), Model.ID.make(modelID), update),

@@ -57,6 +57,9 @@ export { Event } from "@opencode/schema/model"
 export interface Editor {
   /** Includes disabled candidates so later transforms can re-enable them. */
   readonly list: (providerID?: Provider.ID) => readonly MutableInfo[]
+  /** Current model ids for one provider, read from state keys only: no model is
+   * drafted (structuredClone) to answer this, unlike `list`/`get` (#236). */
+  readonly ids: (providerID: Provider.ID) => readonly ID[]
   readonly get: (providerID: Provider.ID, modelID: ID) => MutableInfo | undefined
   readonly update: (providerID: Provider.ID, modelID: ID, update: (model: MutableInfo) => void) => void
   readonly remove: (providerID: Provider.ID, modelID: ID) => void
@@ -123,6 +126,7 @@ const layer = Layer.effect(
           return copy
         }
         return {
+          ids: (providerID) => Array.from(data.models.get(providerID)?.keys() ?? []),
           list: (providerID) => {
             const ids = providerID === undefined ? Array.from(data.models.keys()) : [providerID]
             return ids.flatMap((id) =>
