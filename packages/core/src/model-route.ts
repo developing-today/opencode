@@ -129,6 +129,16 @@ const Definition = Schema.Struct({
   autonomy: Schema.Literals(["fixed", "rules", "adaptive", "predictive", "agent"]).pipe(optional),
   /** Parallel to `targets`; an empty object means unlimited. */
   budgets: Schema.Array(Budget).pipe(optional),
+  /** The route-level context cap from config, when one is set. A request must fit this and the leaf's own ceiling. */
+  limit: Schema.Struct({
+    context: Schema.Finite.pipe(optional),
+  }).pipe(optional),
+  /** Parallel to `targets`: each leaf's effective context ceiling in tokens — the smallest per-target ceiling on the path that reached it — or an empty object when no target on the path declares one. The model's own limit still applies on top of what is stored here. */
+  targetLimits: Schema.Array(
+    Schema.Struct({
+      context: Schema.Finite.pipe(optional),
+    }),
+  ).pipe(optional),
   /** Weight changes in force across every route, from experimental.model_route_schedules. */
   schedules: Schema.Array(WeightRule).pipe(optional),
   nodes: Schema.Array(Node),
@@ -715,6 +725,22 @@ export const overBudget = (
     over(used.minute.tokens, budget.tokensPerMinute) ||
     over(used.day.tokens, budget.tokensPerDay)
   )
+}
+
+/** The context ceiling a request must fit to use a leaf: the route's cap and the leaf's own ceiling, whichever is smaller. Undefined when neither is set. */
+export const contextCeiling = (definition: Definition, index: number): number | undefined => {
+  const routeCap = definition.limit?.context
+  const leaf = definition.targetLimits?.[index]?.context
+  if (routeCap === undefined) return leaf
+  if (leaf === undefined) return routeCap
+  return Math.min(routeCap, leaf)
+}
+
+/** True when a request carrying `requestTokens` context tokens does not fit the leaf's ceiling, so the leaf is skipped like any other ineligible target. An unknown size never filters, and a leaf with no ceiling always fits. */
+export const overLimit = (definition: Definition, index: number, requestTokens: number | undefined): boolean => {
+  if (requestTokens === undefined) return false
+  const ceiling = contextCeiling(definition, index)
+  return ceiling !== undefined && requestTokens > ceiling
 }
 
 /** Rebuilds usage from stored history, oldest first, after a restart. */

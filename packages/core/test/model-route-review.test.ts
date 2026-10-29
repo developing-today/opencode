@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { ModelRouteReview } from "@opencode/core/model-route-review"
+import type { ConfigModelRoutes } from "@opencode/schema/config/model-routes"
 
 const attempt = (
   routeID: string,
@@ -41,7 +42,7 @@ const pool = (
   selection: ModelRouteReview.Configured["selection"],
   targets: string[],
   weights: Record<string, number> = {},
-): ModelRouteReview.Configured => ({ selection, targets, weights })
+): ModelRouteReview.Configured => ({ selection, targets, weights, limits: {} })
 
 describe("ModelRouteReview.summarize", () => {
   test("member speed median counts completed attempts only, as its doc states", () => {
@@ -131,11 +132,42 @@ describe("ModelRouteReview.summarize", () => {
         { candidate: "a/x", reason: "soft-budget" },
         { candidate: "a/x", reason: "cooldown-until:1767225600000" },
       ]),
+      decision("cheap", "ordered", ["b/y"], "b/y", {}, [{ candidate: "a/x", reason: "over-limit" }]),
     ]
     const [summary] = ModelRouteReview.summarize({ attempts: [], decisions, configured: new Map() })
     const member = summary?.members.find((item) => item.target === "a/x")
-    expect(member?.excluded).toEqual({ cooldown: 2, "soft-budget": 1 })
+    expect(member?.excluded).toEqual({ cooldown: 2, "soft-budget": 1, "over-limit": 1 })
     expect(member).toMatchObject({ offered: 0, attempts: 0 })
+  })
+
+  test("configured carries the per-target ceilings declared on targets", () => {
+    const [summary] = ModelRouteReview.summarize({
+      attempts: [],
+      decisions: [],
+      configured: new Map([
+        [
+          "small",
+          ModelRouteReview.configured({
+            selection: "ordered",
+            targets: [
+              {
+                model: { providerID: "anthropic", model: "opus" },
+                limit: { context: 100_000 },
+              },
+              "openai/gpt-6-luna",
+            ],
+          } as unknown as ConfigModelRoutes.Route),
+        ],
+      ]),
+    })
+    expect(summary?.configured).toMatchObject({
+      targets: ["anthropic/opus", "openai/gpt-6-luna"],
+      limits: { "anthropic/opus": 100_000 },
+    })
+    expect(summary?.members).toMatchObject([
+      { target: "anthropic/opus", configuredLimit: 100_000 },
+      { target: "openai/gpt-6-luna", configuredLimit: null },
+    ])
   })
 
   test("reports failures, first output, speed and request size for each member", () => {

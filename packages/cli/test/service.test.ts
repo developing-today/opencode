@@ -41,6 +41,29 @@ test("managed service ports on Windows stay below the range Windows reserves", (
   expect(ports.filter((port) => port.linux < 0xc000 && port.windows !== port.linux)).toEqual([])
 })
 
+test("service port accepts only plain decimal spellings (#875)", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-service-port-config-"))
+  const layer = Global.layerWith({ config: path.join(root, "config"), state: path.join(root, "state") })
+  const run = <A, E>(effect: Effect.Effect<A, E, Global.Service | FileSystem.FileSystem>) =>
+    Effect.runPromise(effect.pipe(Effect.provide(layer), Effect.provide(NodeFileSystem.layer)))
+  try {
+    for (const value of ["0x10", "1e3", "8080.0", "+8080", "0", "65536", "abc", "80junk", ""]) {
+      await expect(run(ServiceConfig.set("port", value))).rejects.toThrow("Port must be between 1 and 65535")
+      // A rejected spelling writes nothing (and so never stops the service).
+      expect(await run(ServiceConfig.read())).toEqual({})
+    }
+    await run(ServiceConfig.set("port", "8080"))
+    expect(await run(ServiceConfig.read())).toEqual({ port: 8080 })
+    // Surrounding whitespace is trimmed before the decimal check.
+    await run(ServiceConfig.set("port", " 65535 "))
+    expect(await run(ServiceConfig.read())).toEqual({ port: 65535 })
+    await run(ServiceConfig.set("port", "1"))
+    expect(await run(ServiceConfig.read())).toEqual({ port: 1 })
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
 test("service disabled accepts only booleans without changing configuration on invalid input", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-service-disabled-config-"))
   const layer = Global.layerWith({ config: path.join(root, "config"), state: path.join(root, "state") })

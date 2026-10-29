@@ -40,6 +40,16 @@ const TargetObject = Schema.Struct({
     description:
       "Epoch milliseconds after which this target leaves the route. Used for time-limited pool membership; takes effect when the configuration reloads.",
   }).pipe(optional),
+  limit: Schema.Struct({
+    context: PositiveInt.annotate({
+      description:
+        "Caps the context this target serves within the route, below its own limit — e.g. 100000 keeps this target on requests inside a pricing tier that ends at 100k context. A request that does not fit this ceiling and the route's own cap skips this target like any other ineligible target.",
+    }),
+  })
+    .annotate({
+      description: "Per-target context ceiling within the route; a request that does not fit skips this target.",
+    })
+    .pipe(optional),
   cache_format: CacheFormat.pipe(optional),
   window: Schema.Union([
     Schema.String,

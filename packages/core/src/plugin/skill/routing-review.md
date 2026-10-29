@@ -60,7 +60,8 @@ another pool as a target.
   the ones before it.
 
 A target is left out of a selection for one reason, which `route_stats` reports as
-`excluded`: `cooldown`, `provider-limit`, `user-skip`, `soft-budget`, or
+`excluded`: `cooldown`, `provider-limit`, `user-skip`, `soft-budget`,
+`over-limit` (the request does not fit the target's ceiling), or
 `already-tried` (it already failed in this request).
 
 ### How effective weight is formed
