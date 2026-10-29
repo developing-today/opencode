@@ -2201,6 +2201,75 @@ export type ConfigModelRoutes = {
   }
 }
 
+export type ConfigModelRoutes = {
+  [x: string]: {
+    name?: string
+    targets: Array<ConfigModelRouteTarget>
+    cache_format?: ModelCacheFormat
+    health?: {
+      firstTokenTimeoutMs?: number | false
+      maxResponseTimeMs?: number
+      minOutputTokensPerSecond?: number
+      sampleWindow?: number
+      slowThreshold?: number
+      cooldownMs?: number
+      quotaCooldownMs?: number
+    }
+    budgets?: {
+      [x: string]: {
+        requestsPerMinute?: number
+        requestsPerDay?: number
+        tokensPerMinute?: number
+        tokensPerDay?: number
+        softLimit?: number
+      }
+    }
+    hedgeAfterMs?: number
+    attempts?: number
+    autonomy?: "fixed" | "rules" | "adaptive" | "predictive" | "agent"
+    selection?: "ordered" | "round-robin" | "weighted"
+    weights?: { [x: string]: number }
+    schedules?: Array<{
+      id?: string
+      targets?: Array<string>
+      when:
+        | {
+            daysOfWeek?: Array<
+              | "sun"
+              | "sunday"
+              | "mon"
+              | "monday"
+              | "tue"
+              | "tuesday"
+              | "tues"
+              | "wed"
+              | "wednesday"
+              | "thu"
+              | "thursday"
+              | "thur"
+              | "thurs"
+              | "fri"
+              | "friday"
+              | "sat"
+              | "saturday"
+              | number
+            >
+            daysOfMonth?: Array<-1 | number>
+            start?: string
+            end?: string
+            timezone?: string
+            from?: number
+            until?: number
+          }
+        | string
+      factor?: number
+      weight?: number
+      note?: string
+    }>
+    limit?: { context: number }
+  }
+}
+
 export type ConnectionInfo = ConnectionCredentialInfo | ConnectionEnvInfo
 
 export type PtyCreated = {
