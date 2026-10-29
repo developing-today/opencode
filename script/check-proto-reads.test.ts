@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { parseAllowlist, scanSource, staleEntries, unlistedHits } from "./check-proto-reads"
+import { parseAllowlist, SCAN_ROOTS, scanSource, staleEntries, unlistedHits } from "./check-proto-reads"
 
 describe("scanSource", () => {
   test("flags the P-A uppercase-table shape and the P-C ?? shape", () => {
@@ -14,6 +14,12 @@ describe("scanSource", () => {
   test("a guarded hasOwn line still matches, so it needs a disposition", () => {
     const hits = scanSource("f.ts", "const arity = Object.hasOwn(ARITY, key) ? ARITY[key] : undefined")
     expect(hits).toHaveLength(1)
+  })
+})
+
+describe("scan roots", () => {
+  test("scans packages/ai in addition to packages/core (#912)", () => {
+    expect(SCAN_ROOTS).toEqual(["packages/core/src", "packages/ai/src"])
   })
 })
 
