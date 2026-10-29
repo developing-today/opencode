@@ -47,4 +47,4 @@ packages/core/src/shell/scan.ts :: while (/\d/.test(input[cursor] ?? "")) cursor
 packages/core/src/tool/plugin/route-usage.ts :: rows: (history?.windowSessionTargets[index] ?? []).flatMap((row) => :: safe: numeric index into an array
 packages/core/src/util/slug.ts :: ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)], :: safe: numeric random index into an array
 packages/core/src/util/slug.ts :: NOUNS[Math.floor(Math.random() * NOUNS.length)], :: safe: numeric random index into an array
-packages/core/src/variant.ts :: const protocol = model.package === undefined ? undefined : PROTOCOLS[model.package] :: tracked: #862, fix in flight on PR #878; migrate to ownValue when it lands (editing variant.ts in the #865 change would conflict with that PR)
+packages/core/src/variant.ts :: ? PROTOCOLS[model.package] :: guarded: Object.hasOwn ternary at the same site (#862)
