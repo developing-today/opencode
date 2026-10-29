@@ -85,7 +85,16 @@ const resolveEntry = Effect.fnUntraced(function* (entry: Entry, variables: Reado
   if (!entry.manifest.remote_config) return configs
 
   const substitute = (value: string) =>
-    value.replace(/\{env:([^}]+)\}/g, (_, name: string) => variables[name] ?? process.env[name] ?? "")
+    value.replace(
+      /\{env:([^}]+)\}/g,
+      (_, name: string) =>
+        // Own-property resolution only: a plain lookup reads through the prototype
+        // chain, so {env:constructor} would inject the Object function source
+        // into the fetched URL/headers instead of resolving as unset.
+        (Object.hasOwn(variables, name) ? variables[name] : undefined) ??
+        (Object.hasOwn(process.env, name) ? process.env[name] : undefined) ??
+        "",
+    )
   const url = substitute(entry.manifest.remote_config.url)
   const headers = Object.fromEntries(
     Object.entries(entry.manifest.remote_config.headers ?? {}).map(([key, value]) => [key, substitute(value)]),

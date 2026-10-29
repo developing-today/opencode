@@ -421,6 +421,35 @@ describe("ModelGovernance.assertAllowed", () => {
     expect(passed).toContain("test/a#max")
   })
 
+  test("a route named after an Object.prototype member is judged as an unknown route (#831)", async () => {
+    const configInput = {
+      experimental: { model_routes: { main: { targets: ["test/a"] } } },
+    }
+    // Before the fix, routes["constructor"] read through the prototype chain
+    // and route.targets.flatMap threw a TypeError.
+    const open = info("ses_open")
+    await run({ all: [open], parent: open, configInput, model: ref("opencode-route/constructor") })
+    await run({ all: [open], parent: open, configInput, model: ref("opencode-route/toString") })
+  })
+
+  test("a requested variant named after an Object.prototype member runs as-is (#831)", async () => {
+    const configInput = {
+      experimental: { model_routes: { main: { targets: [{ model: "test/a", variants: { low: "high" } }] } } },
+    }
+    // Unremapped, so it is judged as itself: excluding #constructor denies it.
+    // Before the fix, VariantID.make received the inherited Object constructor.
+    const excluding = info("ses_excluding", { subagentPolicy: { excludedModels: ["test/a#constructor"] } })
+    const message = await runDenied({
+      all: [excluding],
+      parent: excluding,
+      configInput,
+      model: ref("opencode-route/main#constructor"),
+    })
+    expect(message).toContain("test/a#constructor")
+    const open = info("ses_open")
+    await run({ all: [open], parent: open, configInput, model: ref("opencode-route/main#constructor") })
+  })
+
   test("a plain route target is judged at the requested variant", async () => {
     const configInput = {
       experimental: { model_routes: { main: { targets: ["test/a"] } } },

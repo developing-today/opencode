@@ -188,6 +188,14 @@ export type Catalog = ReadonlyMap<string, ReadonlyMap<string, CatalogModel>>
  * governance behaved before it had a catalog. A concrete target the catalog
  * does not hold is still judged as named (fail-closed: an allowed list can
  * reject it), where the plugin would drop it. */
+/** A variants-remap lookup with own-property semantics: a requested variant
+ * named after an Object.prototype member (e.g. "constructor") is unremapped
+ * unless the target's variants record defines it itself (#831). */
+const ownVariant = (
+  variants: Readonly<Record<string, string>> | undefined,
+  requested: string,
+): string | undefined => (variants && Object.hasOwn(variants, requested) ? variants[requested] : undefined)
+
 function routeTargets(
   entries: readonly Entry[],
   routeID: string,
@@ -198,7 +206,10 @@ function routeTargets(
   if (seen.has(routeID)) return []
   seen.add(routeID)
   const routes = Config.latest(entries, "experimental")?.model_routes
-  const route = routes?.[routeID]
+  // Own-property lookup: a route named after an Object.prototype member
+  // (e.g. "constructor") must read as an unknown route, not the inherited
+  // member (#831).
+  const route = routes && Object.hasOwn(routes, routeID) ? routes[routeID] : undefined
   if (route === undefined) return []
   const requested = requestedVariant === "default" ? undefined : requestedVariant
   return route.targets.flatMap((target) => {
@@ -217,7 +228,7 @@ function routeTargets(
         ? object?.defaultVariant === undefined
           ? undefined
           : Model.VariantID.make(object.defaultVariant)
-        : Model.VariantID.make(object?.variants?.[requested] ?? requested))
+        : Model.VariantID.make(ownVariant(object?.variants, requested) ?? requested))
     const literal = {
       id: Model.ID.make(selection.model),
       providerID: Provider.ID.make(selection.providerID),
@@ -233,10 +244,11 @@ function routeTargets(
       // table exactly as the plugin expansion resolves it (#869): the remapped
       // variant when the leaf offers it, else the variant itself when offered,
       // else the leaf is pruned — governance must not judge a variant that never
-      // runs, nor keep a leaf the plugin drops.
+      // runs, nor keep a leaf the plugin drops. The remap read itself is
+      // own-property only (#831's ownVariant).
       const wanted = selectionVariant ?? requested
       if (wanted !== undefined) {
-        const remapped = object?.variants?.[wanted]
+        const remapped = ownVariant(object?.variants, wanted)
         const variant =
           remapped !== undefined && offers(remapped)
             ? Model.VariantID.make(remapped)

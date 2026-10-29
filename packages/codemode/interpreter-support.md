@@ -633,7 +633,11 @@ subset, evaluated before the program, with its result bound to one frozen global
 - [x] `std.bind(target, defaults)` wraps a tool callable or a whole namespace object: defaults merge under explicit
       arguments and explicit wins. The wrapper calls the same callable, so the recorded, displayed, and hooked tool
       call is the original tool.
-- [ ] Async helpers (`sleep`, `mapLimit`, `retry`, `withTimeout`): phase 2.
+- [x] Async helpers (phase 2): `std.sleep` wraps the one host sleep primitive (core's sleep extension, provided
+      under an internal global name, capped per call, not a tool call); `std.mapLimit` runs bounded concurrency
+      with input-order results and starts no new items after the first rejection; `std.retry` retries rejections
+      only, delays via `std.sleep`, deterministic with no jitter by default; `std.withTimeout` rejects after the
+      deadline without cancelling the underlying work — an admitted tool call may still complete host-side.
 
 ## Errors and diagnostics
 

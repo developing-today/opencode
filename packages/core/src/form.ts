@@ -362,6 +362,9 @@ function validateWhen(when: Form.When, target: Form.Field) {
   }
   if (target.type === "number" || target.type === "integer") {
     if (typeof when.value !== "number") return "Form field condition value must be a number"
+    // Non-finite values can never be a valid answer (validateField rejects them), so eq
+    // could never match and neq would always match — the never-answerable class of #853.
+    if (!Number.isFinite(when.value)) return "Form field condition value must be a finite number"
     if (target.type === "integer" && !Number.isInteger(when.value))
       return "Form field condition value must be an integer"
     if (
