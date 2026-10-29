@@ -351,7 +351,7 @@ test("syncing a nested subagent by ID also loads its ancestors (#631)", async ()
     expect(setup.data.session.get("ses_grandchild")).toBeUndefined()
     expect(setup.data.session.get("ses_child")).toBeUndefined()
 
-    await setup.data.session.sync("ses_great_grandchild", { ancestors: true })
+    await setup.data.session.sync("ses_great_grandchild", { children: true })
     expect(setup.data.session.get("ses_grandchild")?.parentID).toBe("ses_child")
     expect(setup.data.session.get("ses_child")?.parentID).toBe("ses_root")
     expect(setup.data.session.get("ses_root")?.id).toBe("ses_root")

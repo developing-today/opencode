@@ -123,13 +123,7 @@ function ResolvedTargetSessionRoute() {
   const current = createSessionResolution(
     () => params.id,
     () => data.session,
-    {
-      children: true,
-      // A deep link into a nested subagent (#631) needs its whole ancestor chain in the
-      // store, or the family groups under the wrong root and the ancestor trail truncates.
-      ancestors: true,
-      connected: () => server.ctx.sdk.connection.status() === "connected",
-    },
+    { children: true, connected: () => server.ctx.sdk.connection.status() === "connected" },
   )
 
   const directory = createMemo(() => current()?.location.directory)

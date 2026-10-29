@@ -1746,12 +1746,13 @@ export function createData(config: CreateDataInput) {
         })
       },
       /**
-       * With `children`, also loads every descendant session at any depth, so the family index is complete.
-       * With `ancestors`, also reads the missing parents by ID (best effort), for a session opened directly
-       * before its chain is known. Opt-in: the TUI's family discovery walks ancestors itself and retries
-       * failed reads with backoff, which an always-on walk inside sync would consume and defeat.
+       * With `children`, loads the whole family: every descendant session at any depth, plus the
+       * missing ancestors by ID (best effort), so the family index is complete from either end.
+       * A plain sync deliberately does not walk ancestors: the TUI's family discovery walks them
+       * itself and retries failed reads with backoff, which a walk inside a plain sync would
+       * consume and defeat.
        */
-      sync(sessionID: string, options?: { children?: boolean; ancestors?: boolean }) {
+      sync(sessionID: string, options?: { children?: boolean }) {
         return sync.run(options?.children ? `session.family:${sessionID}` : `session:${sessionID}`, async () => {
           const generation = sync.generation()
           const [info, children] = await Promise.all([
@@ -1761,11 +1762,11 @@ export function createData(config: CreateDataInput) {
           // Ancestors are never listed by the descendant walk, so a session opened directly
           // (a deep link into a nested subagent, #631) holds no info for them: resolveRoot
           // stops at the first missing parent, the family groups under the wrong root, and
-          // the ancestor trail truncates. With `ancestors`, read the missing parents by ID,
+          // the ancestor trail truncates. A family sync reads the missing parents by ID,
           // best effort: a parent that cannot be read leaves the walk at the furthest-known
           // ancestor, exactly what resolveRoot already tolerates.
           const ancestors: SessionInfo[] = []
-          if (options?.ancestors) {
+          if (options?.children) {
             const seen = new Set([sessionID])
             let parentID = info.parentID
             while (parentID && !seen.has(parentID)) {
