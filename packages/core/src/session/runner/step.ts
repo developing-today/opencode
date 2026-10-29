@@ -481,7 +481,7 @@ export const make = Effect.gen(function* () {
               const switched = yield* Effect.result(input.model.routing.credentialFallback())
               if (Result.isSuccess(switched) && switched.success) {
                 markCredentialSwitch(switchKey)
-                const credentialID = switched.success.routing?.credentialID ?? switched.success.credentialID
+                const credentialID = switched.success.routing?.credentialID
                 failover = { model: switched.success, overTo: `credential:${credentialID ?? "unknown"}` }
                 yield* Effect.logInfo("credential failover", {
                   routeID: input.model.routing.routeID,

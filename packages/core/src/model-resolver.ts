@@ -140,10 +140,6 @@ export interface Resolved {
   readonly transport?: Provider.Transport
   /** Milliseconds without streamed data before a WebSocket exchange fails; `false` disables the limit. */
   readonly chunkTimeout?: number | false
-  /** The stored credential serving this resolution, when the provider's active connection is one (#6). */
-  readonly credentialID?: Credential.ID
-  /** The integration the serving connection belongs to. */
-  readonly integrationID?: Integration.ID
   /** Selection and health data for a configured OpenCode model route. */
   readonly routing?: {
     readonly routeID: ID
@@ -157,7 +153,6 @@ export interface Resolved {
     readonly autonomy?: ModelRouteAutonomy.Level
     /** The active stored credential for the target's integration, when there is one (#6). */
     readonly credentialID?: Credential.ID
-    readonly integrationID?: Integration.ID
     /**
      * Activates the next eligible stored credential on the target's own integration and
      * re-resolves the same target on it (#6 credential failover). Eligibility is the Phase A
@@ -460,8 +455,6 @@ export const layer = Layer.effect(
         compaction: runtimeInfo.settings?.compaction,
         transport: provider?.settings?.transport,
         chunkTimeout: Provider.timeout(provider?.settings?.chunkTimeout),
-        ...(connection?.type === "credential" ? { credentialID: connection.id } : {}),
-        integrationID,
       }
     })
     const resolveRoute = (
@@ -491,6 +484,7 @@ export const layer = Layer.effect(
           current: Resolved,
           origin: (() => Effect.Effect<Resolved | undefined, Error>) | undefined,
           credentialFallback: (() => Effect.Effect<Resolved | undefined, Error>) | undefined,
+          credentialIDOverride?: Credential.ID,
         ): Resolved => ({
           ...current,
           // The alias advertises the safest shared request shape. Pricing and provider metadata stay
@@ -508,8 +502,9 @@ export const layer = Layer.effect(
             attempts: definition.attempts ?? 2,
             ...(definition.hedgeAfterMs ? { hedgeAfterMs: definition.hedgeAfterMs } : {}),
             autonomy: definition.autonomy,
-            ...(current.credentialID ? { credentialID: current.credentialID } : {}),
-            ...(current.integrationID ? { integrationID: current.integrationID } : {}),
+            ...((credentialIDOverride ?? credentialByProvider.get(current.ref.providerID))
+              ? { credentialID: credentialIDOverride ?? credentialByProvider.get(current.ref.providerID) }
+              : {}),
             fallback: () => resolveRoute(selected, definition, requestedVariant, triedTargets, false, sessionID),
             ...(origin ? { origin } : {}),
             ...(credentialFallback ? { credentialFallback } : {}),
@@ -636,7 +631,7 @@ export const layer = Layer.effect(
                   load(source, target.variant ?? mapped, definition.targetCacheFormats?.[index]?.cacheFormat),
                 )
                 if (Result.isFailure(retried)) continue
-                return makeResolved(retried.success, undefined, credentialFallback)
+                return makeResolved(retried.success, undefined, credentialFallback, candidate.id)
               }
               return undefined
             })
