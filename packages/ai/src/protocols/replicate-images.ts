@@ -120,6 +120,32 @@ const decodeStatus = Effect.fn("ReplicateImages.decodeStatus")(function* (
   return { id: context.token.id, status: yield* MediaProtocol.status(STATUS, output.value.status, output) }
 })
 
+// Date.parse with a calendar check, the local equivalent of route/executor.ts's
+// parseHttpDate (which is not exported): Date.parse silently rolls overflow days
+// such as Feb 30 into the next month instead of returning NaN, so an ISO date's
+// components must round-trip through a real calendar date before the parsed
+// instant is trusted. An unparseable or calendar-invalid completed_at yields
+// undefined, so the image carries no expiry instead of a NaN or rolled-over one.
+const parseCompletedAt = (text: string | undefined): number | undefined => {
+  if (text === undefined) return undefined
+  const date = Date.parse(text)
+  if (Number.isNaN(date)) return undefined
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text)
+  if (!iso) return date
+  const year = Number(iso[1])
+  const month = Number(iso[2])
+  const day = Number(iso[3])
+  const probe = new Date(0)
+  probe.setUTCFullYear(year, month - 1, day)
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day)
+    return undefined
+  // V8 rolls hour 24 into the next day instead of returning NaN, so an ISO time
+  // part must not carry hour > 23 (RFC 3339 time-hour is 00-23).
+  const time = /[T ](\d{2}):\d{2}/i.exec(text)
+  if (time && Number(time[1]) > 23) return undefined
+  return date
+}
+
 const decodeResult = Effect.fn("ReplicateImages.decodeResult")(function* (
   response: HttpClientResponse.HttpClientResponse,
   context: MediaProtocol.PollContext<Token>,
@@ -140,9 +166,8 @@ const decodeResult = Effect.fn("ReplicateImages.decodeResult")(function* (
   const urls = typeof prediction.output === "string" ? [prediction.output] : prediction.output
   if (urls.length === 0) return yield* output.invalid(`${route.name} prediction ${context.token.id} returned no images`)
   const predictTime = prediction.metrics?.predict_time ?? undefined
-  const completedAt = prediction.completed_at ?? undefined
-  const expiresAt =
-    completedAt === undefined ? undefined : Date.parse(completedAt) + Duration.toMillis(OUTPUT_RETENTION)
+  const completedAt = parseCompletedAt(prediction.completed_at ?? undefined)
+  const expiresAt = completedAt === undefined ? undefined : completedAt + Duration.toMillis(OUTPUT_RETENTION)
   return new ImageResponse({
     images: urls.map((url) => Media.url(url, { expiresAt })),
     usage: predictTime === undefined ? undefined : { type: "compute", seconds: predictTime },
