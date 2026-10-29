@@ -29,8 +29,14 @@ const fetch = async (input: string | URL, init: Init = {}) => {
     ok: response.ok,
     redirected: response.redirected,
     headers: {
-      get: (name: string) => headers[name.toLowerCase()] ?? null,
-      has: (name: string) => name.toLowerCase() in headers,
+      // Own-property lookups only (#805): headers is a plain record, so a bare index or
+      // `in` reads through Object.prototype - an absent "constructor" resolved to the
+      // Object function and "__proto__" to Object.prototype instead of null / false.
+      get: (name: string) => {
+        const key = name.toLowerCase()
+        return Object.hasOwn(headers, key) ? headers[key] : null
+      },
+      has: (name: string) => Object.hasOwn(headers, name.toLowerCase()),
       entries: () => Object.entries(headers),
     },
     text: async () => text(),
