@@ -25,7 +25,9 @@ export async function rootSession<T extends SessionParent>(session: T, get: (ses
   // tree's root instead of stopping at the fork.
   while (true) {
     const parentID = current.parentID ?? current.fork?.sessionID
+
     if (!parentID) return current
+
     if (seen.has(parentID)) throw new Error(`Session parent cycle: ${parentID}`)
     seen.add(parentID)
     current = await get(parentID)
