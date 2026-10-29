@@ -190,6 +190,20 @@ describe("ModelRouteLimits.retryHintFromMessage", () => {
     }
   })
 
+  test("treats calendar-invalid non-ISO dates as unparseable instead of rolling them forward (#798)", () => {
+    // The ISO round-trip does not reach named or slash-ordered forms, but V8 rolls their
+    // overflow days the same way: Feb 30 states no reset in any spelling.
+    for (const value of ["Feb 30 2026", "Feb 30, 2026", "30 Feb 2026", "2026/02/30", "April 31 2026", "2026/04/31"]) {
+      expect(ModelRouteLimits.parseAbsoluteTime(value)).toBeUndefined()
+    }
+    // Hour 24 is rejected in non-ISO forms too, not only ISO ones.
+    expect(ModelRouteLimits.parseAbsoluteTime("Feb 28 2026 24:00")).toBeUndefined()
+    // Valid non-ISO forms parse exactly as before, leap day included.
+    for (const value of ["Jan 5 2026", "5 Jan 2026", "Feb 29 2024", "Wed, 21 Oct 2015 07:28:00 GMT"]) {
+      expect(ModelRouteLimits.parseAbsoluteTime(value)).toBe(Date.parse(value))
+    }
+  })
+
   test("reads decimal and compound relative waits as the total", () => {
     expect(ModelRouteLimits.retryHintFromMessage("try again in 1.5 hours", at)).toBe(5_400_000)
     expect(ModelRouteLimits.resetAtFromMessage("try again in 1.5 hours", at)).toBe(at + 5_400_000)
