@@ -413,7 +413,18 @@ export function expand(
           ...(variant ? { variant } : {}),
         })
         const key = `${resolved.providerID}/${resolved.id}${resolved.variant ? `#${resolved.variant}` : ""}`
-        if (attached.has(key)) continue
+        if (attached.has(key)) {
+          // Already attached to this node, but a duplicate target can still tighten the leaf's
+          // ceiling: ceilings only ever tighten, whichever reach declares the smaller one.
+          const existing = leafByKey.get(key)
+          if (
+            existing !== undefined &&
+            ceiling !== undefined &&
+            (result[existing].contextLimit === undefined || ceiling < result[existing].contextLimit)
+          )
+            result[existing] = { ...result[existing], contextLimit: ceiling }
+          continue
+        }
         attached.add(key)
         const gate = gateFor("window" in spec ? spec.window : undefined, windows, `route ${JSON.stringify(routeID)}`)
         const leafKey = `${resolved.providerID}/${resolved.id}`

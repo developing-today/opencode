@@ -580,6 +580,16 @@ describe("per-target context limits", () => {
     }
   })
 
+  test("a duplicate target in the same route still tightens the leaf ceiling", () => {
+    const { leaves } = expand(
+      "r",
+      route(["anthropic/opus", { model: "anthropic/opus", limit: { context: 100_000 } }]),
+      mixed(),
+    )
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0].contextLimit).toBe(100_000)
+  })
+
   test("the tighter of the target's own limit and an inherited one wins", () => {
     const routes = new Map<string, ConfigModelRoutes.Route>([
       [

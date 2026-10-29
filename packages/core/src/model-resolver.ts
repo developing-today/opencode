@@ -474,6 +474,7 @@ export const layer = Layer.effect(
         while (triedTargets.size < definition.targets.length) {
           const indexes = definition.targets.flatMap((_, index) => (triedTargets.has(index) ? [] : [index]))
           const unavailable = new Map<number, string>()
+          const overLimit = new Set<number>()
           const ready = indexes.filter((index) => {
             const target = definition.targets[index]
             const until = ModelRoute.cooldownUntil(target, now)
@@ -489,6 +490,7 @@ export const layer = Layer.effect(
             // there. It is checked last so a target excluded for any existing reason keeps that
             // reason, and only a limit-only exclusion is attributed to the limit.
             const isOverLimit = ModelRoute.overLimit(definition, index, requestTokens)
+            if (isOverLimit) overLimit.add(index)
             const limited = rules ? ModelRoute.limitedUntil(target, now) : 0
             // A burst hold steers new sessions away but leaves a session on the target it is already using.
             const kept = limited > now && ModelRoute.keepsThrough(definition.id, sessionID, target, now)
@@ -500,8 +502,10 @@ export const layer = Layer.effect(
             return until <= now && (limited <= now || kept) && !isSkipped && !isOverBudget && !isOverLimit
           })
           // Budgets and skips are soft limits: if every remaining target is excluded, try the
-          // configured tree as a last resort rather than refusing a turn.
-          const eligible = ready.length > 0 ? ready : allowCooling ? indexes : []
+          // configured tree as a last resort rather than refusing a turn. Context ceilings are
+          // hard limits — the request cannot be served over a target's ceiling — so over-limit
+          // targets stay excluded even in the last resort.
+          const eligible = ready.length > 0 ? ready : allowCooling ? indexes.filter((index) => !overLimit.has(index)) : []
           const index = ModelRoute.nextTarget(
             definition,
             new Set(eligible),

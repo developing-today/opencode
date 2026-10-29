@@ -1923,6 +1923,24 @@ describe("ModelResolver routes", () => {
     )
   })
 
+  it.effect("does not restore an over-limit target as a last resort", () => {
+    ModelRoute.resetHealth()
+    ModelRoute.resetSelection()
+    const a = leaf("pa")
+    const route = routed([a], { ...single, targetLimits: [{ context: 100_000 }] })
+    return withResolver([a], (resolver) =>
+      Effect.gen(function* () {
+        // The only target's ceiling is below the request: resolution fails rather than
+        // falling back to the over-limit target.
+        const exit = yield* Effect.exit(resolver.resolveModel(route, undefined, "s-too-big", 110_000))
+        expect(exit._tag).toBe("Failure")
+        if (exit._tag === "Failure") expect(exit.cause).toBeDefined()
+        // A request that fits still resolves to the target.
+        expect(targetOf(yield* resolver.resolveModel(route, undefined, "s-fits", 90_000))).toBe("pa")
+      }),
+    )
+  })
+
   it.effect("gives each new session its own target in round-robin mode and keeps it", () => {
     ModelRoute.resetHealth()
     ModelRoute.resetSelection()

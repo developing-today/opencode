@@ -378,6 +378,7 @@ export type ConfigModelRouteTarget =
       defaultVariant?: string
       variants?: { [x: string]: string }
       until?: number
+      limit?: { context: number }
       window?: string | { name: string; invert?: boolean }
     }
 
