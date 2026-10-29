@@ -124,6 +124,35 @@ describe("ModelPlan store", () => {
     expect(pooled.pools.hard).toMatchObject({ tier: "frontier", purpose: "debugging with an unknown cause" })
   })
 
+  test("a pool or model named for an inherited key starts from an empty entry, not the prototype", () => {
+    const pooled = ModelPlan.setPool(ModelPlan.emptyStore(), "constructor", { purpose: "shadowed pool id" }, NOW)
+    expect(Object.hasOwn(pooled.pools, "constructor")).toBe(true)
+    expect(pooled.pools["constructor"]).toMatchObject({ purpose: "shadowed pool id", updatedAt: NOW })
+    expect(typeof pooled.pools["constructor"]).toBe("object")
+
+    const again = ModelPlan.setPool(pooled, "constructor", { tier: "cheap" }, NOW)
+    expect(again.pools["constructor"]).toMatchObject({ purpose: "shadowed pool id", tier: "cheap" })
+
+    expect(() => ModelPlan.setModel(ModelPlan.emptyStore(), "toString", {}, NOW)).toThrow("needs a tier")
+    const modeled = ModelPlan.setModel(ModelPlan.emptyStore(), "toString", { tier: "cheap" }, NOW)
+    expect(Object.hasOwn(modeled.models, "toString")).toBe(true)
+    expect(modeled.models["toString"]).toMatchObject({ tier: "cheap" })
+  })
+
+  test("an inherited value is never merged into a pool or model being set", () => {
+    const empty = ModelPlan.emptyStore()
+    const pools = Object.assign(Object.create({ constructor: { purpose: "inherited", updatedAt: NOW } }), empty.pools)
+    const models = Object.assign(Object.create({ toString: { tier: "frontier", updatedAt: NOW } }), empty.models)
+
+    const pooled = ModelPlan.setPool({ ...empty, pools }, "constructor", { tier: "cheap" }, NOW)
+    expect(pooled.pools["constructor"]).toMatchObject({ tier: "cheap", updatedAt: NOW })
+    expect(pooled.pools["constructor"].purpose).toBeUndefined()
+
+    expect(() => ModelPlan.setModel({ ...empty, models }, "toString", {}, NOW)).toThrow("needs a tier")
+    const modeled = ModelPlan.setModel({ ...empty, models }, "toString", { tier: "cheap" }, NOW)
+    expect(modeled.models["toString"]).toMatchObject({ tier: "cheap", updatedAt: NOW })
+  })
+
   test("slug never ends in a dash, including when the 64-char slice cuts after a separator", () => {
     expect(ModelPlan.slug("a".repeat(63) + " b c")).toBe("a".repeat(63))
     expect(ModelPlan.slug("a".repeat(64))).toBe("a".repeat(64))
