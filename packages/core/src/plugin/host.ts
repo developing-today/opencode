@@ -247,6 +247,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
         models.transform((editor) =>
           callback({
             list: (providerID) => editor.list(providerID === undefined ? undefined : Provider.ID.make(providerID)),
+            ids: (providerID) => editor.ids(Provider.ID.make(providerID)),
             get: (providerID, modelID) => editor.get(Provider.ID.make(providerID), Model.ID.make(modelID)),
             update: (providerID, modelID, update) =>
               editor.update(Provider.ID.make(providerID), Model.ID.make(modelID), update),
