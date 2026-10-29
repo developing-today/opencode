@@ -614,11 +614,7 @@ export const layer = Layer.effect(
             const availableModels = yield* models.available()
             const exists = ({ providerID, modelID }: { providerID: string; modelID: string }) =>
               availableModels.some((m) => m.providerID === providerID && m.id === modelID)
-            const refStr = target.id
-              ? target.variant
-                ? `${target.providerID}/${target.id}#${target.variant}`
-                : `${target.providerID}/${target.id}`
-              : String(target.providerID)
+            const refStr = ModelAlias.refString(target)
             try {
               const res = ModelAlias.resolveRef(aliases, refStr, exists)
               target = Ref.make({
