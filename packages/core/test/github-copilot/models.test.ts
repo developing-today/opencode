@@ -155,3 +155,48 @@ test("prices cache reads from either token price spelling", async () => {
     await server.stop(true)
   }
 })
+
+test("does not roll calendar-invalid version dates over into release instants (#886)", async () => {
+  const item = (id: string, suffix: string) => ({
+    model_picker_enabled: true,
+    id,
+    name: id,
+    version: `${id}-${suffix}`,
+    supported_endpoints: ["/chat/completions"],
+    capabilities: {
+      family: "gpt",
+      limits: { max_output_tokens: 1000, max_prompt_tokens: 8000 },
+      supports: { tool_calls: true },
+    },
+  })
+  const server = Bun.serve({
+    port: 0,
+    fetch: () =>
+      Response.json({
+        data: [
+          item("feb30", "2026-02-30"),
+          item("feb29", "2026-02-29"),
+          item("month13", "2026-13-01"),
+          item("leap", "2024-02-29"),
+          item("valid", "2026-06-01"),
+          item("preview", "preview"),
+        ],
+      }),
+  })
+
+  try {
+    const models = await CopilotModels.get(server.url.origin, {}, [])
+    // Calendar-invalid suffixes are unknown dates (the 0 sentinel), not
+    // rolled-over instants: Date.parse("2026-02-30") is 2026-03-02.
+    expect(models.get(Model.ID.make("feb30"))?.time.released).toBe(0)
+    expect(models.get(Model.ID.make("feb29"))?.time.released).toBe(0)
+    expect(models.get(Model.ID.make("month13"))?.time.released).toBe(0)
+    // Real dates — including a genuine leap day — keep their exact instant.
+    expect(models.get(Model.ID.make("leap"))?.time.released).toBe(Date.UTC(2024, 1, 29))
+    expect(models.get(Model.ID.make("valid"))?.time.released).toBe(Date.UTC(2026, 5, 1))
+    // Non-date suffixes keep the 0-when-unparseable behavior.
+    expect(models.get(Model.ID.make("preview"))?.time.released).toBe(0)
+  } finally {
+    await server.stop(true)
+  }
+})
