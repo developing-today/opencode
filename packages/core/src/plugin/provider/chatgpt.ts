@@ -1,6 +1,7 @@
 import type { IntegrationOAuthMethodRegistration } from "@opencode/plugin/effect/integration"
 import type { Context } from "@opencode/plugin/effect/plugin"
 import { define } from "@opencode/plugin/effect/plugin"
+import { expiresInSeconds } from "./expires.js"
 // import { Deferred, Duration, Effect, Option, Schema, Semaphore, Stream } from "effect"
 import { Deferred, Effect, Option, Schema, Semaphore, Stream } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
@@ -518,7 +519,7 @@ function credential(tokens: TokenResponse, clientID: string, scopes?: ReadonlyAr
     methodID,
     refresh: tokens.refresh_token,
     access: tokens.access_token,
-    expires: Date.now() + (tokens.expires_in ?? 3600) * 1000,
+    expires: Date.now() + expiresInSeconds(tokens.expires_in, 3600) * 1000,
     metadata: { clientID, scopes: tokens.scope?.split(" ").filter(Boolean) ?? scopes ?? [] },
   })
 }

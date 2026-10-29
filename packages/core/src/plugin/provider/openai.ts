@@ -1,5 +1,6 @@
 import type { IntegrationOAuthMethodRegistration } from "@opencode/plugin/effect/integration"
 import { define } from "@opencode/plugin/effect/plugin"
+import { expiresInSeconds } from "./expires.js"
 import type { SessionRequest } from "@opencode/plugin/effect/session"
 import { Deferred, Effect, Option, Schema, Semaphore, Stream } from "effect"
 import type { Server } from "node:http"
@@ -421,7 +422,7 @@ function credential(methodID: Integration.MethodID, tokens: TokenResponse) {
     methodID,
     refresh: tokens.refresh_token,
     access: tokens.access_token,
-    expires: Date.now() + (tokens.expires_in ?? 3600) * 1000,
+    expires: Date.now() + expiresInSeconds(tokens.expires_in, 3600) * 1000,
     metadata: accountID ? { accountID } : undefined,
   })
 }
