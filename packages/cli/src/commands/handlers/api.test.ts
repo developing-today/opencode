@@ -91,6 +91,26 @@ describe("api response body handling", () => {
     expect(maxActive).toBe(1)
   })
 
+  test("cancels the response read when the writer fails", async () => {
+    let cancelled = false
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new TextEncoder().encode("chunk;"))
+        },
+        cancel() {
+          cancelled = true
+        },
+      }),
+    )
+    await expect(
+      streamResponseBody(response, () => {
+        throw new Error("output gone")
+      }),
+    ).rejects.toThrow("output gone")
+    expect(cancelled).toBe(true)
+  })
+
   test("readBoundedText returns a body under the cap and rejects one over it", async () => {
     await expect(readBoundedText(new Response("ok"), 1024, () => new Error("too large"))).resolves.toBe("ok")
     const chunk = new Uint8Array(512).fill(98)

@@ -61,12 +61,20 @@ export async function streamResponseBody(
     }
   } else {
     const reader = response.body.getReader()
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (!value || value.byteLength === 0) continue
-      await write(value)
-      note(value)
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (!value || value.byteLength === 0) continue
+        await write(value)
+        note(value)
+      }
+    } catch (error) {
+      // The writer failed or its output went away (e.g. the downstream
+      // pipe closed): stop pulling the response instead of leaving it
+      // streaming into nowhere, then surface the original failure.
+      await reader.cancel().catch(() => undefined)
+      throw error
     }
   }
   return {
@@ -155,7 +163,33 @@ export default Runtime.handler(
         // Respect stdout backpressure: when the write buffer is full,
         // wait for it to drain before streamResponseBody reads more.
         if (!process.stdout.write(chunk)) {
-          await new Promise<void>((resolve) => process.stdout.once("drain", resolve))
+          // Wait for drain, but settle on error/close too: a consumer that
+          // closes its pipe early emits EPIPE/close and never drains (and
+          // the global stdout handler in index.ts swallows EPIPE), so a
+          // drain-only wait would hang the handler forever. Rejecting here
+          // makes streamResponseBody cancel the response read.
+          await new Promise<void>((resolve, reject) => {
+            const cleanup = () => {
+              process.stdout.off("drain", onDrain)
+              process.stdout.off("error", onError)
+              process.stdout.off("close", onClose)
+            }
+            const onDrain = () => {
+              cleanup()
+              resolve()
+            }
+            const onError = (error: Error) => {
+              cleanup()
+              reject(error)
+            }
+            const onClose = () => {
+              cleanup()
+              reject(new Error("stdout closed before it drained"))
+            }
+            process.stdout.once("drain", onDrain)
+            process.stdout.once("error", onError)
+            process.stdout.once("close", onClose)
+          })
         }
       }),
     )
