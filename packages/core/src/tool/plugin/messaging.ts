@@ -20,6 +20,7 @@ const SESSIONS =
 
 const Strings = Schema.Union([Schema.String, Schema.Array(Schema.String)])
 const Count = Schema.Int.check(Schema.isGreaterThan(0))
+const Offset = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const Seqs = Schema.Union([Count, Schema.Array(Count)])
 const Order = Schema.Literals(["asc", "desc"])
 const Match = Schema.Literals(["exact", "regex", "fuzzy", "semantic", "hybrid", "advanced"])
@@ -108,7 +109,7 @@ export const TopicsInput = Schema.Struct({
   }),
   order: Schema.optionalKey(Order),
   limit: Schema.optionalKey(Count),
-  offset: Schema.optionalKey(Schema.Int),
+  offset: Schema.optionalKey(Offset),
   expand: Schema.optionalKey(Schema.Int).annotate({
     description: "Show the first and latest N writers, readers and allowed writers",
   }),
@@ -155,7 +156,7 @@ export const SessionsInput = Schema.Struct({
   sort: Schema.optionalKey(Schema.Literals(["created", "updated"])),
   order: Schema.optionalKey(Order),
   limit: Schema.optionalKey(Count),
-  offset: Schema.optionalKey(Schema.Int),
+  offset: Schema.optionalKey(Offset),
   op: Schema.optionalKey(Schema.Literals(["head", "tail", "grep", "search", "pull"])).annotate({
     description:
       "log: tail (default), head, grep (regex with context), search (ranked, default with query), pull (full text)",
