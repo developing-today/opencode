@@ -303,6 +303,19 @@ const layer = Layer.effect(
     const stopPolicyOf = (recovery: Job.Recovery): Job.StopPolicy =>
       recovery.kind === "subagent" ? (recovery.stopPolicy ?? "independent") : "independent"
 
+    // A detached background subagent survives every plain interrupt, including a
+    // direct one aimed at the child session itself: only force-stop terminates it.
+    const detachedRunning = Effect.fn("Session.detachedRunning")(function* (sessionID: SessionSchema.ID) {
+      const pending = yield* jobs.pendingBackground
+      return pending.some(
+        (marker) =>
+          marker.status === "running" &&
+          marker.recovery.kind === "subagent" &&
+          marker.recovery.childSessionID === sessionID &&
+          stopPolicyOf(marker.recovery) === "detached",
+      )
+    })
+
     const interruptOne = Effect.fn("Session.interruptOne")(function* (sessionID: SessionSchema.ID) {
       const session = yield* store.get(sessionID)
       if (!session) return false
@@ -617,6 +630,9 @@ const layer = Layer.effect(
         // execution to stop and no descendants to cascade to.
         yield* result.get(sessionID).pipe(Effect.catchTag("Session.NotFoundError", () => Effect.void))
         const force = options?.force === true
+        // Policy is checked before anything is stopped: a detached target itself
+        // survives a plain interrupt, so neither it nor its subtree is touched.
+        if (!force && (yield* detachedRunning(sessionID))) return false
         const selfInterrupted = yield* sessions.forSession(sessionID).interrupt(
           options?.resume !== undefined ? { resume: options.resume } : undefined,
         )
