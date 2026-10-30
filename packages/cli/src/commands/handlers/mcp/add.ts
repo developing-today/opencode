@@ -1,6 +1,6 @@
 import { EOL } from "node:os"
 import path from "node:path"
-import { readFile, stat, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises"
 import { Effect, Option } from "effect"
 import { applyEdits, modify } from "jsonc-parser"
 import { Global } from "@opencode/util/global"
@@ -32,7 +32,7 @@ export default Runtime.handler(
 
     const global = yield* Global.Service
     const configPath = yield* Effect.promise(() => resolveConfigPath(input.global ? global.config : process.cwd()))
-    yield* Effect.promise(() => write(configPath, input.name, server))
+    yield* Effect.promise(() => writeMcpConfig(configPath, input.name, server))
     process.stdout.write(`MCP server "${input.name}" added to ${configPath}` + EOL)
   }),
 )
@@ -56,7 +56,7 @@ export async function resolveConfigPath(directory: string) {
   return candidates[0]
 }
 
-async function write(configPath: string, name: string, server: unknown) {
+export async function writeMcpConfig(configPath: string, name: string, server: unknown) {
   const text = await readFile(configPath, "utf8").catch((error) => {
     if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return "{}"
     throw error
@@ -64,5 +64,12 @@ async function write(configPath: string, name: string, server: unknown) {
   const edits = modify(text, ["mcp", "servers", name], server, {
     formattingOptions: { tabSize: 2, insertSpaces: true },
   })
-  await writeFile(configPath, applyEdits(text, edits))
+  // Match the sibling config writers (plugin add/remove): write a temp file in
+  // the same directory with owner-only permissions, then rename it over the
+  // config. The config is never a partial write, and a fresh config — which can
+  // hold remote-MCP Authorization headers — is never created world-readable.
+  await mkdir(path.dirname(configPath), { recursive: true })
+  const temporary = configPath + ".tmp"
+  await writeFile(temporary, applyEdits(text, edits), { mode: 0o600 })
+  await rename(temporary, configPath)
 }
