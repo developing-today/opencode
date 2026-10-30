@@ -30,6 +30,20 @@ export interface DiffOptions {
   readonly base?: string
 }
 
+/**
+ * `git diff --unified=` / `hg diff --unified` accept only a non-negative
+ * integer, so a plugin-supplied context is normalised before it reaches an
+ * adapter: a missing or non-finite value keeps the service default
+ * (full-file context), and negative or fractional values are clamped to a
+ * non-negative integer instead of failing the whole diff with a CLI usage
+ * error. This mirrors the HTTP `vcs.diff` endpoint, which restricts the
+ * same parameter to a non-negative integer.
+ */
+export function diffContext(context?: number): number {
+  if (context === undefined || !Number.isFinite(context)) return PATCH_CONTEXT_LINES
+  return Math.max(Math.trunc(context), 0)
+}
+
 export interface BranchOptions {
   readonly search?: string
   readonly limit?: number
@@ -236,7 +250,7 @@ const layer = Layer.effect(
               ...scope,
               mode,
               ...(options?.base !== undefined ? { base: options.base } : {}),
-              context: options?.context ?? PATCH_CONTEXT_LINES,
+              context: diffContext(options?.context),
               maxOutputBytes: MAX_TOTAL_PATCH_BYTES,
             })
             .pipe(Effect.flatMap(decodeDiff)),

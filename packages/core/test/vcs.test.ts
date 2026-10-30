@@ -707,6 +707,36 @@ describe("Vcs", () => {
     ),
   )
 
+  it.live("normalises a negative, fractional or NaN diff context before it reaches git", () =>
+    withGit((directory) =>
+      Effect.gen(function* () {
+        const body = Array.from({ length: 20 }, (_, index) => `line-${index}`).join("\n") + "\n"
+        yield* Effect.promise(async () => {
+          await fs.writeFile(path.join(directory, "file.txt"), body)
+          await commitAll(directory, "initial")
+          await fs.writeFile(path.join(directory, "file.txt"), body.replace("line-10", "changed"))
+        })
+        const vcs = yield* Vcs.Service
+        expect(Vcs.diffContext()).toBe(2_147_483_647)
+        expect(Vcs.diffContext(0)).toBe(0)
+        expect(Vcs.diffContext(3)).toBe(3)
+        expect(Vcs.diffContext(-1)).toBe(0)
+        expect(Vcs.diffContext(1.5)).toBe(1)
+        expect(Vcs.diffContext(Number.NaN)).toBe(2_147_483_647)
+        expect(Vcs.diffContext(Number.POSITIVE_INFINITY)).toBe(2_147_483_647)
+        const negative = yield* vcs.diff("working", { context: -1 })
+        expect(negative[0].patch).toContain("changed")
+        expect(negative[0].patch).not.toContain("\n line-9")
+        const fractional = yield* vcs.diff("working", { context: 1.5 })
+        expect(fractional[0].patch).toContain("\n line-9")
+        expect(fractional[0].patch).not.toContain("line-0")
+        const nan = yield* vcs.diff("working", { context: Number.NaN })
+        expect(nan[0].patch).toContain("line-0")
+        expect(nan[0].patch).toContain("line-19")
+      }),
+    ),
+  )
+
   it.live("diffs before the first commit", () =>
     withGit((directory) =>
       Effect.gen(function* () {
