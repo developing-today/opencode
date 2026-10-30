@@ -294,6 +294,55 @@ describe("Watcher degraded signal (#797)", () => {
   )
 })
 
+describe("Watcher node fallback (#968)", () => {
+  it.live("delivers create, update, and delete events and suppresses ignored segments", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) =>
+        Effect.gen(function* () {
+          const updates: Watcher.Update[] = []
+          const subscription = yield* Effect.acquireRelease(
+            Effect.sync(() =>
+              Watcher.subscribeDirectoryWithNode(tmp.path, ["node_modules", ".git", "**/{node_modules,.git}/**"], (update) =>
+                updates.push(update),
+              ),
+            ),
+            (subscription) => Effect.promise(() => subscription?.unsubscribe() ?? Promise.resolve()),
+          )
+          expect(subscription?.backend).toBe("node")
+          const waitFor = (match: (update: Watcher.Update) => boolean) =>
+            Effect.sync(() => updates.some(match)).pipe(
+              Effect.filterOrFail(Boolean),
+              Effect.retry(Schedule.spaced("10 millis")),
+              Effect.timeout("2 seconds"),
+              Effect.andThen(Effect.sync(() => expect(updates.some(match)).toBe(true))),
+            )
+          const file = path.join(tmp.path, "watched.txt")
+          yield* Effect.promise(() => fs.writeFile(file, "one"))
+          yield* waitFor((update) => update.path === file && update.type === "create")
+          yield* Effect.promise(() => fs.appendFile(file, " two"))
+          yield* waitFor((update) => update.path === file && update.type === "update")
+          // Ignored segments publish nothing: the sentinel create is delivered
+          // only after the ignored writes below would have been, so its
+          // arrival orders the negative assertions after them.
+          yield* Effect.promise(async () => {
+            await fs.mkdir(path.join(tmp.path, "node_modules", "pkg"), { recursive: true })
+            await fs.mkdir(path.join(tmp.path, ".git"), { recursive: true })
+            await fs.writeFile(path.join(tmp.path, "node_modules", "pkg", "x.js"), "x")
+            await fs.writeFile(path.join(tmp.path, ".git", "HEAD"), "ref")
+          })
+          const sentinel = path.join(tmp.path, "sentinel.txt")
+          yield* Effect.promise(() => fs.writeFile(sentinel, "s"))
+          yield* waitFor((update) => update.path === sentinel && update.type === "create")
+          expect(updates.some((update) => update.path.split(path.sep).includes("node_modules"))).toBe(false)
+          expect(updates.some((update) => update.path.split(path.sep).includes(".git"))).toBe(false)
+          yield* Effect.promise(() => fs.rm(file))
+          yield* waitFor((update) => update.path === file && update.type === "delete")
+        }),
+      ),
+    ),
+  )
+})
+
 function provide(
   directory: string,
   vcs?: Location.Interface["vcs"],
