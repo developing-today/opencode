@@ -21,7 +21,7 @@ import {
   stepTurnTtl,
 } from "./mcpx-projection.js"
 export * as McpxProjection from "./mcpx-projection.js"
-import { DaemonHTTPError, DaemonUnreachableError, ensureScriptReady, failureOf } from "./mcpx-secrets.js"
+import { DaemonHTTPError, DaemonTimeoutError, DaemonUnreachableError, ensureScriptReady, failureOf } from "./mcpx-secrets.js"
 export * as McpxSecrets from "./mcpx-secrets.js"
 import { CodeModeRules } from "../../codemode/rules.js"
 import { readBoundedResponseText } from "../http-body.js"
@@ -205,8 +205,8 @@ const cliOutput = (args: string[], env?: Record<string, string | undefined>) =>
   })
 
 /**
- * How long one daemon request may go unanswered before it fails as
- * unreachable (#1023). The daemon is a local process: a call it accepts
+ * How long one daemon request may go unanswered before it fails with
+ * DaemonTimeoutError (#1023). The daemon is a local process: a call it accepts
  * but never answers is wedged, and hanging on it hangs the tool call (and
  * the session turn waiting on it) forever instead of degrading to the CLI
  * fallback. The bound is generous next to local round-trips so long tool
@@ -235,12 +235,17 @@ export const daemonErrorBodyMaxBytes = 16 * 1024
 const daemonHealthTimeoutMs = 1_000
 
 // No answer at all is DaemonUnreachableError; a non-2xx answer is DaemonHTTPError. Only the first lets mcpx_exec fall
-// back to the CLI, because only then did the daemon not receive the request.
-const send = async (request: () => Promise<Response>, path: string): Promise<any> => {
+// back to the CLI, because only then did the daemon not receive the request. A timeout is neither: the request may
+// already be executing, so it surfaces as DaemonTimeoutError and is never replayed through the CLI.
+const send = async (request: () => Promise<Response>, path: string, timeoutMs: number): Promise<any> => {
   let res: Response
   try {
     res = await request()
   } catch (error) {
+    // The only abort source on these fetches is the timeout signal, whose
+    // rejection is named TimeoutError (AbortError in older runtimes).
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError"))
+      throw new DaemonTimeoutError(`mcpx daemon did not answer ${path} within ${timeoutMs}ms; the request may already be executing`)
     throw new DaemonUnreachableError(error instanceof Error ? error.message : String(error))
   }
   if (!res.ok) {
@@ -255,7 +260,11 @@ const send = async (request: () => Promise<Response>, path: string): Promise<any
     res,
     daemonResponseMaxBytes,
     () => new Error(`mcpx daemon response for ${path} exceeded ${daemonResponseMaxBytes} bytes`),
-  )
+  ).catch((error) => {
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError"))
+      throw new DaemonTimeoutError(`mcpx daemon did not answer ${path} within ${timeoutMs}ms; the request may already be executing`)
+    throw error
+  })
   return JSON.parse(text)
 }
 
@@ -276,11 +285,11 @@ export const callDaemon = async (
   }
 
   if (endpoint && endpoint.startsWith("http")) {
-    return send(() => fetch(`${endpoint.replace(/\/+$/, "")}${path}`, init), path)
+    return send(() => fetch(`${endpoint.replace(/\/+$/, "")}${path}`, init), path, timeoutMs)
   }
 
   if (socket) {
-    return send(() => (fetch as any)(`http://localhost${path}`, { ...init, unix: socket }), path)
+    return send(() => (fetch as any)(`http://localhost${path}`, { ...init, unix: socket }), path, timeoutMs)
   }
 
   throw new DaemonUnreachableError("No mcpx daemon reachable")

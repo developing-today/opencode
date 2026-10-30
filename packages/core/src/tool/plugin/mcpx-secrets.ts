@@ -29,6 +29,14 @@ export class DaemonHTTPError extends Error {
 /** No daemon answered, so nothing was sent. Only this lets mcpx_exec fall back to the CLI. */
 export class DaemonUnreachableError extends Error {}
 
+/**
+ * The daemon did not answer within the request timeout. Unlike
+ * DaemonUnreachableError this does NOT establish that the daemon never
+ * received the request — an execution may already be running — so it
+ * never lets mcpx_exec replay the request through the CLI.
+ */
+export class DaemonTimeoutError extends Error {}
+
 const parseBody = (text: string): unknown => {
   try {
     return JSON.parse(text)

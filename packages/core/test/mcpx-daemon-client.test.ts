@@ -90,10 +90,13 @@ describe("mcpx daemon client bounds", () => {
   // The injected timeout is 200ms; the elapsed bound is timing-sensitive by
   // design: 20x the injected timeout, yet far below the 120s production
   // default the call would take if the timeout were ignored.
-  test("a daemon that never responds fails within the timeout as unreachable", async () => {
+  test("a daemon that never responds fails within the timeout, and not as unreachable", async () => {
     const started = Date.now()
     const error = await McpxTool.callDaemon("/hang", "GET", undefined, undefined, 200).catch((caught) => caught)
-    expect(error).toBeInstanceOf(McpxTool.McpxSecrets.DaemonUnreachableError)
+    // Not DaemonUnreachableError: the daemon may have received the request,
+    // so mcpx_exec must not replay it through the CLI fallback.
+    expect(error).toBeInstanceOf(McpxTool.McpxSecrets.DaemonTimeoutError)
+    expect(error).not.toBeInstanceOf(McpxTool.McpxSecrets.DaemonUnreachableError)
     expect(Date.now() - started).toBeLessThan(4000)
   })
 
