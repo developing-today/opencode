@@ -242,6 +242,8 @@ test("readBoundedResponseBody returns a body under the cap and cuts a chunked bo
     )
 
   await expect(readBoundedResponseBody(chunked(["hello ", "world"]), 1024)).resolves.toBe("hello world")
+  // A UTF-8 BOM is stripped, matching the previous response.text() behaviour.
+  await expect(readBoundedResponseBody(chunked(["\uFEFFhello"]), 1024)).resolves.toBe("hello")
   await expect(readBoundedResponseBody(chunked(["12345", "67890"]), 8)).rejects.toThrow(
     "Session data too large: response body exceeds the 8-byte limit",
   )

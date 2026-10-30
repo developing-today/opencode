@@ -39,5 +39,7 @@ export async function readBoundedResponseBody(response: Response, maximumBytes: 
     }
     chunks.push(value)
   }
-  return Buffer.concat(chunks, size).toString("utf8")
+  // TextDecoder (like response.text()) strips a leading UTF-8 BOM;
+  // Buffer.toString("utf8") would preserve it and break JSON parsing.
+  return new TextDecoder().decode(Buffer.concat(chunks, size))
 }
