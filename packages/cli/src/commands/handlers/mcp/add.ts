@@ -75,7 +75,11 @@ export async function writeMcpConfig(configPath: string, name: string, server: u
   // each other's rename source.
   const destination = await realpath(configPath).catch(() => configPath)
   await mkdir(path.dirname(destination), { recursive: true })
+  // Never widen an existing config's permissions: keep its owner bits (a
+  // read-only 0400 config stays read-only); a fresh config gets 0600.
+  const existing = await stat(destination).catch(() => undefined)
+  const mode = existing ? existing.mode & 0o600 : 0o600
   const temporary = destination + ".tmp-" + process.pid + "-" + randomUUID()
-  await writeFile(temporary, applyEdits(text, edits), { mode: 0o600 })
+  await writeFile(temporary, applyEdits(text, edits), { mode })
   await rename(temporary, destination)
 }

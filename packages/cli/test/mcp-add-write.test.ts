@@ -79,4 +79,19 @@ describe("mcp add config write", () => {
     expect(Object.keys(configObject.mcp.servers)).toHaveLength(1)
     expect(await fs.readdir(directory)).toEqual(["opencode.json"])
   })
+
+  test("keeps a read-only existing config read-only", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-mcp-add-"))
+    const config = path.join(directory, "opencode.json")
+    await fs.writeFile(config, "{}\n")
+    await fs.chmod(config, 0o400)
+
+    await writeMcpConfig(config, "example", remote)
+
+    const configObject = parse(await fs.readFile(config, "utf8")) as {
+      mcp: { servers: Record<string, unknown> }
+    }
+    expect(configObject.mcp.servers.example).toEqual(remote)
+    if (process.platform !== "win32") expect(await mode(config)).toBe(0o400)
+  })
 })
