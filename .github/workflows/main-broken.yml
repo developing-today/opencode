@@ -41,7 +41,7 @@ on:
 # issues/pull_request_target, so queue: max is valid here.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.workflow_run.id || github.run_id }}
-  cancel-in-progress: false
+  cancel-in-progress: true
   queue: max
 
 permissions:

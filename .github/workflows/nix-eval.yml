@@ -9,16 +9,6 @@ name: nix-eval
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
-    # PR tier (ci-policy.md class 4): evaluate only when nix inputs change.
-    # The push-to-main trigger above has no paths filter, so main always
-    # gets the full evaluation.
-    paths:
-      - "**.nix"
-      - "flake.lock"
-      - "nix/**"
-      - ".github/workflows/nix-eval.yml"
   workflow_dispatch:
 
 concurrency:
