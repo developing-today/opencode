@@ -345,8 +345,10 @@ function fallBackToNode(
   })
 }
 
-/** Recursive directory watch on node's fs.watch, used when Parcel is unavailable. */
-function subscribeDirectoryWithNode(
+/** Recursive directory watch on node's fs.watch, used when Parcel is unavailable.
+ * Exported so tests can pin the fallback's delivery semantics directly (#968);
+ * production subscriptions reach it through fallBackToNode. */
+export function subscribeDirectoryWithNode(
   directory: string,
   ignore: readonly string[],
   publish: (update: Update) => void,
