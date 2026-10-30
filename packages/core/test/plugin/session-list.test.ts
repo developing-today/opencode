@@ -62,3 +62,32 @@ it.live("Promise plugins read serverUrl and list child sessions", () =>
     }
   }),
 )
+
+it.live("Plugin session.list normalises an unusable limit before the store", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const context = yield* PluginHost.make(plugins)
+    for (const title of ["Plugin limit a", "Plugin limit b", "Plugin limit c"]) {
+      yield* context.session.create({ title })
+    }
+
+    const all = yield* context.session.list({ parentID: null })
+    expect(all.data.length).toBeGreaterThanOrEqual(3)
+
+    // SQLite reads a negative LIMIT as "unlimited": it must clamp to a positive page.
+    const negative = yield* context.session.list({ parentID: null, limit: -5 })
+    expect(negative.data).toHaveLength(1)
+
+    // Zero is not a page size either; it clamps to the same positive minimum.
+    const zero = yield* context.session.list({ parentID: null, limit: 0 })
+    expect(zero.data).toHaveLength(1)
+
+    // A fractional limit used to reach the store as-is and defect; it floors.
+    const fractional = yield* context.session.list({ parentID: null, limit: 2.5 })
+    expect(fractional.data).toHaveLength(2)
+
+    // A non-finite limit falls back to the default page instead of defecting.
+    const nan = yield* context.session.list({ parentID: null, limit: Number.NaN })
+    expect(nan.data).toHaveLength(all.data.length)
+  }),
+)

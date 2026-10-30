@@ -41,6 +41,7 @@ import { PluginVcsBranchList } from "./vcs/branch-list.js"
 import {
   decodeSessionListCursor,
   encodeSessionListCursor,
+  sessionListLimit,
   type DecodedSessionListCursor,
   type SessionListFilter,
   type SessionListInput,
@@ -743,7 +744,7 @@ function sessionListInput(
   anchor?: Session.ListAnchor,
 ): Session.ListInput {
   const { directory, project, subpath, ...rest } = filter
-  const bounded = limit
+  const bounded = sessionListLimit(limit)
   // The store applies every present scope condition; keep them all instead of picking one.
   if (directory !== undefined && project !== undefined)
     return { ...rest, directory, project, subpath, limit: bounded, anchor } as Session.ListInput
