@@ -434,8 +434,17 @@ export const make = Effect.gen(function* () {
           )
         // A quota-exhaustion answer gates its pool until the reset it stated (#984): the
         // credential when the attempt carried one, the provider itself otherwise. Selection
-        // then stops spending attempts — and collecting 429s — on an exhausted pool.
-        if (failed && isQuotaFailure(llmFailure)) {
+        // then stops spending attempts — and collecting 429s — on an exhausted pool. The
+        // text check catches providers that report exhaustion without a quota tag
+        // (commandcode's "insufficient credits" arrives as an unknown-provider error).
+        const exhaustionText = /insufficient credits|quota exhausted|usage limit exceeded|reached your .* limit/i
+        if (
+          failed &&
+          (isQuotaFailure(llmFailure) ||
+            exhaustionText.test(
+              `${(llmFailure.reason as { message?: string }).message ?? ""} ${(llmFailure.reason as { body?: string }).body ?? ""}`,
+            ))
+        ) {
           const hint = failureHint(llmFailure)
           ModelRoute.observeQuotaFailure(
             input.model.ref,
