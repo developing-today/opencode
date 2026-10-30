@@ -309,3 +309,50 @@ it.effect("Model.Editor.ids lists current ids without drafting, including transf
     expect(seen.after).toEqual(["chat", "deployment-1"])
   }),
 )
+
+
+describe("retargetDefinition editor refresh (#985)", () => {
+  test("a definition-stage model the editor completes later retargets with its variants", () => {
+    // The definition-stage catalog holds the base model with no variants, so
+    // the stored expansion of a variant-pinned target is empty. The editor's
+    // current version of the same model carries the variants, but the editor
+    // does not enumerate the base id (a proxy catalog lists suffixed ids), so
+    // only a refresh by the definition's own ids can complete it.
+    const catalogOnly = new Map<string, Model.Info>([["base", info("base")]])
+    const completed = {
+      ...info("base"),
+      variants: [{ id: Model.VariantID.make("high") }],
+    }
+    const awareEditor = {
+      provider: {
+        list: () => [{ provider: Provider.Info.empty(azure), models: catalogOnly }],
+        get: () => undefined,
+      },
+      ids: () => [],
+      get: (providerID: Provider.ID, modelID: Model.ID) =>
+        String(modelID) === "base" ? completed : undefined,
+    } as unknown as Parameters<typeof retargetDefinition>[2]
+    const routeMap = new Map<string, ConfigModelRoutes.Route>([
+      [
+        "r",
+        {
+          targets: [{ model: { providerID: "azure", model: "base", variant: "high" } }],
+        } as unknown as ConfigModelRoutes.Route,
+      ],
+    ])
+    const definitions = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>([[azure, catalogOnly]])
+    expect(expand("r", routeMap, definitions).leaves).toEqual([])
+    const before = {
+      id: Model.ID.make("r"),
+      targets: [],
+      targetVariants: [],
+      health: ModelRoute.policy(),
+      budgets: [],
+      nodes: [],
+    } as unknown as ModelRoute.Definition
+    const next = retargetDefinition(before, routeMap, awareEditor)
+    expect(next?.definition?.targets.map((target) => `${target.providerID}/${target.id}#${target.variant}`)).toEqual([
+      "azure/base#high",
+    ])
+  })
+})

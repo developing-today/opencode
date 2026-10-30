@@ -443,14 +443,21 @@ export function expand(
         const requested = ref.variant ?? inheritedVariant
         // A pinned variant is producible natively or through the target's remap table, matching
         // routeVariants and the resolver: a remap the model can produce wins, else the native
-        // variant, else the leaf is pruned.
+        // variant, else the leaf is pruned. A variant the door's catalog exposes as a
+        // suffixed model id ("<model>-<variant>") also counts as producible: proxy
+        // catalogs enumerate effort levels that way (Antigravity's gemini-4-argon-high,
+        // claude-sonnet-5-5-high), and their definition-stage model info carries no
+        // variant list, so the native check alone silently pruned every pinned leaf
+        // on those providers (#985).
+        const producible = (candidate: string) =>
+          model.variants.some((item) => item.id === candidate) || (doorModels?.has(`${id}-${candidate}`) ?? false)
         const remapped = requested ? spec.variants?.[requested] : undefined
         const variant =
           requested === undefined
             ? undefined
-            : remapped !== undefined && model.variants.some((item) => item.id === remapped)
+            : remapped !== undefined && producible(remapped)
               ? Model.VariantID.make(remapped)
-              : model.variants.some((item) => item.id === requested)
+              : producible(requested)
                 ? requested
                 : undefined
         if (requested && !variant) continue
@@ -593,6 +600,15 @@ export function retargetDefinition(
     for (const id of editor.ids(providerID)) {
       const model = editor.get(providerID, Model.ID.make(id))
       if (model) merged.set(String(id), model)
+    }
+    // The editor does not enumerate every model it holds (a proxy catalog lists
+    // effort levels as suffixed ids, not the base model), so a definition-stage
+    // entry the editor never names would keep its pre-transform shape — no
+    // variants, stale limits — and the re-expansion below would judge targets
+    // against it. Refresh every surviving entry from the editor by its own id.
+    for (const id of merged.keys()) {
+      const model = editor.get(providerID, Model.ID.make(id))
+      if (model) merged.set(id, model)
     }
     definitions.set(providerID, merged)
   }
