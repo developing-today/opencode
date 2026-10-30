@@ -22,17 +22,9 @@ Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](REA
 
 Subagents can launch subagents. Pending permissions and questions from any depth now reach the root session in the app, the TUI and ACP.
 
-| Title                                      | Horizon | Status   | Intent                                                                                                                                                          | Links |
-| ------------------------------------------ | ------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| Nest the TUI mini Select subagent menu     | Now     | proposed | The follow-up left behind when the TUI changes merged.                                                                                                          | #78   |
-
 ## mcpx integration
 
 The fork projects mcpx tools into Code Mode, starts a detached daemon with just-in-time secret prompts, and cleans up leaked daemons. The mcpx source lives in `developing-today/code`.
-
-| Title                                       | Horizon | Status   | Intent                                                                                                         | Links |
-| ------------------------------------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------- | ----- |
-| Say where the flake gets mcpx               | Now     | proposed | The flake builds `opencode` with no `mcpx` unless the consumer passes one in.                                  | #82   |
 
 ## Serve handover and restarts
 
@@ -40,7 +32,6 @@ The fork projects mcpx tools into Code Mode, starts a detached daemon with just-
 
 | Title                                    | Horizon | Status   | Intent                                                                                                            | Links           |
 | ---------------------------------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------------- | --------------- |
-| Verify the handover under real systemd   | Now     | proposed | `Type=notify` with `NotifyAccess=all` is only tested with stand-ins. Also decide on the rare teardown race.       | #81             |
 | Session state outside the server process | Later   | idea     | A restarted server reattaches to in-flight work, so restarts stop being visible. Open questions are in `TODO.md`. | [TODO](TODO.md) |
 
 ## Routing, cost and plans
@@ -51,15 +42,8 @@ The fork adds named route pools, scheduled weights, request telemetry with cost,
 | --------------------------------------------- | ------- | ------ | -------------------------------------------------------------------------------- | ----- |
 | Failover across credentials on 429            | Later   | idea   | Switch to another credential when quota runs out, through `credential.activate`. | #6    |
 | Show authoritative cost in the desktop header | Later   | idea   | Use the models.dev `cost_usd`.                                                   | #7    |
-| Stitch cost across response chunks            | Later   | idea   | Count the cost of a continued response in `route_attempt`.                       | #8    |
 | Prompt cache use across model pools           | Later   | idea   | Through `compatibility.cacheFormat`.                                             | #9    |
 | Auto-check plan steps                         | Later   | idea   | Use turn file change summaries to tick plan steps.                               | #10   |
-
-## Plugin API
-
-| Title                    | Horizon | Status   | Intent                                                                                  | Links |
-| ------------------------ | ------- | -------- | --------------------------------------------------------------------------------------- | ----- |
-| Close the v2 plugin gaps | Next    | proposed | Plugins cannot list child sessions, read live provider pricing or learn the server URL. | #19   |
 
 ## CI and test health
 
