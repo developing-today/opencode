@@ -1,8 +1,8 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "2d44615a-d376-47d0-bd31-b05ed305aeb1",
-  "prevIds": ["3b8437ee-1a59-400d-9a69-ad74f9d1e8f5"],
+  "id": "19272635-2391-40b6-8db6-c6943d1b2d28",
+  "prevIds": ["2d44615a-d376-47d0-bd31-b05ed305aeb1"],
   "ddl": [
     {
       "name": "account_state",
@@ -1381,6 +1381,16 @@
       "default": null,
       "generated": null,
       "name": "cost_usd",
+      "entityType": "columns",
+      "table": "route_attempt"
+    },
+    {
+      "type": "real",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "cache_savings_usd",
       "entityType": "columns",
       "table": "route_attempt"
     },

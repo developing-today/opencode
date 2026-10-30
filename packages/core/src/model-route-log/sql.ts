@@ -67,6 +67,11 @@ export const RouteAttemptTable = sqliteTable(
     /** What the request cost in USD, from the model's catalog prices and the tokens it used. Null when the request
      * did not finish with usage. Stored with the attempt so the cost outlives the session it belongs to. */
     cost_usd: real(),
+    /** What prompt caching saved on this request in USD: cache-read tokens at the input price minus their
+     * cache-read price, from the same catalog prices as `cost_usd`. Null for attempts recorded before this
+     * column existed or without usage — historical rows carry no pricing snapshot, so their savings are
+     * never reconstructed by guessing later prices. */
+    cache_savings_usd: real(),
     /** The attempt that started the response this request continued, when a response hit the output token limit and
      * the session runner asked for the rest. Null for a request that stands on its own. A turn is a root attempt plus
      * every attempt that names it here, so its tokens and cost can be read as one figure. */

@@ -200,6 +200,7 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
           \`tokens_cache_read\` integer,
           \`tokens_cache_write\` integer,
           \`cost_usd\` real,
+          \`cache_savings_usd\` real,
           \`continuation_of\` integer,
           \`continuation_index\` integer DEFAULT 0,
           \`quota\` text

@@ -685,6 +685,7 @@ export const turnAttempts = (db: Database.Interface["db"], since: number, sessio
       cacheRead: RouteAttemptTable.tokens_cache_read,
       cacheWrite: RouteAttemptTable.tokens_cache_write,
       costUsd: RouteAttemptTable.cost_usd,
+      cacheSavedUsd: RouteAttemptTable.cache_savings_usd,
     })
     .from(RouteAttemptTable)
     .where(
@@ -724,6 +725,7 @@ const usageColumns = {
   cacheRead: sql<number>`coalesce(sum(${RouteAttemptTable.tokens_cache_read}), 0)`,
   cacheWrite: sql<number>`coalesce(sum(${RouteAttemptTable.tokens_cache_write}), 0)`,
   costUsd: sql<number>`coalesce(sum(${RouteAttemptTable.cost_usd}), 0)`,
+  cacheSavedUsd: sql<number>`coalesce(sum(${RouteAttemptTable.cache_savings_usd}), 0)`,
 }
 
 /** Totals per session that made a request since `since`, most recently active first. */
