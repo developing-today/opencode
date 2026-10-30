@@ -9,13 +9,13 @@ name: main-broken
 # Breakage-ID = first 12 hex of
 #   sha256("developing-today/opencode|<workflow>|<sorted failing job names>")
 #
-# JULES LEG GAP: this repo has no JULES_API_KEY secret (checked
-# 2026-10-29, `gh secret list` is empty), so the Jules-first step of
-# the chain cannot fire here yet. Issues are filed with `queue/queued`
-# so a Muse fleet lane picks the breakage up directly. When the
-# secret is added, mirror developing-today/code's jules.yml
-# `issue-labeled` job into this repo and apply the `jules` label at
-# filing time when fewer than 3 open main-broken issues carry it.
+# DISPATCH HANDOFF: the Jules leg is retired fleet-wide (this repo
+# never had a Jules API key secret, so the Jules-first step of the
+# chain never fired here). Breakages are handed to the fleet queue
+# via pm-dispatch (the pm-dispatch-queue reusable action from
+# developing-today/code) at filing time: a new Breakage-ID files one
+# issue plus a queued task, and repeat failures with the same ID
+# attach a fresh task to the existing issue instead of filing anew.
 
 on:
   workflow_run:
@@ -57,10 +57,16 @@ jobs:
        github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+      issues: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: File or append the main-broken issue
+      - name: Compute the main-broken filing decision
+        id: filing
         env:
           EVENT_NAME: ${{ github.event_name }}
           WR_RUN_ID: ${{ github.event.workflow_run.id }}
@@ -87,6 +93,7 @@ jobs:
           BRANCH=$(jq -r '.head_branch' run.json)
           if [ "$BRANCH" != "main" ]; then
             echo "run $RUN_ID is on branch '$BRANCH', not main -- skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -94,6 +101,7 @@ jobs:
             --jq '[.jobs[] | select(.conclusion=="failure") | .name] | sort | join(",")')
           if [ -z "$FAILING" ]; then
             echo "run $RUN_ID has no failed jobs -- skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           FIRST=$(printf '%s' "$FAILING" | cut -d, -f1)
@@ -110,6 +118,7 @@ jobs:
             else
               echo "DRY RUN: would file a new main-broken issue for Breakage-ID $BID"
             fi
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -122,16 +131,15 @@ jobs:
 
           NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" --repo "$REPO" --body "<!-- agent-note:v1 -->
+            cat > prompt.md <<BODY
+          <!-- agent-note:v1 -->
           agent-note:v1 -- main-broken chain (append, $NOW)
           - same Breakage-ID \`$BID\` failed again: $URL
           - failing jobs: $FAILING
-          - holder: unchanged (see the filing note on this issue); no duplicate filing, no duplicate remediation spend"
-            echo "appended to existing issue #$EXISTING"
-            exit 0
-          fi
-
-          cat > body.md <<BODY
+          - holder: unchanged (see the filing note on this issue); a fresh task is attached to this issue via pm-dispatch -- no duplicate filing
+          BODY
+          else
+            cat > prompt.md <<BODY
           Main-tier workflow \`$WF\` failed on \`main\`.
 
           - Run: $URL
@@ -145,10 +153,49 @@ jobs:
           <!-- agent-note:v1 -->
           agent-note:v1 -- main-broken chain (filing, $NOW)
           - holder: fleet queue (chain filing) -- filed with \`queue/queued\` for a priority Muse lane
-          - jules: NOT engaged -- this repo has no JULES_API_KEY secret, so the Jules-first leg of the chain is a known gap (developing-today/code#1782); do not apply a \`jules\` label expecting remediation until the secret and an issue-labeled Jules job exist here
+          - dispatch: handed to the fleet queue via pm-dispatch at filing time; the Jules leg is retired fleet-wide, so no \`jules\` label is applied or expected to trigger remediation
           - dedupe: Breakage-ID \`$BID\`; repeat failures with the same ID append to this issue instead of filing anew
           BODY
-          gh issue create --repo "$REPO" \
-            --title "main-broken: $REPO $WF @$SHORT -- $FIRST" \
-            --label "kind/ci,priority/critical,main-broken,queue/queued,status/needs-triage" \
-            --body-file body.md
+          fi
+
+          {
+            echo "skip=false"
+            echo "existing=$EXISTING"
+            echo "title=main-broken: $REPO $WF @$SHORT -- $FIRST"
+            echo "prompt<<PROMPT_EOF"
+            cat prompt.md
+            echo "PROMPT_EOF"
+          } >> "$GITHUB_OUTPUT"
+          if [ -n "$EXISTING" ]; then
+            echo "append decision recorded for existing issue #$EXISTING"
+          else
+            echo "filing decision recorded for Breakage-ID $BID"
+          fi
+
+      - name: Queue a new main-broken issue via pm-dispatch
+        id: queue-new
+        if: steps.filing.outputs.skip == 'false' && steps.filing.outputs.existing == ''
+        uses: developing-today/code/.github/actions/pm-dispatch-queue@main
+        with:
+          title: ${{ steps.filing.outputs.title }}
+          prompt: ${{ steps.filing.outputs.prompt }}
+          priority: "critical"
+          kind: "ci_investigation"
+          issue: "true"
+
+      # Dispatch-created issues carry only queue/queued + source/dispatch;
+      # re-apply the workflow's full label set on the created issue.
+      - name: Apply the main-broken label set to the new issue
+        if: steps.queue-new.outputs.issue_number != ''
+        run: |
+          gh issue edit "${{ steps.queue-new.outputs.issue_number }}" --repo "${{ github.repository }}" --add-label "kind/ci,priority/critical,main-broken,queue/queued,status/needs-triage"
+
+      - name: Attach a fresh task to the existing main-broken issue via pm-dispatch
+        if: steps.filing.outputs.skip == 'false' && steps.filing.outputs.existing != ''
+        uses: developing-today/code/.github/actions/pm-dispatch-queue@main
+        with:
+          title: ${{ steps.filing.outputs.title }}
+          prompt: ${{ steps.filing.outputs.prompt }}
+          priority: "critical"
+          kind: "ci_investigation"
+          issue_number: ${{ steps.filing.outputs.existing }}
