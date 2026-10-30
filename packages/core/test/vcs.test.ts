@@ -553,6 +553,45 @@ describe("Vcs", () => {
     ),
   )
 
+  it.live("service branch pages normalise an invalid limit before it reaches git", () =>
+    withGit((directory) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(async () => {
+          await fs.writeFile(path.join(directory, "file.txt"), "one\n")
+          await commitAll(directory, "initial")
+          await $`git checkout -b z-recent`.cwd(directory).quiet()
+          await fs.writeFile(path.join(directory, "file.txt"), "two\n")
+          await $`git add -A`.cwd(directory).quiet()
+          await $`git commit -m recent`
+            .cwd(directory)
+            .env({
+              ...process.env,
+              GIT_AUTHOR_DATE: "2030-01-01T00:00:00Z",
+              GIT_COMMITTER_DATE: "2030-01-01T00:00:00Z",
+            })
+            .quiet()
+        })
+        const vcs = yield* Vcs.Service
+        expect(Vcs.branchLimit()).toBe(50)
+        expect(Vcs.branchLimit(0)).toBe(1)
+        expect(Vcs.branchLimit(-5)).toBe(1)
+        expect(Vcs.branchLimit(1.5)).toBe(1)
+        expect(Vcs.branchLimit(2.9)).toBe(2)
+        expect(Vcs.branchLimit(Number.NaN)).toBe(50)
+        expect(Vcs.branchLimit(Number.POSITIVE_INFINITY)).toBe(50)
+        expect(Vcs.branchLimit(1_000)).toBe(100)
+        // Direct service calls: invalid limits must never surface as a silent
+        // empty list (git --count usage error swallowed by protect) and limit
+        // 0 must never return every branch.
+        expect(yield* vcs.branches({ limit: -5 })).toEqual(["z-recent"])
+        expect(yield* vcs.branches({ limit: 1.5 })).toEqual(["z-recent"])
+        expect(yield* vcs.branches({ limit: 0 })).toEqual(["z-recent"])
+        expect(yield* vcs.branches({ limit: Number.NaN })).toEqual(["z-recent", "main"])
+        expect(yield* vcs.branches()).toEqual(["z-recent", "main"])
+      }),
+    ),
+  )
+
   it.live("plugin branch pages default and clamp the limit before it reaches git", () =>
     withGit((directory) =>
       Effect.gen(function* () {

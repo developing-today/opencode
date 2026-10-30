@@ -44,6 +44,22 @@ export function diffContext(context?: number): number {
   return Math.max(Math.trunc(context), 0)
 }
 
+/**
+ * `git for-each-ref --count=` accepts only a positive integer, so a
+ * caller-supplied branch limit is normalised before it reaches an adapter:
+ * a missing or non-finite value becomes the default page (50), and zero,
+ * negative or fractional values are clamped to a positive integer capped at
+ * 100 instead of failing the git call (which `protect` would surface as a
+ * silent empty branch list) or omitting `--count` entirely (which returns
+ * every branch). This mirrors `branchListLimit` in the plugin wrapper, which
+ * the plugin and HTTP call sites already apply; normalising here covers
+ * direct service callers as well.
+ */
+export function branchLimit(limit?: number): number {
+  if (limit === undefined || !Number.isFinite(limit)) return 50
+  return Math.min(Math.max(Math.trunc(limit), 1), 100)
+}
+
 export interface BranchOptions {
   readonly search?: string
   readonly limit?: number
@@ -220,7 +236,9 @@ const layer = Layer.effect(
           return yield* protect(
             provider,
             "branches",
-            provider.branches({ ...scope, ...options }).pipe(Effect.flatMap(decodeBranches)),
+            provider.branches({ ...scope, ...options, limit: branchLimit(options?.limit) }).pipe(
+              Effect.flatMap(decodeBranches),
+            ),
             [],
           )
         return []
