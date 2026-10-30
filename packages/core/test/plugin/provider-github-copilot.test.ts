@@ -20,6 +20,7 @@ import {
   GithubCopilotPlugin,
   slowDownWaitMs,
   utilityTitle,
+  utilityTitleMaxResponseBytes,
 } from "@opencode/core/plugin/provider/github-copilot"
 import { Message, SystemPart } from "@opencode/ai"
 import { Provider } from "@opencode/core/provider"
@@ -361,6 +362,41 @@ describe("GithubCopilotPlugin", () => {
         titleRequest,
       ).pipe(Effect.flip)
       expect(String(error)).toContain("429")
+    }),
+  )
+
+  it.live("fails the utility title on a declared oversized response before reading it", () =>
+    Effect.gen(function* () {
+      const error = yield* utilityTitle(
+        utilityInput(
+          () =>
+            new Response("small body, lying header", {
+              headers: { "content-length": String(utilityTitleMaxResponseBytes + 1) },
+            }),
+        ),
+        titleRequest,
+      ).pipe(Effect.flip)
+      expect(String(error)).toContain("exceeded")
+    }),
+  )
+
+  it.live("fails the utility title on a streamed oversized response with no declared length", () =>
+    Effect.gen(function* () {
+      const error = yield* utilityTitle(
+        utilityInput(
+          () =>
+            new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("x".repeat(utilityTitleMaxResponseBytes + 1)))
+                  controller.close()
+                },
+              }),
+            ),
+        ),
+        titleRequest,
+      ).pipe(Effect.flip)
+      expect(String(error)).toContain("exceeded")
     }),
   )
 

@@ -12,6 +12,7 @@ import { Agent } from "../../agent.js"
 import { define } from "@opencode/plugin/effect/plugin"
 import { Provider } from "../../provider.js"
 import { SessionAffinity } from "../../session/affinity.js"
+import { readBoundedResponseText } from "../../tool/http-body.js"
 import type { PluginInternal } from "../internal.js"
 
 const clientID = "Ov23li8tweQw6odWQebz"
@@ -499,6 +500,13 @@ const UtilityCompletion = Schema.Struct({
   choices: Schema.Array(Schema.Struct({ message: Schema.Struct({ content: Schema.NullOr(Schema.String) }) })),
 })
 const decodeUtilityCompletion = Schema.decodeUnknownEffect(Schema.fromJsonString(UtilityCompletion))
+/** Size cap for the utility-title response body. A title completion is a
+ * small JSON struct (a few hundred bytes in practice); 64 KiB is generous
+ * headroom for its wrapping while staying far below webfetch's 5 MB cap.
+ * Without a cap, `response.text()` buffers the whole body — bounded only
+ * by the 20 s timeout — so a misbehaving configured endpoint could OOM the
+ * process on this automatic background call (#960). */
+export const utilityTitleMaxResponseBytes = 64 * 1024
 
 // This issues its own /chat/completions call instead of steering core's title request.
 // The `session.title` hook exposes `model` read-only, so pointing core at another model
@@ -542,7 +550,11 @@ export function utilityTitle(
         }),
       })
       if (!response.ok) throw new Error(`Utility title request failed: ${response.status}`)
-      return response.text()
+      return readBoundedResponseText(
+        response,
+        utilityTitleMaxResponseBytes,
+        () => new Error("Utility title response exceeded " + utilityTitleMaxResponseBytes + " bytes"),
+      )
     },
     catch: (cause) => cause,
   }).pipe(
