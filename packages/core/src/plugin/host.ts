@@ -736,13 +736,16 @@ export function storage(kv: KV.Interface, pluginID: string): Plugin.Context["sto
   }
 }
 
+/** Default plugin session.list page size, mirroring the HTTP handler's DefaultSessionsLimit. */
+const DefaultSessionsLimit = 50
+
 function sessionListInput(
   filter: SessionListFilter,
   limit: number | undefined,
   anchor?: Session.ListAnchor,
 ): Session.ListInput {
   const { directory, project, subpath, ...rest } = filter
-  const bounded = limit
+  const bounded = limit ?? DefaultSessionsLimit
   // The store applies every present scope condition; keep them all instead of picking one.
   if (directory !== undefined && project !== undefined)
     return { ...rest, directory, project, subpath, limit: bounded, anchor } as Session.ListInput
