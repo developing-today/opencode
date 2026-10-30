@@ -29,12 +29,16 @@ const eolBytes = new TextEncoder().encode(EOL)
  * memory use stays independent of the body size: the body is never collected
  * whole (the previous `response.text()` buffered an arbitrary, server-sized
  * body — and hung on an endless one — before a byte reached stdout).
+ * The writer may return a promise (e.g. waiting for stdout `drain`); it is
+ * awaited before the next chunk is read, so a slow consumer applies
+ * backpressure instead of letting an unbounded queue build up in the
+ * writable — without that, the buffering would merely move to stdout.
  * Returns the byte count and whether the body ended with the platform EOL,
  * so the caller can preserve the trailing-EOL output behaviour.
  */
 export async function streamResponseBody(
   response: Response,
-  write: (chunk: Uint8Array) => void,
+  write: (chunk: Uint8Array) => void | Promise<void>,
 ): Promise<{ bytes: number; endsWithEol: boolean }> {
   let bytes = 0
   let tail = new Uint8Array(0)
@@ -52,7 +56,7 @@ export async function streamResponseBody(
     const text = await response.text()
     if (text) {
       const chunk = new TextEncoder().encode(text)
-      write(chunk)
+      await write(chunk)
       note(chunk)
     }
   } else {
@@ -61,7 +65,7 @@ export async function streamResponseBody(
       const { done, value } = await reader.read()
       if (done) break
       if (!value || value.byteLength === 0) continue
-      write(value)
+      await write(value)
       note(value)
     }
   }
@@ -147,8 +151,12 @@ export default Runtime.handler(
       }),
     )
     const output = yield* Effect.promise(() =>
-      streamResponseBody(response, (chunk) => {
-        process.stdout.write(chunk)
+      streamResponseBody(response, async (chunk) => {
+        // Respect stdout backpressure: when the write buffer is full,
+        // wait for it to drain before streamResponseBody reads more.
+        if (!process.stdout.write(chunk)) {
+          await new Promise<void>((resolve) => process.stdout.once("drain", resolve))
+        }
       }),
     )
     if (output.bytes > 0 && !output.endsWithEol) process.stdout.write(EOL)

@@ -72,6 +72,25 @@ describe("api response body handling", () => {
     expect(empty).toEqual({ bytes: 0, endsWithEol: false })
   })
 
+  test("awaits an asynchronous writer before reading more chunks (backpressure)", async () => {
+    let active = 0
+    let maxActive = 0
+    let writes = 0
+    const chunks = Array.from({ length: 10 }, (_, index) => new TextEncoder().encode(`chunk-${index};`))
+    const result = await streamResponseBody(chunked(chunks), async () => {
+      active++
+      maxActive = Math.max(maxActive, active)
+      writes++
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      active--
+    })
+    expect(result.bytes).toBe(chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0))
+    expect(writes).toBe(chunks.length)
+    // If writes were not awaited, all 10 would be in flight at once and the
+    // body would queue unboundedly behind a slow consumer.
+    expect(maxActive).toBe(1)
+  })
+
   test("readBoundedText returns a body under the cap and rejects one over it", async () => {
     await expect(readBoundedText(new Response("ok"), 1024, () => new Error("too large"))).resolves.toBe("ok")
     const chunk = new Uint8Array(512).fill(98)
