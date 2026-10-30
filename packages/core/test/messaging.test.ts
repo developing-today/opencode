@@ -976,3 +976,104 @@ describe("Messaging kinds", () => {
     }),
   )
 })
+
+describe("Messaging offset normalisation", () => {
+  it.live("clamps invalid log offsets to the first page instead of wrapping", () =>
+    Effect.gen(function* () {
+      const tree = yield* family
+      const bus = yield* Bus.Service
+      const messaging = yield* Messaging.Service
+      for (const text of ["alpha step", "beta step", "gamma failure", "delta step"])
+        yield* bus.publish(SessionEvent.Synthetic, { sessionID: tree.child.id, text })
+      const head = (offset: number) =>
+        messaging
+          .log({ sessions: [tree.child.id], op: "head", limit: 2, offset })
+          .pipe(Effect.map((result) => [result.entries.map((entry) => entry.text), result.total, result.more] as const))
+
+      // Valid offsets behave as today: first page, then the second, then past-the-end is empty.
+      expect(yield* head(0)).toEqual([["alpha step", "beta step"], 4, true])
+      expect(yield* head(1)).toEqual([["beta step", "gamma failure"], 4, true])
+      expect(yield* head(10)).toEqual([[], 4, false])
+      // Negative and NaN clamp to 0 instead of wrapping slice() to the wrong end.
+      expect(yield* head(-1)).toEqual(yield* head(0))
+      expect(yield* head(-10)).toEqual(yield* head(0))
+      expect(yield* head(NaN)).toEqual(yield* head(0))
+      // Fractional offsets floor.
+      expect(yield* head(1.5)).toEqual(yield* head(1))
+
+      const pull = (offset: number) =>
+        messaging
+          .log({ sessions: [tree.child.id], op: "pull", limit: 2, offset })
+          .pipe(Effect.map((result) => [result.entries.map((entry) => entry.text), result.total, result.more] as const))
+      expect(yield* pull(-1)).toEqual(yield* pull(0))
+      expect(yield* pull(0)).toEqual(yield* head(0))
+
+      const tail = (offset: number) =>
+        messaging
+          .log({ sessions: [tree.child.id], op: "tail", limit: 2, offset })
+          .pipe(Effect.map((result) => [result.entries.map((entry) => entry.text), result.total, result.more] as const))
+      expect(yield* tail(0)).toEqual([["gamma failure", "delta step"], 4, true])
+      expect(yield* tail(1)).toEqual([["beta step", "gamma failure"], 4, true])
+      expect(yield* tail(10)).toEqual([[], 4, false])
+      // A negative tail offset used to push the window past the end and report an empty page with
+      // more: true; it now reads as the latest page.
+      expect(yield* tail(-1)).toEqual(yield* tail(0))
+      expect(yield* tail(-10)).toEqual(yield* tail(0))
+      expect(yield* tail(NaN)).toEqual(yield* tail(0))
+      expect(yield* tail(1.5)).toEqual(yield* tail(1))
+
+      const grep = (offset: number) =>
+        messaging
+          .log({ sessions: [tree.child.id], op: "grep", query: "step", limit: 2, offset })
+          .pipe(Effect.map((result) => [result.entries.map((entry) => entry.text), result.total, result.more] as const))
+      expect(yield* grep(0)).toEqual([["alpha step", "beta step"], 3, true])
+      expect(yield* grep(1)).toEqual([["beta step", "delta step"], 3, false])
+      expect(yield* grep(10)).toEqual([[], 3, false])
+      expect(yield* grep(-1)).toEqual(yield* grep(0))
+      expect(yield* grep(NaN)).toEqual(yield* grep(0))
+      expect(yield* grep(1.5)).toEqual(yield* grep(1))
+
+      const search = (offset: number) =>
+        messaging
+          .log({ sessions: [tree.child.id], query: "step", match: "exact", limit: 2, offset })
+          .pipe(Effect.map((result) => [result.entries.map((entry) => entry.text), result.total, result.more] as const))
+      expect(yield* search(0)).toEqual([["delta step", "beta step"], 3, true])
+      expect(yield* search(1)).toEqual([["beta step", "alpha step"], 3, false])
+      expect(yield* search(10)).toEqual([[], 3, false])
+      expect(yield* search(-1)).toEqual(yield* search(0))
+      expect(yield* search(NaN)).toEqual(yield* search(0))
+      expect(yield* search(1.5)).toEqual(yield* search(1))
+    }),
+  )
+
+  it.effect("clamps invalid topics and sessions offsets to the first page", () =>
+    Effect.gen(function* () {
+      const tree = yield* family
+      const messaging = yield* Messaging.Service
+      yield* messaging.send({ as: tree.child.id, topic: "off-a", text: "a", deliver: "none" })
+      yield* messaging.send({ as: tree.child.id, topic: "off-b", text: "b", deliver: "none" })
+      yield* messaging.send({ as: tree.child.id, topic: "off-c", text: "c", deliver: "none" })
+      const topics = (offset: number) =>
+        messaging
+          .topics({ search: "off-", sort: "created", order: "asc", limit: 2, offset })
+          .pipe(Effect.map((result) => [result.topics.map((topic) => topic.name), result.total] as const))
+      expect(yield* topics(0)).toEqual([["off-a", "off-b"], 3])
+      expect(yield* topics(1)).toEqual([["off-b", "off-c"], 3])
+      expect(yield* topics(10)).toEqual([[], 3])
+      expect(yield* topics(-5)).toEqual(yield* topics(0))
+      expect(yield* topics(NaN)).toEqual(yield* topics(0))
+      expect(yield* topics(1.5)).toEqual(yield* topics(1))
+
+      const sessions = (offset: number) =>
+        messaging
+          .sessions({ parent: "none", sort: "created", order: "asc", limit: 1, offset })
+          .pipe(Effect.map((result) => [result.sessions.map((node) => node.id), result.total] as const))
+      expect(yield* sessions(0)).toEqual([[tree.root.id], 2])
+      expect(yield* sessions(1)).toEqual([[tree.stranger.id], 2])
+      expect(yield* sessions(10)).toEqual([[], 2])
+      expect(yield* sessions(-1)).toEqual(yield* sessions(0))
+      expect(yield* sessions(NaN)).toEqual(yield* sessions(0))
+      expect(yield* sessions(0.5)).toEqual(yield* sessions(0))
+    }),
+  )
+})

@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { DateTime, Effect, Layer, Schedule } from "effect"
+import { DateTime, Effect, Layer, Schedule, Schema } from "effect"
 import { Agent } from "@opencode/core/agent"
 import { AISDK } from "@opencode/core/aisdk"
 import { Bus } from "@opencode/core/bus"
@@ -318,6 +318,19 @@ describe("MessagingTools", () => {
       expect((yield* request(child.id)).system.map((part) => part.text)).toEqual([
         `Session started ${created} (${MessagingTemplate.timeZone()}). Session ID: ${child.id}. Parent session: ${root.id}. Root session: ${root.id}.`,
       ])
+    }),
+  )
+
+  it.effect("rejects invalid offsets at the tool boundary like the contract", () =>
+    Effect.sync(() => {
+      for (const input of [MessagingTools.TopicsInput, MessagingTools.SessionsInput]) {
+        const decode = Schema.decodeUnknownSync(input)
+        expect(decode({ offset: 0 })).toMatchObject({ offset: 0 })
+        expect(decode({ offset: 10 })).toMatchObject({ offset: 10 })
+        expect(() => decode({ offset: -1 })).toThrow()
+        expect(() => decode({ offset: 1.5 })).toThrow()
+        expect(() => decode({ offset: NaN })).toThrow()
+      }
     }),
   )
 })

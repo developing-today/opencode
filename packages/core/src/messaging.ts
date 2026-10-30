@@ -129,6 +129,21 @@ function pageLimit(value: number | undefined, fallback: number) {
   return Math.min(Math.max(Math.floor(value), 1), MAX_LIMIT)
 }
 
+/**
+ * Normalises a paging offset at the service boundary. HTTP payload decode already enforces the
+ * contract NonNegativeInt, but plugin and tool callers reach the service directly with plain
+ * numbers, so a negative offset would wrap JS slice() pages to the wrong end of the transcript
+ * and a negative SQL .offset() would escape the intended page. Fractional offsets are floored and
+ * negative, NaN and non-finite offsets clamp to 0, so an invalid offset never reaches SQL .offset()
+ * or a JS slice(). Valid offsets (including 0 and past-the-end) pass through unchanged. Limit
+ * normalisation is out of scope (#948).
+ */
+function normalizeOffset(value: number | undefined): number {
+  if (value === undefined) return 0
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.floor(value))
+}
+
 type TopicRow = typeof MessagingTopicTable.$inferSelect
 type MessageRow = typeof MessagingMessageTable.$inferSelect
 
@@ -1572,6 +1587,7 @@ const layer = Layer.effect(
       const sort = input.sort === "created" ? t.time_created : t.time_last
       const order = input.order ?? "desc"
       const limit = pageLimit(input.limit, 50)
+      const offset = normalizeOffset(input.offset)
       const rows = yield* db
         .select()
         .from(t)
@@ -1581,7 +1597,7 @@ const layer = Layer.effect(
           order === "asc" ? asc(t.id) : desc(t.id),
         )
         .limit(limit)
-        .offset(input.offset ?? 0)
+        .offset(offset)
         .all()
         .pipe(Effect.orDie)
       const total = yield* db
@@ -1766,6 +1782,7 @@ const layer = Layer.effect(
       if (until !== undefined) conditions.push(sql`${sortColumn} <= ${until}`)
       const where = conditions.length > 0 ? and(...conditions) : undefined
       const order = input.order ?? "desc"
+      const offset = normalizeOffset(input.offset)
       const rows = yield* db
         .select()
         .from(s)
@@ -1773,7 +1790,7 @@ const layer = Layer.effect(
         // Session IDs sort newest first, so ties on time break toward creation order with the opposite ID order.
         .orderBy(order === "asc" ? asc(sortColumn) : desc(sortColumn), order === "asc" ? desc(s.id) : asc(s.id))
         .limit(pageLimit(input.limit, 50))
-        .offset(input.offset ?? 0)
+        .offset(offset)
         .all()
         .pipe(Effect.orDie)
       const total = yield* db
@@ -1842,7 +1859,7 @@ const layer = Layer.effect(
         .sort((left, right) => left.time - right.time)
       const op = input.op ?? (input.query ? "search" : "tail")
       const limit = pageLimit(input.limit, op === "pull" ? 50 : DEFAULT_LIMIT)
-      const offset = input.offset ?? 0
+      const offset = normalizeOffset(input.offset)
       const chars = input.chars ?? (op === "pull" ? 4000 : 500)
       const keyOf = (entry: MessagingLog.Entry) => `${entry.message}:${entry.index}:${entry.part}`
       const output = (
