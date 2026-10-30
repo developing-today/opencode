@@ -45,6 +45,20 @@ describe("writeShellConfig", () => {
     expect(await readdir(directory.path)).toEqual([".bashrc"])
   })
 
+  test("never touches a pre-existing file at the fixed sibling temp name", async () => {
+    await using directory = await tmpdir()
+    const file = path.join(directory.path, ".bashrc")
+    const sibling = path.join(directory.path, ".bashrc.tmp")
+    await writeFile(file, "old\n")
+    await writeFile(sibling, "keep me\n")
+
+    await write(file, "new\n")
+
+    expect(await readFile(file, "utf8")).toBe("new\n")
+    expect(await readFile(sibling, "utf8")).toBe("keep me\n")
+    expect((await readdir(directory.path)).sort()).toEqual([".bashrc", ".bashrc.tmp"])
+  })
+
   test("writes through a symlink to its target and keeps the target's mode", async () => {
     await using directory = await tmpdir()
     const target = path.join(directory.path, "dotfiles", "bashrc")

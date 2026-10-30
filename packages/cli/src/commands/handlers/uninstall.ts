@@ -2,6 +2,7 @@ import { confirm, intro, log, outro, spinner } from "@clack/prompts"
 import { Service } from "@opencode/client/effect/service"
 import { Global } from "@opencode/util/global"
 import { Effect, FileSystem, Schedule } from "effect"
+import { randomBytes } from "node:crypto"
 import path from "node:path"
 import { Commands } from "../commands"
 import { Runtime } from "../../framework/runtime"
@@ -162,9 +163,18 @@ export const writeShellConfig = Effect.fnUntraced(function* (file: string, conte
     Effect.map((info) => info.mode),
     Effect.orElseSucceed(() => undefined),
   )
-  const temp = `${target}.tmp`
+  // The temp file lives in the user's own directory, where a fixed name like
+  // `.bashrc.tmp` is not reserved: create a uniquely named file exclusively
+  // (`wx` fails if the name is somehow taken) beside the target, and clean up
+  // only the file this invocation created.
+  const temp = `${target}.tmp-${randomBytes(6).toString("hex")}`
   const write = Effect.gen(function* () {
-    yield* fs.writeFileString(temp, content, mode === undefined ? {} : { mode })
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* fs.open(temp, { flag: "wx" })
+        yield* handle.writeAll(new TextEncoder().encode(content))
+      }),
+    )
     if (mode !== undefined) yield* fs.chmod(temp, mode)
     yield* fs.rename(temp, target)
   })
