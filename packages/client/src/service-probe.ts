@@ -106,7 +106,7 @@ export function headers(endpoint: Endpoint) {
   }
 }
 
-/** Read the probe body through a bounded path; over-cap or unreadable bodies yield undefined. */
+/** Read the probe body through a bounded path; over-cap bodies yield undefined, read failures throw. */
 async function readProbeBody(response: Response): Promise<unknown> {
   const declared = Number(response.headers.get("content-length"))
   if (Number.isFinite(declared) && declared > maxProbeBodyBytes) {
@@ -116,8 +116,9 @@ async function readProbeBody(response: Response): Promise<unknown> {
     return undefined
   }
   if (response.body === null) {
-    const text = await response.text().catch(() => undefined)
-    if (text === undefined) return undefined
+    // Read failures (including the probe timeout abort) propagate to
+    // probeResult's outer catch, which classifies them via signal.aborted.
+    const text = await response.text()
     if (new TextEncoder().encode(text).byteLength > maxProbeBodyBytes) return undefined
     try {
       return JSON.parse(text) as unknown
@@ -131,8 +132,10 @@ async function readProbeBody(response: Response): Promise<unknown> {
   let bytes = 0
   try {
     while (true) {
-      const next = await reader.read().catch(() => undefined)
-      if (next === undefined) return undefined
+      // Do not swallow read failures: a timeout abort rejecting read() must
+      // reach probeResult's outer catch so the probe reports timedOut, which
+      // is what lets ensure() terminate an unresponsive registered owner.
+      const next = await reader.read()
       if (next.done) {
         text += decoder.decode()
         break
