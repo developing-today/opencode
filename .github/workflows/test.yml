@@ -445,3 +445,21 @@ jobs:
         run: |
           echo "affected packages: $AFFECTED, browser test legs: $SUITES (expected $EXPECTED)"
           test "$AFFECTED" = success && test "$SUITES" = "$EXPECTED"
+
+  # Dispatch a ci-fix agent when any terminal job of this workflow fails.
+  # needs the terminal jobs only: affected and e2e-suite are internal
+  # stages whose results the e2e aggregator job above re-asserts, so every
+  # failure in this workflow surfaces in at least one of these needs.
+  ci-fix:
+    needs: [unit, build, e2e]
+    if: failure()
+    permissions:
+      id-token: write
+      issues: read
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: developing-today/code/.github/actions/pm-dispatch-ci-fix@main
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
