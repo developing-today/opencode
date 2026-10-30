@@ -10,8 +10,6 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    branches: [main]
   workflow_dispatch:
   # Nightly backstop: the full main tier (build + e2e included) re-runs even
   # if no merge lands, so nothing removed from the PR tier can vanish.
