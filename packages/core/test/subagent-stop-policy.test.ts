@@ -177,6 +177,78 @@ describe("Subagent stop policy", () => {
     ),
   )
 
+  it.live("a detached background subagent survives a plain interrupt aimed at the child itself", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          activeSessions.clear()
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const jobs = yield* Job.Service
+          const parent = yield* sessions.create({ location })
+          const child = yield* sessions.create({ parentID: parent.id })
+          yield* startBackgroundSubagent(parent.id, child.id, "detached")
+          expect(yield* sessions.interrupt(child.id)).toBe(false)
+          expect((yield* jobs.get(child.id))?.status).toBe("running")
+          expect(activeSessions.has(child.id)).toBe(true)
+          yield* jobs.cancel(child.id)
+        }),
+      ),
+    ),
+  )
+
+  it.live("a direct force interrupt stops a detached background subagent", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          activeSessions.clear()
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const jobs = yield* Job.Service
+          const parent = yield* sessions.create({ location })
+          const child = yield* sessions.create({ parentID: parent.id })
+          yield* startBackgroundSubagent(parent.id, child.id, "detached")
+          yield* sessions.interrupt(child.id, { force: true })
+          expect(activeSessions.has(child.id)).toBe(false)
+          yield* jobs.cancel(child.id)
+        }),
+      ),
+    ),
+  )
+
+  it.live("a direct plain interrupt still stops independent and cascade background subagents", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          activeSessions.clear()
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const jobs = yield* Job.Service
+          const parent = yield* sessions.create({ location })
+          const independent = yield* sessions.create({ parentID: parent.id })
+          const cascade = yield* sessions.create({ parentID: parent.id })
+          yield* startBackgroundSubagent(parent.id, independent.id, "independent")
+          yield* startBackgroundSubagent(parent.id, cascade.id, "cascade")
+          yield* sessions.interrupt(independent.id)
+          yield* sessions.interrupt(cascade.id)
+          expect(activeSessions.has(independent.id)).toBe(false)
+          expect(activeSessions.has(cascade.id)).toBe(false)
+          yield* jobs.cancel(independent.id)
+          yield* jobs.cancel(cascade.id)
+        }),
+      ),
+    ),
+  )
+
   it.live("force-stop terminates independent subtrees regardless of policy", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),
