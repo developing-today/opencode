@@ -207,9 +207,18 @@ export const DEFAULT_TIMEOUT_MS = 300_000
  */
 export const DEFAULT_CHUNK_TIMEOUT_MS = 900_000
 
-/** One timeout setting without a default; invalid values are dropped. */
+/** Largest timeout the raw timers on the AISDK route can honour (2^31 - 1 ms, ~24.8 days): `setTimeout` clamps a
+ * delay above it to ~1 ms and `AbortSignal.timeout` throws on a non-finite delay, so a larger configured value
+ * would invert its meaning — a request meant to get more time would fail instantly (#972). Every route resolves
+ * its timeouts through `timeout()` below, so clamping there keeps the native route (Effect Durations, which
+ * have no such limit) behaving the same as the AISDK route. */
+export const MAX_TIMEOUT_MS = 2_147_483_647
+
+/** One timeout setting without a default; invalid values are dropped, oversized values clamp to MAX_TIMEOUT_MS. */
 export function timeout(value: unknown) {
-  return Option.getOrUndefined(decodeTimeout(value))
+  const decoded = Option.getOrUndefined(decodeTimeout(value))
+  if (decoded === undefined || decoded === false) return decoded
+  return Math.min(decoded, MAX_TIMEOUT_MS)
 }
 
 /** Request timeouts from provider settings, resolved for every route. `timeout` has no default. */
