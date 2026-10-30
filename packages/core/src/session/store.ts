@@ -50,6 +50,19 @@ export type MessagesInput = {
   }
 }
 
+/** Present message limits are floored and clamped to this range; mirrors the protocol's [1,200]. */
+const MessageLimit = {
+  min: 1,
+  max: 200,
+  /** Used for present non-finite limits, matching the HTTP handler's page size. */
+  default: 50,
+} as const
+
+const messagesLimit = (limit: number) => {
+  if (!Number.isFinite(limit)) return MessageLimit.default
+  return Math.min(MessageLimit.max, Math.max(MessageLimit.min, Math.floor(limit)))
+}
+
 export interface Interface {
   readonly get: (sessionID: Session.ID) => Effect.Effect<Session.Info | undefined>
   readonly list: (input?: ListInput) => Effect.Effect<Session.Info[]>
@@ -168,9 +181,8 @@ const layer = Layer.effect(
             ),
           )
           .orderBy(order === "asc" ? asc(SessionMessageTable.seq) : desc(SessionMessageTable.seq))
-        const rows = yield* (input.limit === undefined ? query.all() : query.limit(input.limit).all()).pipe(
-          Effect.orDie,
-        )
+        const limit = input.limit === undefined ? undefined : messagesLimit(input.limit)
+        const rows = yield* (limit === undefined ? query.all() : query.limit(limit).all()).pipe(Effect.orDie)
         return yield* Effect.forEach(
           direction === "previous" ? rows.toReversed() : rows,
           SessionHistory.decodeMessageRow,
