@@ -948,6 +948,61 @@ test("event.subscribe rejects an SSE event above the size limit", async () => {
   })
 })
 
+test("request rejects a JSON body whose declared length is above the size limit", async () => {
+  const client = OpenCode.make({
+    baseUrl: "http://localhost:3000",
+    fetch: async () =>
+      new Response(JSON.stringify({ data: { text: "pong" } }), {
+        headers: { "content-type": "application/json", "content-length": String(16 * 1024 * 1024 + 1) },
+      }),
+  })
+
+  await expect(client.generate.text({ prompt: "ping" })).rejects.toMatchObject({
+    name: "ClientError",
+    reason: "ResponseTooLarge",
+  })
+})
+
+test("request rejects a JSON body that streams past the size limit", async () => {
+  const chunk = new TextEncoder().encode("x".repeat(1024 * 1024))
+  let sent = 0
+  const client = OpenCode.make({
+    baseUrl: "http://localhost:3000",
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (sent > 16 * 1024 * 1024) return controller.close()
+            sent += chunk.byteLength
+            controller.enqueue(chunk)
+          },
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+  })
+
+  await expect(client.generate.text({ prompt: "ping" })).rejects.toMatchObject({
+    name: "ClientError",
+    reason: "ResponseTooLarge",
+  })
+})
+
+test("declared error bodies above the size limit surface as ResponseTooLarge", async () => {
+  const client = OpenCode.make({
+    baseUrl: "http://localhost:3000",
+    fetch: async () =>
+      Response.json(
+        { _tag: "ServiceUnavailableError", service: "vcs", message: "No review base available" },
+        { status: 503, headers: { "content-length": String(16 * 1024 * 1024 + 1) } },
+      ),
+  })
+
+  await expect(client.vcs.diff({ mode: "committed" })).rejects.toMatchObject({
+    name: "ClientError",
+    reason: "ResponseTooLarge",
+  })
+})
+
 test("session methods use the public HTTP contract", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = []
   const client = OpenCode.make({

@@ -333,6 +333,8 @@ interface RequestDescriptor {
 
 const maxSseEventBytes = 16 * 1024 * 1024
 
+const maxJsonBodyBytes = 16 * 1024 * 1024
+
 export function make(options: ClientOptions) {
   const fetch = options.fetch ?? globalThis.fetch
 
@@ -2622,10 +2624,42 @@ async function json(response: Response): Promise<unknown> {
     } catch {}
     throw new ClientError("UnsupportedContentType", { detail: response.headers.get("content-type") })
   }
-  let text: string
+  const declared = Number(response.headers.get("content-length"))
+  if (Number.isFinite(declared) && declared > maxJsonBodyBytes) {
+    try {
+      void response.body?.cancel()?.catch(() => {})
+    } catch {}
+    throw new ClientError("ResponseTooLarge")
+  }
+  let text = ""
   try {
-    text = await response.text()
+    if (response.body === null) {
+      text = await response.text()
+      if (new TextEncoder().encode(text).byteLength > maxJsonBodyBytes) throw new ClientError("ResponseTooLarge")
+    } else {
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let bytes = 0
+      try {
+        while (true) {
+          const next = await reader.read()
+          if (next.done) {
+            text += decoder.decode()
+            break
+          }
+          bytes += next.value.byteLength
+          if (bytes > maxJsonBodyBytes) throw new ClientError("ResponseTooLarge")
+          text += decoder.decode(next.value, { stream: true })
+        }
+      } finally {
+        try {
+          void reader.cancel().catch(() => {})
+        } catch {}
+        reader.releaseLock()
+      }
+    }
   } catch (cause) {
+    if (cause instanceof ClientError) throw cause
     throw new ClientError("Transport", { cause })
   }
   if (text === "") throw new ClientError("MalformedResponse")
