@@ -771,3 +771,51 @@ describe("door-set targets (#637)", () => {
     ])
   })
 })
+
+
+describe("pinned variants on suffixed-catalog providers (#985)", () => {
+  const proxy = Provider.ID.make("proxy")
+  // Definition-stage shape for proxy providers (Antigravity, Open Design): the
+  // base model carries no variant list; its effort levels exist in the catalog
+  // only as suffixed model ids.
+  const defs = new Map<Provider.ID, ReadonlyMap<string, Model.Info>>([
+    [
+      proxy,
+      new Map([
+        ["m", Model.Info.default(proxy, Model.ID.make("m"))],
+        ["m-high", Model.Info.default(proxy, Model.ID.make("m-high"))],
+      ]),
+    ],
+  ])
+  const raw = (entries: [string, unknown][]) =>
+    new Map(entries as [string, ConfigModelRoutes.Route][])
+
+  test("a pinned variant the catalog exposes as a suffixed model does not prune the leaf", () => {
+    const routes = raw([
+      ["r", { targets: [{ model: { providerID: "proxy", model: "m", variant: "high" } }] }],
+    ])
+    const { leaves } = expand("r", routes, defs)
+    expect(leaves.map((leaf) => `${leaf.ref.providerID}/${leaf.ref.id}#${leaf.ref.variant}`)).toEqual([
+      "proxy/m#high",
+    ])
+  })
+
+  test("a variant inherited through a nested route does not prune the leaf either", () => {
+    const routes = raw([
+      ["pool", { targets: [{ model: { providerID: "proxy", model: "m" } }] }],
+      ["r", { targets: [{ model: { providerID: "opencode-route", model: "pool", variant: "high" } }] }],
+    ])
+    const { leaves } = expand("r", routes, defs)
+    expect(leaves.map((leaf) => `${leaf.ref.providerID}/${leaf.ref.id}#${leaf.ref.variant}`)).toEqual([
+      "proxy/m#high",
+    ])
+  })
+
+  test("a pinned variant with no native, remapped, or suffixed evidence still prunes", () => {
+    const routes = raw([
+      ["r", { targets: [{ model: { providerID: "proxy", model: "m", variant: "ultra" } }] }],
+    ])
+    const { leaves } = expand("r", routes, defs)
+    expect(leaves).toEqual([])
+  })
+})
