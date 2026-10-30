@@ -14,6 +14,7 @@ import { AbsolutePath } from "@opencode/core/schema"
 import { State } from "@opencode/core/state"
 import { Vcs } from "@opencode/core/vcs"
 import { VcsGitPlugin } from "@opencode/core/plugin/vcs/git"
+import { branchListLimit, listBranches } from "@opencode/core/plugin/vcs/branch-list"
 import type { VcsDefinition, VcsDiffInput } from "@opencode/plugin/effect/vcs"
 import { FileSystem } from "@opencode/schema/filesystem"
 import { VcsEvent } from "@opencode/schema/vcs-event"
@@ -548,6 +549,35 @@ describe("Vcs", () => {
         expect(yield* vcs.branches({ limit: 1 })).toEqual(["z-recent"])
         expect(yield* vcs.branches({ search: "MAIN", limit: 1 })).toEqual(["main"])
         expect(yield* vcs.branches({ search: "*" })).toEqual([])
+      }),
+    ),
+  )
+
+  it.live("plugin branch pages default and clamp the limit before it reaches git", () =>
+    withGit((directory) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(async () => {
+          await fs.writeFile(path.join(directory, "file.txt"), "one\n")
+          await commitAll(directory, "initial")
+          const names = Array.from({ length: 60 }, (_, index) => `b${String(index + 1).padStart(2, "0")}`)
+          await $`sh -c ${`for name in ${names.join(" ")}; do git branch "$name"; done`}`.cwd(directory).quiet()
+        })
+        const vcs = yield* Vcs.Service
+        expect(branchListLimit()).toBe(50)
+        expect(branchListLimit(0)).toBe(1)
+        expect(branchListLimit(-5)).toBe(1)
+        expect(branchListLimit(1.5)).toBe(1)
+        expect(branchListLimit(2.9)).toBe(2)
+        expect(branchListLimit(Number.NaN)).toBe(50)
+        expect(branchListLimit(Number.POSITIVE_INFINITY)).toBe(50)
+        expect(branchListLimit(1_000)).toBe(100)
+        expect((yield* listBranches(vcs)).length).toBe(50)
+        expect((yield* listBranches(vcs, { limit: 0 })).length).toBe(1)
+        expect((yield* listBranches(vcs, { limit: -5 })).length).toBe(1)
+        expect((yield* listBranches(vcs, { limit: 1.5 })).length).toBe(1)
+        expect((yield* listBranches(vcs, { limit: 3 })).length).toBe(3)
+        expect((yield* listBranches(vcs, { limit: 1_000 })).length).toBe(61)
+        expect((yield* listBranches(vcs, { search: "b1", limit: 2 })).length).toBe(2)
       }),
     ),
   )
