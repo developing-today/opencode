@@ -166,12 +166,14 @@ export const writeShellConfig = Effect.fnUntraced(function* (file: string, conte
   // The temp file lives in the user's own directory, where a fixed name like
   // `.bashrc.tmp` is not reserved: create a uniquely named file exclusively
   // (`wx` fails if the name is somehow taken) beside the target, and clean up
-  // only the file this invocation created.
+  // only the file this invocation created. It starts at 0o600 (a private rc
+  // file's contents are never world-readable, even if the run dies before the
+  // rename) and takes the target's mode just before the rename.
   const temp = `${target}.tmp-${randomBytes(6).toString("hex")}`
   const write = Effect.gen(function* () {
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const handle = yield* fs.open(temp, { flag: "wx" })
+        const handle = yield* fs.open(temp, { flag: "wx", mode: 0o600 })
         yield* handle.writeAll(new TextEncoder().encode(content))
       }),
     )
