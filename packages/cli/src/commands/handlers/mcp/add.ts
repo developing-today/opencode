@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto"
 import { EOL } from "node:os"
 import path from "node:path"
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises"
+import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises"
 import { Effect, Option } from "effect"
 import { applyEdits, modify } from "jsonc-parser"
 import { Global } from "@opencode/util/global"
@@ -68,8 +69,13 @@ export async function writeMcpConfig(configPath: string, name: string, server: u
   // the same directory with owner-only permissions, then rename it over the
   // config. The config is never a partial write, and a fresh config — which can
   // hold remote-MCP Authorization headers — is never created world-readable.
-  await mkdir(path.dirname(configPath), { recursive: true })
-  const temporary = configPath + ".tmp"
+  // An existing config is resolved through any symlink first (dotfiles setups),
+  // so the rename lands on the real file instead of replacing the link, and the
+  // temp name is unique per invocation so concurrent writers cannot consume
+  // each other's rename source.
+  const destination = await realpath(configPath).catch(() => configPath)
+  await mkdir(path.dirname(destination), { recursive: true })
+  const temporary = destination + ".tmp-" + process.pid + "-" + randomUUID()
   await writeFile(temporary, applyEdits(text, edits), { mode: 0o600 })
-  await rename(temporary, configPath)
+  await rename(temporary, destination)
 }

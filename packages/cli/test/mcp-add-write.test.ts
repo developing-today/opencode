@@ -44,4 +44,39 @@ describe("mcp add config write", () => {
     expect(await fs.readdir(directory)).toEqual(["opencode.jsonc"])
     if (process.platform !== "win32") expect(await mode(config) & 0o077).toBe(0)
   })
+
+  test("preserves a symlinked config and updates its target", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-mcp-add-"))
+    const target = path.join(directory, "dotfiles", "opencode.json")
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.writeFile(target, "{}\n")
+    const config = path.join(directory, "opencode.json")
+    await fs.symlink(target, config)
+
+    await writeMcpConfig(config, "example", remote)
+
+    expect((await fs.lstat(config)).isSymbolicLink()).toBe(true)
+    const configObject = parse(await fs.readFile(target, "utf8")) as {
+      mcp: { servers: Record<string, unknown> }
+    }
+    expect(configObject.mcp.servers.example).toEqual(remote)
+    expect(await fs.readdir(path.dirname(target))).toEqual(["opencode.json"])
+  })
+
+  test("concurrent writes to the same config do not consume each other's temp file", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-mcp-add-"))
+    const config = path.join(directory, "opencode.json")
+
+    await Promise.all([
+      writeMcpConfig(config, "one", remote),
+      writeMcpConfig(config, "two", remote),
+      writeMcpConfig(config, "three", remote),
+    ])
+
+    const configObject = parse(await fs.readFile(config, "utf8")) as {
+      mcp: { servers: Record<string, unknown> }
+    }
+    expect(Object.keys(configObject.mcp.servers)).toHaveLength(1)
+    expect(await fs.readdir(directory)).toEqual(["opencode.json"])
+  })
 })
