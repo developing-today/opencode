@@ -13,7 +13,9 @@ import { Location } from "./location.js"
 import { Project } from "./project.js"
 import { Bus } from "./bus.js"
 import { State } from "./state.js"
-import { emptyPatch, MAX_TOTAL_PATCH_BYTES, PATCH_CONTEXT_LINES } from "./vcs/patch.js"
+import { diffContext, emptyPatch, MAX_TOTAL_PATCH_BYTES } from "./vcs/patch.js"
+
+export { diffContext }
 
 export { Base, BranchList, FileStatus, Info, Mode }
 
@@ -28,20 +30,6 @@ export class InitializeError extends Schema.TaggedError<InitializeError>()("Vcs.
 export interface DiffOptions {
   readonly context?: number
   readonly base?: string
-}
-
-/**
- * `git diff --unified=` / `hg diff --unified` accept only a non-negative
- * integer, so a plugin-supplied context is normalised before it reaches an
- * adapter: a missing or non-finite value keeps the service default
- * (full-file context), and negative or fractional values are clamped to a
- * non-negative integer instead of failing the whole diff with a CLI usage
- * error. This mirrors the HTTP `vcs.diff` endpoint, which restricts the
- * same parameter to a non-negative integer.
- */
-export function diffContext(context?: number): number {
-  if (context === undefined || !Number.isFinite(context)) return PATCH_CONTEXT_LINES
-  return Math.max(Math.trunc(context), 0)
 }
 
 /**
