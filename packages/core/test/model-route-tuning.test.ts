@@ -221,9 +221,11 @@ describe("ModelRouteTuning.parseQuotaReset", () => {
 
   test("treats calendar-invalid dates as unparseable, like ModelRouteLimits", () => {
     expect(ModelRouteTuning.parseQuotaReset("quota reset at 2026-02-30", at)).toBeUndefined()
+    // The later valid reset (2026-03-05) is more than 30 days out from `at`, so the #933
+    // ceiling bounds it instead of honouring it as written.
     expect(
       ModelRouteTuning.parseQuotaReset("quota reset at 2026-02-30, back at 2026-03-05T00:00:00Z", at),
-    ).toBe(Date.parse("2026-03-05T00:00:00Z"))
+    ).toBe(at + 30 * 86_400_000)
     expect(ModelRouteTuning.parseQuotaReset("quota reset at 2024-02-29", at)).toBe(Date.parse("2024-02-29"))
   })
 })
