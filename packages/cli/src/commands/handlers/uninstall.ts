@@ -2,6 +2,7 @@ import { confirm, intro, log, outro, spinner } from "@clack/prompts"
 import { Service } from "@opencode/client/effect/service"
 import { Global } from "@opencode/util/global"
 import { Effect, FileSystem, Schedule } from "effect"
+import { randomBytes } from "node:crypto"
 import path from "node:path"
 import { Commands } from "../commands"
 import { Runtime } from "../../framework/runtime"
@@ -91,7 +92,7 @@ export default Runtime.handler(
     )
     yield* Effect.forEach(shell, (file) =>
       fs.readFileString(file).pipe(
-        Effect.flatMap((content) => fs.writeFileString(file, cleanShellConfig(content))),
+        Effect.flatMap((content) => writeShellConfig(file, cleanShellConfig(content))),
         Effect.catch((error) => Effect.sync(() => errors.push(`Shell config ${file}: ${errorMessage(error)}`))),
       ),
     )
@@ -151,7 +152,38 @@ const shellConfigs = Effect.fnUntraced(function* (home: string) {
   )
 })
 
-function cleanShellConfig(content: string) {
+export const writeShellConfig = Effect.fnUntraced(function* (file: string, content: string) {
+  const fs = yield* FileSystem.FileSystem
+  // Shell rc files are commonly symlinks into a dotfiles repo: write a temp file
+  // beside the resolved target and rename over the target, so the link itself
+  // survives and the write is never partial. Keep the target's mode - the other
+  // CLI writers hardcode 0o600, which would tighten a hand-maintained rc file.
+  const target = yield* fs.realPath(file).pipe(Effect.orElseSucceed(() => file))
+  const mode = yield* fs.stat(target).pipe(
+    Effect.map((info) => info.mode),
+    Effect.orElseSucceed(() => undefined),
+  )
+  // The temp file lives in the user's own directory, where a fixed name like
+  // `.bashrc.tmp` is not reserved: create a uniquely named file exclusively
+  // (`wx` fails if the name is somehow taken) beside the target, and clean up
+  // only the file this invocation created. It starts at 0o600 (a private rc
+  // file's contents are never world-readable, even if the run dies before the
+  // rename) and takes the target's mode just before the rename.
+  const temp = `${target}.tmp-${randomBytes(6).toString("hex")}`
+  const write = Effect.gen(function* () {
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* fs.open(temp, { flag: "wx", mode: 0o600 })
+        yield* handle.writeAll(new TextEncoder().encode(content))
+      }),
+    )
+    if (mode !== undefined) yield* fs.chmod(temp, mode)
+    yield* fs.rename(temp, target)
+  })
+  yield* write.pipe(Effect.onError(() => fs.remove(temp, { force: true }).pipe(Effect.ignore)))
+})
+
+export function cleanShellConfig(content: string) {
   const lines = content.split("\n")
   const entry = (line: string) =>
     /^(?:export PATH=|fish_add_path\s)/.test(line.trim()) && line.includes(".opencode/bin")
