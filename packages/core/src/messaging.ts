@@ -112,11 +112,22 @@ const BUILTIN_KINDS: ReadonlyArray<KindDefinition> = [
 
 const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 500
+
 const SCAN_LIMIT = 5000
 const SEMANTIC_EMBED_LIMIT = 512
 const MAX_WAIT_SECONDS = 600
 /** Delivered notices carry at most this much of a message; the full text stays readable in its topic. */
 const DELIVERED_CHARS = 8000
+
+/**
+ * Page size at the service boundary. Callers reach the service directly (plugins, the CLI), so a limit may arrive
+ * unvalidated: NaN and negative values mean "absent" and take the default, anything else is floored to an integer and
+ * clamped to [1, MAX_LIMIT].
+ */
+function pageLimit(value: number | undefined, fallback: number) {
+  if (value === undefined || Number.isNaN(value) || value < 0) return fallback
+  return Math.min(Math.max(Math.floor(value), 1), MAX_LIMIT)
+}
 
 type TopicRow = typeof MessagingTopicTable.$inferSelect
 type MessageRow = typeof MessagingMessageTable.$inferSelect
@@ -690,7 +701,7 @@ const layer = Layer.effect(
     const read = Effect.fnUntraced(function* (input: Contract.Query, options: Options | undefined) {
       const viewer = input.as ?? "user"
       const now = Date.now()
-      const limit = Math.min(input.limit ?? DEFAULT_LIMIT, MAX_LIMIT)
+      const limit = pageLimit(input.limit, DEFAULT_LIMIT)
       const topicIDs = yield* Effect.gen(function* () {
         if (input.topics && input.topics.length > 0) return yield* topicIDsFor(input.topics, viewer, options)
         if (input.unread) return { ids: Array.from(yield* followed(viewer, options)), missing: [] }
@@ -1560,7 +1571,7 @@ const layer = Layer.effect(
       const where = conditions.length > 0 ? and(...conditions) : undefined
       const sort = input.sort === "created" ? t.time_created : t.time_last
       const order = input.order ?? "desc"
-      const limit = Math.min(input.limit ?? 50, MAX_LIMIT)
+      const limit = pageLimit(input.limit, 50)
       const rows = yield* db
         .select()
         .from(t)
@@ -1761,7 +1772,7 @@ const layer = Layer.effect(
         .where(where)
         // Session IDs sort newest first, so ties on time break toward creation order with the opposite ID order.
         .orderBy(order === "asc" ? asc(sortColumn) : desc(sortColumn), order === "asc" ? desc(s.id) : asc(s.id))
-        .limit(Math.min(input.limit ?? 50, MAX_LIMIT))
+        .limit(pageLimit(input.limit, 50))
         .offset(input.offset ?? 0)
         .all()
         .pipe(Effect.orDie)
@@ -1830,7 +1841,7 @@ const layer = Layer.effect(
         .filter((entry) => (since === undefined || entry.time >= since) && (until === undefined || entry.time <= until))
         .sort((left, right) => left.time - right.time)
       const op = input.op ?? (input.query ? "search" : "tail")
-      const limit = Math.min(input.limit ?? (op === "pull" ? 50 : DEFAULT_LIMIT), MAX_LIMIT)
+      const limit = pageLimit(input.limit, op === "pull" ? 50 : DEFAULT_LIMIT)
       const offset = input.offset ?? 0
       const chars = input.chars ?? (op === "pull" ? 4000 : 500)
       const keyOf = (entry: MessagingLog.Entry) => `${entry.message}:${entry.index}:${entry.part}`
