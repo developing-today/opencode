@@ -45,6 +45,15 @@ export function same(left: Info, right: Info) {
   return left.id === right.id && left.version === right.version && left.url === right.url && left.pid === right.pid
 }
 
+/**
+ * Maximum `/api/info` probe body, in bytes.
+ *
+ * A healthy answer is a tiny struct — {@link decodeInfo} only reads `version`
+ * and `pid` — so 64 KiB leaves kilobytes of headroom while keeping a bad
+ * registered endpoint from OOMing the client during automatic discovery.
+ */
+export const maxProbeBodyBytes = 64 * 1024
+
 /** Ask a registered owner for its health and classify the answer. */
 export async function probeResult(info: Info, timeout = defaultEnsureTiming.requestTimeout) {
   const endpoint = {
@@ -55,7 +64,7 @@ export async function probeResult(info: Info, timeout = defaultEnsureTiming.requ
   const result = await fetch(new URL("/api/info", info.url), { headers: headers(endpoint), signal })
     .then(async (response) => ({
       response,
-      body: response.status === 404 ? undefined : ((await response.json()) as unknown),
+      body: response.status === 404 ? undefined : await readProbeBody(response),
     }))
     .catch(() => undefined)
   if (result === undefined) return { service: undefined, timedOut: signal.aborted }
@@ -94,6 +103,56 @@ export function headers(endpoint: Endpoint) {
   if (endpoint.auth === undefined) return undefined
   return {
     authorization: "Basic " + Buffer.from(endpoint.auth.username + ":" + endpoint.auth.password).toString("base64"),
+  }
+}
+
+/** Read the probe body through a bounded path; over-cap or unreadable bodies yield undefined. */
+async function readProbeBody(response: Response): Promise<unknown> {
+  const declared = Number(response.headers.get("content-length"))
+  if (Number.isFinite(declared) && declared > maxProbeBodyBytes) {
+    try {
+      await response.body?.cancel()
+    } catch {}
+    return undefined
+  }
+  if (response.body === null) {
+    const text = await response.text().catch(() => undefined)
+    if (text === undefined) return undefined
+    if (new TextEncoder().encode(text).byteLength > maxProbeBodyBytes) return undefined
+    try {
+      return JSON.parse(text) as unknown
+    } catch {
+      return undefined
+    }
+  }
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let text = ""
+  let bytes = 0
+  try {
+    while (true) {
+      const next = await reader.read().catch(() => undefined)
+      if (next === undefined) return undefined
+      if (next.done) {
+        text += decoder.decode()
+        break
+      }
+      bytes += next.value.byteLength
+      if (bytes > maxProbeBodyBytes) {
+        try {
+          await reader.cancel()
+        } catch {}
+        return undefined
+      }
+      text += decoder.decode(next.value, { stream: true })
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    return undefined
   }
 }
 
