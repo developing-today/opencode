@@ -17,6 +17,10 @@ import { ModelAlias } from "./model-alias.js"
 import { ModelRoute } from "./model-route.js"
 import { ModelRouteAutonomy } from "./model-route-autonomy.js"
 import { ModelRouteLog } from "./model-route-log.js"
+import { ModelPlan } from "./model-plan.js"
+import { ModelUsage } from "./model-usage.js"
+import { QuotaSnapshot } from "./quota-snapshot.js"
+import { Global } from "@opencode/util/global"
 import { ownValue } from "./util/record.js"
 
 export class VariantUnavailableError extends Schema.TaggedError<VariantUnavailableError>()(
@@ -417,6 +421,64 @@ export const resolveModel = (
 
 export const hasPackage = (model: Info) => Boolean(model.package) || ModelRoute.definition(model) !== undefined
 
+const refreshQuotaGate = (
+  targets: readonly Model.Ref[],
+  credentialByProvider: Map<string, Credential.ID>,
+  dataDir: string | undefined,
+  now: number,
+) =>
+  Effect.gen(function* () {
+    if (!ModelRoute.shouldFeedQuota(now)) return
+    let plans: readonly ModelPlan.Plan[] = []
+    try {
+      plans = ModelPlan.readStore(dataDir).plans
+    } catch {
+      return
+    }
+    const targetProviders = new Set<string>(targets.map((target) => target.providerID))
+    const relevantPlans = plans.filter((plan) => targetProviders.has(plan.providerID))
+    if (relevantPlans.length === 0) return
+
+    const windows = relevantPlans.flatMap((plan) =>
+      plan.quotas.filter((window) => window.windowHours !== undefined).map((window) => ({ plan, window })),
+    )
+    if (windows.length === 0) return
+
+    yield* ModelRouteLog.withDb((db) =>
+      Effect.gen(function* () {
+        const totalsByWindow = new Map<string, ModelUsage.Totals>()
+        for (const { plan, window } of windows) {
+          if (window.windowHours === undefined) continue
+          const key = `${plan.id}:${window.name}`
+          const since = now - window.windowHours * 3_600_000
+          const rows = yield* ModelRouteLog.targetUsage(db, since)
+          const totals = ModelUsage.sum(rows.filter((row) => row.providerID === plan.providerID))
+          totalsByWindow.set(key, totals)
+        }
+        const snapshots = QuotaSnapshot.deriveAll(
+          relevantPlans,
+          (plan, window) => totalsByWindow.get(`${plan.id}:${window.name}`) ?? ModelUsage.zero,
+          now,
+          { now },
+        )
+        for (const target of targets) {
+          const providerSnapshots = snapshots.filter((s) => s.providerID === target.providerID)
+          if (providerSnapshots.length === 0) continue
+          const fullSnapshot = providerSnapshots
+            .filter((s) => QuotaSnapshot.isKnownFull(s, now))
+            .sort((a, b) => (b.resetAt ?? 0) - (a.resetAt ?? 0))[0]
+          const snapshot = fullSnapshot ?? providerSnapshots[0]
+          const credentialID = credentialByProvider.get(target.providerID)
+          if (credentialID) {
+            ModelRoute.observeCredentialQuota(target, credentialID, snapshot, now)
+          } else {
+            ModelRoute.observeProviderQuota(target, snapshot, now)
+          }
+        }
+      }),
+    ).pipe(Effect.orDie)
+  })
+
 /** Resolves catalog selections into runtime models for the current Location. */
 export const layer = Layer.effect(
   Service,
@@ -427,6 +489,8 @@ export const layer = Layer.effect(
     const npm = yield* Npm.Service
     const aisdk = yield* AISDK.Service
     const config = yield* Effect.serviceOption(Config.Service)
+    const global = yield* Effect.serviceOption(Global.Service)
+    const dataDir = Option.match(global, { onNone: () => undefined, onSome: (g) => g.data })
     const load = Effect.fn("ModelResolver.resolveModel")(function* (
       selected: Info,
       variant?: VariantID,
@@ -504,6 +568,7 @@ export const layer = Layer.effect(
           )
           if (connection?.type === "credential") credentialByProvider.set(target.providerID, connection.id)
         }
+        yield* refreshQuotaGate(definition.targets, credentialByProvider, dataDir, now)
         const makeResolved = (
           current: Resolved,
           origin: (() => Effect.Effect<Resolved | undefined, Error>) | undefined,

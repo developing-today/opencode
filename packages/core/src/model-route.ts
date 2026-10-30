@@ -511,6 +511,49 @@ export const observeCredentialQuota = (
   if (!full && previous?.gated) logHealth(target, "quota-readmitted", `credential:${credentialID}`)
 }
 
+const providerQuota = new Map<string, { snapshot: QuotaSnapshot.Snapshot; target: Model.Ref; gated: boolean }>()
+
+/** Feeds one provider's latest quota snapshot into the gate (for credential-less providers). */
+export const observeProviderQuota = (
+  target: Model.Ref,
+  snapshot: QuotaSnapshot.Snapshot,
+  now = Date.now(),
+) => {
+  const previous = providerQuota.get(target.providerID)
+  if (previous && !QuotaSnapshot.known(snapshot)) return
+  if (previous && snapshot.observedAt < previous.snapshot.observedAt) return
+  const full = QuotaSnapshot.isKnownFull(snapshot, now)
+  providerQuota.set(target.providerID, { snapshot, target, gated: full })
+  if (full) {
+    const until = Math.min(snapshot.resetAt ?? now + QUOTA_GATE_FALLBACK_MS, now + QUOTA_GATE_MAX_MS)
+    addAdjustment({
+      id: `quota:${target.providerID}`,
+      match: `${target.providerID}/`,
+      action: "skip",
+      until,
+      note: "quota exhausted (proactive snapshot); held until the stated reset",
+    })
+    if (!previous?.gated)
+      logHealth(target, "quota-gated", `provider:${target.providerID} quota-known-full`, snapshot.resetAt ?? undefined)
+  }
+  if (!full && previous?.gated) {
+    removeAdjustment(`quota:${target.providerID}`)
+    logHealth(target, "quota-readmitted", `provider:${target.providerID}`)
+  }
+}
+
+let lastQuotaFeedAt = 0
+
+export const resetQuotaFeed = () => {
+  lastQuotaFeedAt = 0
+}
+
+export const shouldFeedQuota = (now = Date.now(), ttlMs = 60_000) => {
+  if (now - lastQuotaFeedAt < ttlMs) return false
+  lastQuotaFeedAt = now
+  return true
+}
+
 /** The longest a single exhaustion reading may hold a gate: a stated reset further out than
  * this is capped rather than believed (mirrors ModelRouteTuning.MAX_QUOTA_RESET_MS). */
 const QUOTA_GATE_MAX_MS = 30 * 86_400_000
@@ -624,9 +667,11 @@ export const resetHealth = () => {
   health.clear()
   credentialHealth.clear()
   credentialQuota.clear()
+  providerQuota.clear()
   quotaEvents.clear()
   continuity.clear()
   recentFailures.length = 0
+  lastQuotaFeedAt = 0
 }
 
 /** Per-route selection state: rotation counters for round-robin, sticky session choices, both
