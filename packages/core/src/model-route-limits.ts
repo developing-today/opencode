@@ -115,14 +115,23 @@ export const ABSOLUTE_TIME =
   /(?:retry|try again|wait|back|resume|reset|returns?|available|until|expires?(?: at)?)[-a-z ]{0,20}(?:after|at|on|by)?\s*(\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?)/
 
 // A relative wait is one amount+unit part or a compound sequence of them ("in 1 hour 30
-// minutes"), and an amount may be decimal ("in 1.5 hours") — providers phrase resets both ways.
-const RELATIVE_PART = String.raw`\d+(?:\.\d+)?\s*(?:second|minute|hour|day|sec|s)s?(?![a-z])`
+// minutes"), and an amount may be decimal ("in 1.5 hours") — providers phrase resets both
+// ways, and some use compact units ("resets in 6d 13h"). The letter units are safe here:
+// every part must start with an amount and the (?![a-z]) guard keeps a unit from matching
+// the head of a following word ("in 5 deals" states no wait).
+const RELATIVE_PART = String.raw`\d+(?:\.\d+)?\s*(?:second|minute|hour|day|sec|h|d|s)s?(?![a-z])`
 const RELATIVE_TIME = new RegExp(String.raw`in\s+(${RELATIVE_PART}(?:[\s,]+(?:and\s+)?${RELATIVE_PART})*)`)
-const RELATIVE_PARTS = /(\d+(?:\.\d+)?)\s*(second|minute|hour|day|sec|s)s?(?![a-z])/g
-const RELATIVE_UNITS = { second: 1_000, sec: 1_000, s: 1_000, minute: 60_000, hour: 3_600_000, day: 86_400_000 } as Record<
-  string,
-  number
->
+const RELATIVE_PARTS = /(\d+(?:\.\d+)?)\s*(second|minute|hour|day|sec|h|d|s)s?(?![a-z])/g
+const RELATIVE_UNITS = {
+  second: 1_000,
+  sec: 1_000,
+  s: 1_000,
+  minute: 60_000,
+  hour: 3_600_000,
+  h: 3_600_000,
+  day: 86_400_000,
+  d: 86_400_000,
+} as Record<string, number>
 
 /** The total wait a relative phrase states, summed over its parts; undefined when it states none. */
 const relativeMs = (message: string): number | undefined => {

@@ -511,6 +511,58 @@ export const observeCredentialQuota = (
   if (!full && previous?.gated) logHealth(target, "quota-readmitted", `credential:${credentialID}`)
 }
 
+/** The longest a single exhaustion reading may hold a gate: a stated reset further out than
+ * this is capped rather than believed (mirrors ModelRouteTuning.MAX_QUOTA_RESET_MS). */
+const QUOTA_GATE_MAX_MS = 30 * 86_400_000
+/** The hold when an exhaustion error states no usable reset: long enough to stop a 429 on
+ * every turn, short enough that a recovered pool is retried promptly (mirrors the tuning
+ * review's default hold). */
+const QUOTA_GATE_FALLBACK_MS = 30 * 60_000
+
+/**
+ * The reactive half of #984: one attempt's quota-exhaustion answer gates its pool until the
+ * reset the provider stated, or the bounded fallback hold when it stated none, so selection
+ * stops spending attempts on a pool that has already answered 100%. A credentialed attempt
+ * gates only its credential — sibling credentials behind the same provider keep serving.
+ * A credential-less provider is gated by a skip adjustment on the provider itself, which
+ * selection honours as last-resort: a route with no other door still tries it rather than
+ * idling. Re-admission needs no second producer: the gate re-derives from the stated reset
+ * at every check, and a fresher below-limit snapshot replaces the synthesized one.
+ */
+export const observeQuotaFailure = (
+  target: Model.Ref,
+  credentialID: string | undefined,
+  resetAt: number | undefined,
+  now = Date.now(),
+) => {
+  const until = Math.min(resetAt ?? now + QUOTA_GATE_FALLBACK_MS, now + QUOTA_GATE_MAX_MS)
+  if (credentialID) {
+    observeCredentialQuota(
+      target,
+      credentialID,
+      {
+        planID: `attempt:${target.providerID}`,
+        window: "exhaustion",
+        providerID: target.providerID,
+        percent: 100,
+        remaining: 0,
+        resetAt: until,
+        observedAt: now,
+        stale: false,
+      },
+      now,
+    )
+    return
+  }
+  addAdjustment({
+    id: `quota:${target.providerID}`,
+    match: `${target.providerID}/`,
+    action: "skip",
+    until,
+    note: "quota exhausted (attempt-reported); held until the stated reset",
+  })
+}
+
 /** The gate on one credential at `now`: `{ until }` (the snapshot's reset, null when it gave
  * none) while a known-full snapshot holds it out of routes, undefined while it is eligible.
  * Passing the reset re-admits and logs it, like a cooldown expiring. */
