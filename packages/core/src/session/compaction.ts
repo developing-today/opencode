@@ -552,7 +552,8 @@ export const layer = Layer.effect(
           assistantMessageID: `compaction-${label}`,
           startedAt: Date.now(),
         },
-        (snapshot: RateLimitSnapshot) => ModelRoute.observeRateLimit(context.model.ref, snapshot),
+        (snapshot: RateLimitSnapshot) =>
+          ModelRoute.observeRateLimit(context.model.ref, snapshot, Date.now(), context.model.routing?.credentialID),
       )
 
     const stream = (

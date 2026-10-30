@@ -185,12 +185,50 @@ export const current = (): readonly Override[] => {
   return list
 }
 
-/** Replaces the stored overrides, dropping any that have already expired. */
+const transientRenameCodes = new Set(["EPERM", "EACCES", "EBUSY"])
+const renameRetryDelays = [10, 25, 50, 100]
+const renameWait = new Int32Array(new SharedArrayBuffer(4))
+
+function isTransientRenameError(error: unknown) {
+  if (typeof error !== "object" || error === null) return false
+  if (!("code" in error)) return false
+  return typeof error.code === "string" && transientRenameCodes.has(error.code)
+}
+
+// On Windows, renaming over a destination another handle is reading fails
+// with EPERM and the update would be lost; retry briefly before giving up
+// (kept in sync with ModelPlan.writeStore in model-plan.ts).
+function renameSyncWithRetry(source: string, destination: string) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(source, destination)
+      return
+    } catch (error) {
+      const delay = renameRetryDelays[attempt]
+      if (delay === undefined || !isTransientRenameError(error)) throw error
+      Atomics.wait(renameWait, 0, 0, delay)
+    }
+  }
+}
+
+/** Replaces the stored overrides, dropping any that have already expired. The write is atomic —
+ * a temporary file in the same directory, then a rename over the old one — so a crash or a
+ * concurrent reader (OpenChamber reads this same file) never observes a partially written store
+ * whose truncated JSON `current()` would silently treat as no overrides (#924). */
 export const save = (overrides: readonly Override[], now = Date.now()) => {
   const file = filePath()
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const live = overrides.filter((item) => item.until === undefined || item.until > now)
-  fs.writeFileSync(file, JSON.stringify({ version: 1, overrides: live }, null, 2))
+  const temporary = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
+  try {
+    fs.writeFileSync(temporary, JSON.stringify({ version: 1, overrides: live }, null, 2))
+    renameSyncWithRetry(temporary, file)
+  } catch (error) {
+    try {
+      fs.rmSync(temporary, { force: true })
+    } catch {}
+    throw error
+  }
   cache = undefined
   return live
 }

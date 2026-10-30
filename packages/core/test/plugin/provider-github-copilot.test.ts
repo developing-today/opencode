@@ -15,8 +15,10 @@ import {
   copilotEndpointDiscoveryNeeded,
   copilotEntitlementError,
   copilotFetch,
+  deviceIntervalMs,
   discoverCopilotApiEndpoint,
   GithubCopilotPlugin,
+  slowDownWaitMs,
   utilityTitle,
 } from "@opencode/core/plugin/provider/github-copilot"
 import { Message, SystemPart } from "@opencode/ai"
@@ -728,4 +730,37 @@ describe("GithubCopilotPlugin", () => {
       expect(result.language).toBeUndefined()
     }),
   )
+})
+
+describe("GithubCopilotPlugin device polling", () => {
+  test("bounds the device poll interval and falls back on unusable values (#915)", () => {
+    // Ordinary GitHub interval: 5s, polled with the safety margin on top.
+    expect(deviceIntervalMs(5)).toBe(5000)
+    expect(deviceIntervalMs(10)).toBe(10_000)
+    expect(deviceIntervalMs(1)).toBe(1000)
+    // Sub-second values are floored to 1 second instead of flooding the
+    // token endpoint.
+    expect(deviceIntervalMs(0.5)).toBe(1000)
+    // An oversized or unit-confused interval is clamped to the 60-second
+    // ceiling instead of outlasting the 10-minute attempt lifetime.
+    expect(deviceIntervalMs(600)).toBe(60_000)
+    expect(deviceIntervalMs(999_999)).toBe(60_000)
+    // Zero, negative, and non-finite values take the 5-second fallback
+    // instead of busy-polling or never polling.
+    for (const value of [0, -3, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])
+      expect(deviceIntervalMs(value)).toBe(5000)
+  })
+
+  test("slow_down never shortens the wait (#915)", () => {
+    // No usable interval in the response: the sibling flows' +5s.
+    expect(slowDownWaitMs(5000, undefined)).toBe(10_000)
+    expect(slowDownWaitMs(5000, Number.NaN)).toBe(10_000)
+    // A smaller positive interval must not speed polling up against an
+    // endpoint asking the client to back off.
+    expect(slowDownWaitMs(5000, 1)).toBe(10_000)
+    expect(slowDownWaitMs(5000, 8)).toBe(10_000)
+    // A larger server interval is honoured, through the same ceiling.
+    expect(slowDownWaitMs(5000, 30)).toBe(30_000)
+    expect(slowDownWaitMs(5000, 600)).toBe(60_000)
+  })
 })

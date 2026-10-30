@@ -173,7 +173,7 @@ const describeOutput = (format: string) => {
   // all of which would be reported as the audio's sample rate.
   const parsed = rate !== undefined && /^\d+$/.test(rate) ? Number(rate) : undefined
   const sampleRate = parsed !== undefined && parsed > 0 ? parsed : undefined
-  const encoding = PCM_CODECS[codec]
+  const encoding = Object.hasOwn(PCM_CODECS, codec) ? PCM_CODECS[codec] : undefined
   return encoding === undefined ? SpeechStream.container(codec, sampleRate) : SpeechStream.pcm(encoding, sampleRate)
 }
 

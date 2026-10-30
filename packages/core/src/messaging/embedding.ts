@@ -101,30 +101,40 @@ export const tiers: ReadonlyArray<Tier> = [
 ]
 
 const LLAMA_BUILD = "b11669"
-const LLAMA_ASSETS: Readonly<Record<string, { readonly name: string; readonly sha256: string }>> = {
+// Sizes are the exact byte counts of the ggml-org/llama.cpp b11669 release assets; download enforces
+// them in flight, so the sha-only asset path is bounded just like a model download.
+const LLAMA_ASSETS: Readonly<
+  Record<string, { readonly name: string; readonly sha256: string; readonly size: number }>
+> = {
   "darwin-arm64": {
     name: "llama-b11669-bin-macos-arm64.tar.gz",
     sha256: "dbed55493d72bc1ba2babc8770d669c2289b5bc4ee9fb2a4dfc158d45b7d13fd",
+    size: 12191582,
   },
   "darwin-x64": {
     name: "llama-b11669-bin-macos-x64.tar.gz",
     sha256: "cab28238d78158109b48deb27b05d50e0dcef56275d2e76da9ca8281526c7532",
+    size: 11677404,
   },
   "linux-arm64": {
     name: "llama-b11669-bin-ubuntu-arm64.tar.gz",
     sha256: "9ac6fda2058d35677608a06f751a50122ddfa4ce0ddb7f084466b8e79b6d4a99",
+    size: 13900160,
   },
   "linux-x64": {
     name: "llama-b11669-bin-ubuntu-x64.tar.gz",
     sha256: "cf07c1c112d709bd67e522017471de57ed0ec8bea031d732c5422351c07f65ac",
+    size: 17851611,
   },
   "win32-x64": {
     name: "llama-b11669-bin-win-cpu-x64.zip",
     sha256: "37b3efcf962847ca869745fd4ccf7f5e7e8dacfeff9fa3523b4ca8cdc66d632b",
+    size: 19537886,
   },
   "win32-arm64": {
     name: "llama-b11669-bin-win-cpu-arm64.zip",
     sha256: "9cff39ffed17edcd03a7d876073f74d7b48cd43a1e5eafdd59ee094185ad871b",
+    size: 12442177,
   },
 }
 
@@ -304,6 +314,15 @@ export const download = Effect.fn("MessagingEmbedding.download")(function* (inpu
       () => 0,
     ),
   )
+  // A part already larger than the known size can never verify; drop it instead of resuming from it.
+  if (input.size !== undefined && existing > input.size) {
+    yield* Effect.promise(() => rm(part, { force: true }))
+    return yield* Effect.fail(
+      new Error(
+        `download from ${input.url} is larger than expected: part already holds ${existing} of ${input.size} bytes`,
+      ),
+    )
+  }
   const resumed = createHash("sha256")
   if (existing > 0 && input.sha256)
     yield* Effect.tryPromise({ try: (signal) => hashFile(part, resumed, signal), catch: toError })
@@ -328,23 +347,47 @@ export const download = Effect.fn("MessagingEmbedding.download")(function* (inpu
   const total =
     totalFromRange(response.headers["content-range"]) ??
     (Number.isFinite(length) && length > 0 ? start + length : input.size)
+  // Fail fast on a declared length above the known size, before a single body byte is read.
+  if (input.size !== undefined && total !== undefined && total > input.size) {
+    yield* Effect.promise(() => rm(part, { force: true }))
+    return yield* Effect.fail(
+      new Error(`download from ${input.url} is larger than expected: declared ${total} bytes, expected ${input.size}`),
+    )
+  }
   const progress = { received: start }
   input.onProgress?.(progress.received, total)
 
-  yield* Effect.acquireUseRelease(
-    Effect.tryPromise({ try: () => open(part, append ? "a" : "w"), catch: toError }),
-    (handle) =>
-      Stream.runForEach(response.stream, (chunk) =>
-        Effect.tryPromise({ try: () => handle.write(chunk), catch: toError }).pipe(
-          Effect.map(() => {
-            if (input.sha256) hash.update(chunk)
-            progress.received += chunk.byteLength
-            input.onProgress?.(progress.received, total)
-          }),
-        ),
-      ).pipe(Effect.mapError(toError)),
-    (handle) => Effect.promise(() => handle.close()),
+  // Bound the stream itself: chunked or undeclared-length bodies carry no header to pre-check, so
+  // each chunk is measured before it is written and the download aborts the moment it passes the
+  // known size. The oversized part is deleted, never left behind as a resumable download.
+  let oversized = false
+  const streamed = yield* Effect.exit(
+    Effect.acquireUseRelease(
+      Effect.tryPromise({ try: () => open(part, append ? "a" : "w"), catch: toError }),
+      (handle) =>
+        Stream.runForEach(response.stream, (chunk) => {
+          if (input.size !== undefined && progress.received + chunk.byteLength > input.size) {
+            oversized = true
+            return Effect.fail(
+              new Error(`download from ${input.url} is larger than expected: received more than ${input.size} bytes`),
+            )
+          }
+          return Effect.tryPromise({ try: () => handle.write(chunk), catch: toError }).pipe(
+            Effect.map(() => {
+              if (input.sha256) hash.update(chunk)
+              progress.received += chunk.byteLength
+              input.onProgress?.(progress.received, total)
+            }),
+          )
+        }).pipe(Effect.mapError(toError)),
+      (handle) => Effect.promise(() => handle.close()),
+    ),
   )
+  if (streamed._tag === "Failure") {
+    const cause = streamed.cause
+    if (oversized) yield* Effect.promise(() => rm(part, { force: true }))
+    return yield* Effect.failCause(cause)
+  }
   return yield* finish(input, part, hash, progress.received)
 })
 
@@ -547,13 +590,18 @@ const layer = (options: Options) =>
           ),
         ).pipe(Effect.map((entry) => (entry === undefined ? undefined : path.join(dir, entry))))
 
-      const installServer = Effect.fnUntraced(function* (asset: { readonly name: string; readonly sha256: string }) {
+      const installServer = Effect.fnUntraced(function* (asset: {
+        readonly name: string
+        readonly sha256: string
+        readonly size: number
+      }) {
         const archive = path.join(llamaRoot, asset.name)
         state.phase = "downloading"
         yield* download({
           url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_BUILD}/${asset.name}`,
           dest: archive,
           sha256: asset.sha256,
+          size: asset.size,
           onProgress: track(asset.name),
         })
         const staging = `${llamaDir}.tmp`

@@ -171,8 +171,9 @@ jobs:
         run: bun test check-doc-env-vars.test.ts
 
       - name: Check documented env vars have readers
-        # Every OPENCODE_* variable cli.mdx documents must be read
-        # somewhere outside the docs, or the row is a silent no-op (#116).
+        # Every OPENCODE_* variable the English docs pages document must be read
+        # somewhere outside the docs or carry a reasoned allowlist entry,
+        # or the row is a silent no-op (#116, #931).
         if: runner.os == 'Linux'
         run: bun run check:doc-env-vars
 

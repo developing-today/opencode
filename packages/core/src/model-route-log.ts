@@ -324,7 +324,7 @@ export const onRestoreUsage = (next: typeof restoreUsage) => {
   restoreUsage = next
 }
 
-type CooldownRow = { providerID: string; modelID: string; until: number }
+type CooldownRow = { providerID: string; modelID: string; until: number; credentialID?: string }
 let restoreCooldowns: ((rows: readonly CooldownRow[]) => void) | undefined
 
 export const onRestoreCooldowns = (next: typeof restoreCooldowns) => {
@@ -361,8 +361,17 @@ export const restoreCooldownsFrom = (db: Database.Interface["db"]) =>
     const latest = new Map<string, CooldownRow>()
     const windows = new Map<string, CooldownRow & { snapshot?: Snapshot }>()
     for (const row of rows) {
-      const id = `${row.provider_id}/${row.model_id}`
-      const entry = { providerID: row.provider_id, modelID: row.model_id, until: row.until ?? 0 }
+      // A credential-scoped health row names its credential in the reason ("... credential:<id>",
+      // written by bench/observeRateLimit in model-route.ts): it restores onto that credential
+      // only, never onto the whole target (#870).
+      const credentialID = /credential:(\S+)/.exec(row.reason ?? "")?.[1]
+      const id = credentialID ? `${row.provider_id}/${row.model_id}#${credentialID}` : `${row.provider_id}/${row.model_id}`
+      const entry = {
+        providerID: row.provider_id,
+        modelID: row.model_id,
+        until: row.until ?? 0,
+        ...(credentialID ? { credentialID } : {}),
+      }
       if (row.kind === "rate-limit-window") windows.set(id, entry)
       else if (row.kind === "cooldown-end") latest.delete(id)
       else if (row.until !== null) latest.set(id, entry)

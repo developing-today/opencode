@@ -70,7 +70,7 @@ export const layer = Layer.effect(
           startedAt: Date.now(),
           inputTokens: estimate,
         },
-        (snapshot) => ModelRoute.observeRateLimit(input.model.ref, snapshot),
+        (snapshot) => ModelRoute.observeRateLimit(input.model.ref, snapshot, Date.now(), input.model.routing?.credentialID),
       )
       let error: unknown
       let interrupted = false

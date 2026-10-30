@@ -766,6 +766,88 @@ describe("cooldown restore", () => {
   )
 })
 
+describe("credential cooldown restore (#870)", () => {
+  it.live("rebuilds a credential-scoped cooldown onto that credential only", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      ModelRoute.resetHealth()
+      const now = Date.now()
+      ModelRouteLog.record({
+        kind: "health",
+        row: {
+          time: now - 5_000,
+          provider_id: "restart-cred",
+          model_id: "m",
+          kind: "cooldown-start",
+          reason: "quota credential:cred-a",
+          until: now + 60_000,
+        },
+      })
+      yield* Effect.sleep("100 millis")
+
+      yield* ModelRouteLog.restoreCooldownsFrom(db)
+      const target = ModelRoute.ref({ providerID: "restart-cred", model: "m" })
+      // Only the benched credential is excluded after the restart; the healthy alternate
+      // credential behind the same target stays routable, and the target itself is not benched.
+      expect(ModelRoute.credentialCooldownUntil(target, "cred-a")).toBe(now + 60_000)
+      expect(ModelRoute.credentialCoolingDown(target, "cred-a")).toBe(true)
+      expect(ModelRoute.credentialCoolingDown(target, "cred-b")).toBe(false)
+      expect(ModelRoute.coolingDown(target)).toBe(false)
+      expect(ModelRoute.cooldownUntil(target)).toBe(0)
+    }),
+  )
+
+  it.live("rebuilds a credential-scoped rate-limit window onto that credential only", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      ModelRoute.resetHealth()
+      const now = Date.now()
+      ModelRouteLog.record({
+        kind: "health",
+        row: {
+          time: now - 5_000,
+          provider_id: "limit-cred",
+          model_id: "m",
+          kind: "rate-limit-window",
+          reason: "provider-reported credential:cred-a",
+          until: now + 120_000,
+        },
+      })
+      yield* Effect.sleep("100 millis")
+
+      yield* ModelRouteLog.restoreCooldownsFrom(db)
+      const target = ModelRoute.ref({ providerID: "limit-cred", model: "m" })
+      expect(ModelRoute.limitedUntil(target, now, "cred-a")).toBe(now + 120_000)
+      expect(ModelRoute.limitedUntil(target, now, "cred-b")).toBe(0)
+      expect(ModelRoute.limitedUntil(target, now)).toBe(0)
+    }),
+  )
+})
+
+describe("rate-limit hold release restore (#870)", () => {
+  it.live("a cleared hold stays cleared after a restart", () =>
+    Effect.gen(function* () {
+      const db = (yield* Database.Service).db
+      ModelRoute.resetHealth()
+      const now = Date.now()
+      const target = ModelRoute.ref({ providerID: "limit-released", model: "m" })
+      const spent = { at: now, remaining: { requests: "0" }, reset: { requests: "45s" } }
+      ModelRoute.observeRateLimit(target, spent, now, "cred-a")
+      expect(ModelRoute.limitedUntil(target, now, "cred-a")).toBe(now + 45_000)
+      // The serving credential then succeeds without limit headers: the hold is released,
+      // and the release is persisted so replay does not resurrect the original window row.
+      ModelRoute.clearRateLimit(target, "cred-a")
+      expect(ModelRoute.limitedUntil(target, now, "cred-a")).toBe(0)
+      yield* Effect.sleep("100 millis")
+
+      ModelRoute.resetHealth()
+      yield* ModelRouteLog.restoreCooldownsFrom(db)
+      expect(ModelRoute.limitedUntil(target, Date.now(), "cred-a")).toBe(0)
+      expect(ModelRoute.limitedUntilAny(target, Date.now())).toBe(0)
+    }),
+  )
+})
+
 describe("rate-limit window restore", () => {
   it.live("holds targets back again after a restart while the provider's window is still open", () =>
     Effect.gen(function* () {
