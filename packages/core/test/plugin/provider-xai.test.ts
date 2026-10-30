@@ -5,7 +5,7 @@ import { Integration } from "@opencode/core/integration"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHost } from "@opencode/core/plugin/host"
 import { MAX_DEVICE_LIFETIME_SECONDS } from "@opencode/core/plugin/provider/expires"
-import { deviceDeadline, XAIPlugin } from "@opencode/core/plugin/provider/xai"
+import { deviceDeadline, deviceIntervalMs, XAIPlugin } from "@opencode/core/plugin/provider/xai"
 import { Model } from "@opencode/core/model"
 import { Provider } from "@opencode/core/provider"
 import { testEffect } from "../lib/effect"
@@ -98,6 +98,23 @@ describe("xAI device poll deadline (#900)", () => {
     // ~6.9 days.
     expect(deviceDeadline(1_000, 600_000)).toBe(1_000 + MAX_DEVICE_LIFETIME_SECONDS * 1000)
     expect(deviceDeadline(0, MAX_DEVICE_LIFETIME_SECONDS + 1)).toBe(MAX_DEVICE_LIFETIME_SECONDS * 1000)
+  })
+
+  test("bounds the initial device poll interval and falls back on unusable values (#941)", () => {
+    expect(deviceIntervalMs(5)).toBe(5000)
+    expect(deviceIntervalMs(10)).toBe(10_000)
+    expect(deviceIntervalMs(1)).toBe(1000)
+    // Sub-second values are floored to 1 second instead of flooding the
+    // token endpoint.
+    expect(deviceIntervalMs(0.5)).toBe(1000)
+    // An oversized or unit-confused interval is clamped to the 60-second
+    // ceiling instead of overshooting the device deadline.
+    expect(deviceIntervalMs(600)).toBe(60_000)
+    expect(deviceIntervalMs(999_999)).toBe(60_000)
+    // Zero, negative, non-finite, and absent values take the 5-second
+    // fallback instead of busy-polling or never polling.
+    for (const value of [0, -3, Number.NaN, Number.POSITIVE_INFINITY, undefined])
+      expect(deviceIntervalMs(value)).toBe(5000)
   })
 
   test("valid lifetimes pass through and absent or non-positive values take the 300-second default", () => {

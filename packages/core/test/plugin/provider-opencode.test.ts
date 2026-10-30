@@ -143,6 +143,10 @@ describe("OpencodePlugin", () => {
     // Zero, negative, and non-finite values take the 5-second fallback
     // instead of busy-polling.
     for (const value of [0, -3, Number.NaN, Number.POSITIVE_INFINITY]) expect(deviceIntervalMs(value)).toBe(5000)
+    // An oversized or unit-confused interval is clamped to the 60-second
+    // ceiling instead of outlasting the attempt lifetime (#941).
+    expect(deviceIntervalMs(600)).toBe(60_000)
+    expect(deviceIntervalMs(999_999)).toBe(60_000)
   })
 
   it.live("clamps an oversized device code lifetime to the 10-minute attempt lifetime (#900)", () =>

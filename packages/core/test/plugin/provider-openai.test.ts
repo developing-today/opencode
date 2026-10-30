@@ -73,6 +73,10 @@ describe("OpenAIPlugin", () => {
     // Malformed spellings take the 5-second fallback instead of being
     // reinterpreted (parseInt("0x10") polled every 16 seconds).
     for (const spelling of ["1e1", "0x10", "5junk", "2.9"]) expect(deviceIntervalMs(spelling)).toBe(5000)
+    // An oversized or unit-confused interval is clamped to the 60-second
+    // ceiling instead of outlasting the login attempt (#941).
+    expect(deviceIntervalMs("600")).toBe(60_000)
+    expect(deviceIntervalMs("999999")).toBe(60_000)
   })
 
   it.effect("registers browser and headless ChatGPT OAuth methods", () =>
