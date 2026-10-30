@@ -691,6 +691,88 @@ describe("Messaging search and listing", () => {
   )
 })
 
+describe("Messaging read limits", () => {
+  // Plugins and the CLI call the service directly, so a limit can arrive without the typed surface's PositiveInt check.
+  const unvalidated = <T>(input: Record<string, unknown>) => input as unknown as T
+
+  it.effect("floors and clamps a caller-supplied limit at the service boundary", () =>
+    Effect.gen(function* () {
+      const tree = yield* family
+      const messaging = yield* Messaging.Service
+      const dm = `dm@${tree.child.id}`
+      for (let index = 0; index < 25; index++)
+        yield* messaging.send({ as: tree.child.id, to: "parent", text: `report ${index}`, deliver: "none" })
+
+      // A negative limit used to reach SQLite as LIMIT -1, which returns every row.
+      const negative = yield* messaging.query(
+        unvalidated<Messaging.Query>({ as: tree.root.id, topics: [dm], limit: -5, markRead: false }),
+      )
+      expect(negative.messages).toHaveLength(20)
+      expect(negative.more).toBe(true)
+
+      // Zero used to page nothing at all while still reporting more.
+      const zero = yield* messaging.query(
+        unvalidated<Messaging.Query>({ as: tree.root.id, topics: [dm], limit: 0, markRead: false }),
+      )
+      expect(zero.messages).toHaveLength(1)
+      expect(zero.more).toBe(true)
+
+      // A fractional limit used to throw a SQLite datatype mismatch, which orDie turned into a defect.
+      const fractional = yield* messaging.query(
+        unvalidated<Messaging.Query>({ as: tree.root.id, topics: [dm], limit: 2.9, markRead: false }),
+      )
+      expect(fractional.messages).toHaveLength(2)
+
+      // NaN means "absent", so the default page size applies.
+      const nan = yield* messaging.query(
+        unvalidated<Messaging.Query>({ as: tree.root.id, topics: [dm], limit: Number.NaN, markRead: false }),
+      )
+      expect(nan.messages).toHaveLength(20)
+
+      // Valid limits, including ones above the ceiling, behave as before.
+      const aboveCeiling = yield* messaging.query(
+        unvalidated<Messaging.Query>({ as: tree.root.id, topics: [dm], limit: 5000, markRead: false }),
+      )
+      expect(aboveCeiling.messages).toHaveLength(25)
+      expect(aboveCeiling.more).toBe(false)
+    }),
+  )
+
+  it.effect("applies the same floor to topics, sessions and log", () =>
+    Effect.gen(function* () {
+      const tree = yield* family
+      const messaging = yield* Messaging.Service
+      for (const name of ["alpha", "beta", "gamma"])
+        yield* messaging.send({ as: tree.child.id, topic: name, text: name })
+
+      const topics = (limit: number) =>
+        messaging
+          .topics(unvalidated<Messaging.TopicsInput>({ sessions: [tree.child.id], role: "writer", limit }))
+          .pipe(Effect.map((result) => result.topics.length))
+      expect(yield* topics(0)).toBe(1)
+      expect(yield* topics(1.5)).toBe(1)
+      expect(yield* topics(-1)).toBe(3)
+
+      const sessions = (limit: number) =>
+        messaging
+          .sessions(unvalidated<Messaging.SessionsInput>({ limit }))
+          .pipe(Effect.map((result) => result.sessions.length))
+      expect(yield* sessions(0)).toBe(1)
+      expect(yield* sessions(-1)).toBeGreaterThan(1)
+
+      const bus = yield* Bus.Service
+      for (const text of ["alpha step", "beta step", "gamma step"])
+        yield* bus.publish(SessionEvent.Synthetic, { sessionID: tree.child.id, text })
+      const log = (limit: number) =>
+        messaging
+          .log(unvalidated<Messaging.LogInput>({ sessions: [tree.child.id], limit }))
+          .pipe(Effect.map((result) => result.entries.length))
+      expect(yield* log(0)).toBe(1)
+      expect(yield* log(-1)).toBe(3)
+    }),
+  )
+})
+
 describe("Messaging sessions", () => {
   it.effect("walks the session chain with brief and full detail", () =>
     Effect.gen(function* () {
