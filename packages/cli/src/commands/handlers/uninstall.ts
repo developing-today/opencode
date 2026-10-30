@@ -91,7 +91,7 @@ export default Runtime.handler(
     )
     yield* Effect.forEach(shell, (file) =>
       fs.readFileString(file).pipe(
-        Effect.flatMap((content) => fs.writeFileString(file, cleanShellConfig(content))),
+        Effect.flatMap((content) => writeShellConfig(file, cleanShellConfig(content))),
         Effect.catch((error) => Effect.sync(() => errors.push(`Shell config ${file}: ${errorMessage(error)}`))),
       ),
     )
@@ -151,7 +151,27 @@ const shellConfigs = Effect.fnUntraced(function* (home: string) {
   )
 })
 
-function cleanShellConfig(content: string) {
+export const writeShellConfig = Effect.fnUntraced(function* (file: string, content: string) {
+  const fs = yield* FileSystem.FileSystem
+  // Shell rc files are commonly symlinks into a dotfiles repo: write a temp file
+  // beside the resolved target and rename over the target, so the link itself
+  // survives and the write is never partial. Keep the target's mode - the other
+  // CLI writers hardcode 0o600, which would tighten a hand-maintained rc file.
+  const target = yield* fs.realPath(file).pipe(Effect.orElseSucceed(() => file))
+  const mode = yield* fs.stat(target).pipe(
+    Effect.map((info) => info.mode),
+    Effect.orElseSucceed(() => undefined),
+  )
+  const temp = `${target}.tmp`
+  const write = Effect.gen(function* () {
+    yield* fs.writeFileString(temp, content, mode === undefined ? {} : { mode })
+    if (mode !== undefined) yield* fs.chmod(temp, mode)
+    yield* fs.rename(temp, target)
+  })
+  yield* write.pipe(Effect.onError(() => fs.remove(temp, { force: true }).pipe(Effect.ignore)))
+})
+
+export function cleanShellConfig(content: string) {
   const lines = content.split("\n")
   const entry = (line: string) =>
     /^(?:export PATH=|fish_add_path\s)/.test(line.trim()) && line.includes(".opencode/bin")
