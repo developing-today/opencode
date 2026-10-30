@@ -6,7 +6,13 @@ import { Effect, Option } from "effect"
 // Core never reads, logs, stores, or sends a secret value. It works with names, statuses, and request ids from the
 // daemon. A missing secret is waited for, and if it does not arrive the tool call fails before anything runs.
 
-export type DaemonCall = (path: string, method?: string, body?: any, headers?: Record<string, string>) => Promise<any>
+export type DaemonCall = (
+  path: string,
+  method?: string,
+  body?: any,
+  headers?: Record<string, string>,
+  timeoutMs?: number,
+) => Promise<any>
 
 /** The daemon answered with a non-2xx status: the request was received and refused or failed. */
 export class DaemonHTTPError extends Error {
