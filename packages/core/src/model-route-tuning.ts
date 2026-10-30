@@ -29,6 +29,13 @@ const median = (values: readonly number[]) => {
 
 const targetKey = (providerID: string, modelID: string) => `${providerID}/${modelID}`
 
+/** The furthest out a stated quota reset may skip a target. Provider error text is untrusted
+ * input, and a user note is only a hint: a reset stated further than this — a year-9999
+ * timestamp, "in 100000 days" — is a runaway value, not a schedule, so it is bounded to this
+ * ceiling instead of benching the target effectively forever (or, past the Date range,
+ * throwing when the instant is rendered). Resets within the ceiling are honoured as written. */
+export const MAX_QUOTA_RESET_MS = 30 * 86_400_000
+
 export const suggest = (input: Input): ModelRoute.Adjustment[] => {
   const minAttempts = input.minAttempts ?? 5
   const holdMs = input.holdMs ?? 30 * 60_000
@@ -136,14 +143,23 @@ export const predict = (input: {
   }
   for (const error of input.errors) {
     const target = `${error.providerID}/${error.modelID}`
-    const reset = ModelRouteLimits.resetAtFromMessage(error.lastMessage ?? undefined, input.now)
-    if (!reset) continue
+    const stated = ModelRouteLimits.resetAtFromMessage(error.lastMessage ?? undefined, input.now)
+    if (!stated) continue
+    // Bound before the detail is built: an out-of-Date-range stated reset would throw in
+    // toISOString and void the whole review, and a merely absurd one would bench the target.
+    const ceiling = input.now + MAX_QUOTA_RESET_MS
+    const capped = stated > ceiling
+    const reset = capped ? ceiling : stated
     const prior = result.find((entry) => entry.target === target)
     if (prior) continue
     result.push({
       target,
       state: "quota-reset",
-      detail: `provider message says the quota returns ${new Date(reset).toISOString()}`,
+      // Say which it is: route_stats shows this line, so a capped prediction must not read as
+      // the provider's own stated reset.
+      detail: capped
+        ? `provider message states a reset past the ${MAX_QUOTA_RESET_MS / 86_400_000}-day ceiling; predicting ${new Date(reset).toISOString()}`
+        : `provider message says the quota returns ${new Date(reset).toISOString()}`,
       until: reset,
     })
   }
@@ -167,7 +183,7 @@ export const parseQuotaReset = (message: string | undefined, now: number): numbe
   // a later valid reset stated in the same message.
   for (const [, absolute] of text.matchAll(new RegExp(ModelRouteLimits.ABSOLUTE_TIME.source, "g"))) {
     const date = ModelRouteLimits.parseAbsoluteTime(absolute)
-    if (date !== undefined) return date
+    if (date !== undefined) return Math.min(date, now + MAX_QUOTA_RESET_MS)
   }
   // The relative form mirrors ModelRouteLimits: decimal amounts ("in 1.5 hours") and compound
   // sequences ("in 1 hour 30 minutes", summed) both read as the total wait.
@@ -181,7 +197,7 @@ export const parseQuotaReset = (message: string | undefined, now: number): numbe
     let total = 0
     for (const [, amount, name] of sequence.matchAll(/(\d+(?:\.\d+)?)\s*(second|minute|hour|day|sec|s)s?(?![a-z])/g))
       total += Number(amount) * (unit[name] ?? 1_000)
-    return now + total
+    return Math.min(now + total, now + MAX_QUOTA_RESET_MS)
   }
   return undefined
 }
@@ -224,7 +240,7 @@ export const noteAdjustments = (notes: readonly Note[], now: number, holdMs: num
         match: note.match,
         action: "skip" as const,
         // A user-stated reset can be days out; only a runaway value is bounded.
-        until: Math.min(until, now + 30 * 86_400_000),
+        until: Math.min(until, now + MAX_QUOTA_RESET_MS),
         note: note.text,
       },
     ]

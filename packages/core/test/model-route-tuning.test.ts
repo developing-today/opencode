@@ -131,6 +131,37 @@ describe("ModelRouteTuning predictions", () => {
       until: at + 3 * 3_600_000,
     })
   })
+
+  test("bounds a runaway quota reset at the 30-day ceiling instead of benching the target or throwing (#933)", () => {
+    const at = Date.UTC(2026, 0, 1, 14)
+    const ceiling = at + 30 * 86_400_000
+    for (const lastMessage of [
+      "quota exceeded; reset at 9999-01-01T00:00:00Z",
+      "quota exceeded; try again in 100000 days",
+      // Past the representable Date range: building the detail used to throw RangeError here.
+      "quota exceeded; try again in 999999999 days",
+    ]) {
+      const errors = [
+        {
+          providerID: "q",
+          modelID: "n",
+          tag: "QuotaExceeded",
+          code: null,
+          status: 429,
+          count: 3,
+          lastTime: at,
+          lastMessage,
+        },
+      ]
+      expect(ModelRouteTuning.predict({ hourly, errors, now: at })).toContainEqual({
+        target: "q/n",
+        state: "quota-reset",
+        // Capped predictions say so instead of repeating the capped date as the provider's.
+        detail: `provider message states a reset past the 30-day ceiling; predicting ${new Date(ceiling).toISOString()}`,
+        until: ceiling,
+      })
+    }
+  })
 })
 
 describe("ModelRouteTuning.parseQuotaReset", () => {
@@ -179,11 +210,23 @@ describe("ModelRouteTuning.parseQuotaReset", () => {
     expect(ModelRouteTuning.parseQuotaReset("quota reset at 2026-13-01", at)).toBeUndefined()
   })
 
+  test("bounds runaway resets at the 30-day ceiling and never throws (#933)", () => {
+    const ceiling = at + 30 * 86_400_000
+    expect(ModelRouteTuning.parseQuotaReset("quota exceeded; reset at 9999-01-01T00:00:00Z", at)).toBe(ceiling)
+    expect(ModelRouteTuning.parseQuotaReset("quota exceeded, back in 100000 days", at)).toBe(ceiling)
+    // 999999999 days is beyond the maximum representable Date; it caps instead of overflowing.
+    expect(ModelRouteTuning.parseQuotaReset("quota exceeded, back in 999999999 days", at)).toBe(ceiling)
+    // Within the ceiling the stated reset is honoured as written.
+    expect(ModelRouteTuning.parseQuotaReset("quota exceeded, back in 3 hours", at)).toBe(at + 3 * 3_600_000)
+  })
+
   test("treats calendar-invalid dates as unparseable, like ModelRouteLimits", () => {
     expect(ModelRouteTuning.parseQuotaReset("quota reset at 2026-02-30", at)).toBeUndefined()
+    // The later valid reset (2026-03-05) is more than 30 days out from `at`, so the #933
+    // ceiling bounds it instead of honouring it as written.
     expect(
       ModelRouteTuning.parseQuotaReset("quota reset at 2026-02-30, back at 2026-03-05T00:00:00Z", at),
-    ).toBe(Date.parse("2026-03-05T00:00:00Z"))
+    ).toBe(at + 30 * 86_400_000)
     expect(ModelRouteTuning.parseQuotaReset("quota reset at 2024-02-29", at)).toBe(Date.parse("2024-02-29"))
   })
 })
