@@ -25,15 +25,19 @@ const clientID = "opencode-cli"
 const methodID = Integration.MethodID.make("device")
 const pollingSafetyMargin = 3000
 /** Poll interval for the device flow, in milliseconds. The server-supplied
- * `interval` is an unbounded number (#880): 0 or a negative value would make
+ * `interval` was only floored (#880): 0 or a negative value would make
  * the poll loop sleep for no time at all and busy-poll the token endpoint,
  * and a sub-second value floods it almost as fast. Non-positive and
  * non-finite values take the 5-second fallback (the OpenAI flow's
- * deviceIntervalMs precedent, #771) and the result is floored at 1 second;
- * the poll loop adds pollingSafetyMargin on top of every wait. */
+ * deviceIntervalMs precedent, #771) and the result is clamped to [1s, 60s];
+ * the 60-second ceiling is the Copilot bound from #915 (#941): a large or
+ * unit-confused value would otherwise make the first sleep — taken before
+ * the first token request — outlast the attempt lifetime, and slow_down
+ * growth composes from the clamped value. The poll loop adds
+ * pollingSafetyMargin on top of every wait. */
 export const deviceIntervalMs = (interval: number): number => {
   const seconds = Number.isFinite(interval) && interval > 0 ? interval : 5
-  return Math.max(seconds, 1) * 1000
+  return Math.min(Math.max(seconds, 1), 60) * 1000
 }
 // Drop statements whose action or effect is a value this version does not know, so a newer Console can
 // extend either enum. Malformed statements still fail validation.

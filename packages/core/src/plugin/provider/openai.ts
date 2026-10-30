@@ -181,11 +181,14 @@ function addressInUse(error: Error) {
  * `interval` string is restricted to a plain unsigned decimal integer
  * spelling (the #715/#724 grammar family): spellings like "0x10", "1e1",
  * "5junk", or "2.9" are not reinterpreted — they take the 5-second fallback,
- * and the result is clamped to at least 1 second (#771). */
+ * and the result is clamped to [1s, 60s] (#771, #941): the ceiling is the
+ * Copilot bound from #915 — a large or unit-confused value would otherwise
+ * make a sleep outlast the login attempt, and this flow's poll loop has no
+ * deadline of its own. */
 export const deviceIntervalMs = (raw: string): number => {
   const text = raw.trim()
   const parsed = /^\d+$/.test(text) ? Number.parseInt(text, 10) : Number.NaN
-  return Math.max(parsed || 5, 1) * 1000
+  return Math.min(Math.max(parsed || 5, 1), 60) * 1000
 }
 
 const headless = (app: App.Info, integrationID: Integration.ID) =>

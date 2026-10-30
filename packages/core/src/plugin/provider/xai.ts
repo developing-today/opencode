@@ -123,6 +123,16 @@ function refresh(methodID: Integration.MethodID, value: Credential.OAuth, app: A
   ).pipe(Effect.flatMap((tokens) => credential(methodID, tokens, value.refresh, value.metadata)))
 }
 
+/** Initial poll interval for the device flow, in milliseconds. The
+ * server-supplied `interval` was only floored (#941): positiveSeconds
+ * validates positivity only, so a large or unit-confused value made the
+ * first sleep overshoot the device deadline — checked only between sleeps
+ * — by up to the whole interval. The result is clamped to [1s, 60s], the
+ * Copilot bound from #915; slow_down growth (+5s) composes from the
+ * clamped value. */
+export const deviceIntervalMs = (value: unknown): number =>
+  Math.min(Math.max(positiveSeconds(value, 5) * 1000, 1000), 60_000)
+
 /** The poll deadline for a device attempt, in epoch milliseconds (#900). The
  * server-supplied lifetime is clamped to {@link MAX_DEVICE_LIFETIME_SECONDS}
  * so a millisecond-confused value cannot poll the token endpoint for days; an
@@ -171,7 +181,7 @@ function poll(device: typeof Device.Type, app: App.Info): Effect.Effect<Token, u
           new Error(`xAI device token exchange failed (${response.status})${detail ? `: ${detail}` : ""}`),
         )
       })
-    return yield* loop(Math.max(positiveSeconds(device.interval, 5) * 1000, 1000))
+    return yield* loop(deviceIntervalMs(device.interval))
   })
 }
 
