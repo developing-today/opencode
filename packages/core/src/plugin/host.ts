@@ -37,6 +37,7 @@ import { Generate } from "../generate.js"
 import { Permission } from "../permission.js"
 import { PluginHooks } from "./hooks.js"
 import { PluginServerUrl } from "./server-url.js"
+import { PluginVcsBranchList } from "./vcs/branch-list.js"
 import {
   decodeSessionListCursor,
   encodeSessionListCursor,
@@ -545,7 +546,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
       get: () => response(vcs.info()),
       base: () => response(vcs.base()),
       branch: {
-        list: (input) => response(vcs.branches({ search: input?.search, limit: input?.limit })),
+        list: (input) => response(PluginVcsBranchList.listBranches(vcs, input)),
       },
       status: () => response(vcs.status()),
       diff: (input) => response(vcs.diff(input.mode, { context: input.context, base: input.base })),
