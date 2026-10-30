@@ -207,3 +207,31 @@ describe("ModelRoute credential quota gate (#6)", () => {
     expect(ModelRoute.credentialQuotaBlocked("cred-lab", 20_000)).toEqual({ until: 100_000 })
   })
 })
+
+describe("ModelRoute quota-failure gate (#984)", () => {
+  test("a credentialed exhaustion gates only that credential until the stated reset", () => {
+    ModelRoute.observeQuotaFailure(target, "cred-lab", 100_000, 10_000)
+    expect(ModelRoute.credentialQuotaBlocked("cred-lab", 10_000)).toEqual({ until: 100_000 })
+    expect(ModelRoute.credentialQuotaBlocked("cred-lab", 99_999)).toEqual({ until: 100_000 })
+    expect(ModelRoute.credentialQuotaBlocked("cred-lab", 100_000)).toBeUndefined()
+    expect(ModelRoute.credentialQuotaBlocked("cred-personal", 10_000)).toBeUndefined()
+  })
+
+  test("no stated reset holds for the bounded fallback, and an absurd one is capped", () => {
+    ModelRoute.observeQuotaFailure(target, "cred-lab", undefined, 10_000)
+    expect(ModelRoute.credentialQuotaBlocked("cred-lab", 10_000)).toEqual({ until: 10_000 + 30 * 60_000 })
+
+    ModelRoute.resetHealth()
+    ModelRoute.observeQuotaFailure(target, "cred-lab", 10_000 + 90 * 86_400_000, 10_000)
+    expect(ModelRoute.credentialQuotaBlocked("cred-lab", 10_000)).toEqual({ until: 10_000 + 30 * 86_400_000 })
+  })
+
+  test("a credential-less exhaustion skips the provider until the reset, then lapses", () => {
+    const plain = ModelRoute.ref({ providerID: "cline-pass", model: "claude-sonnet-5" })
+    ModelRoute.observeQuotaFailure(plain, undefined, 100_000, 10_000)
+    const active = ModelRoute.activeAdjustments(10_000)
+    expect(active).toHaveLength(1)
+    expect(active[0]).toMatchObject({ id: "quota:cline-pass", match: "cline-pass/", action: "skip", until: 100_000 })
+    expect(ModelRoute.activeAdjustments(100_000)).toHaveLength(0)
+  })
+})

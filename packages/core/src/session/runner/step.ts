@@ -432,6 +432,27 @@ export const make = Effect.gen(function* () {
             Date.now(),
             input.model.routing?.credentialID,
           )
+        // A quota-exhaustion answer gates its pool until the reset it stated (#984): the
+        // credential when the attempt carried one, the provider itself otherwise. Selection
+        // then stops spending attempts — and collecting 429s — on an exhausted pool. The
+        // text check catches providers that report exhaustion without a quota tag
+        // (commandcode's "insufficient credits" arrives as an unknown-provider error).
+        const exhaustionText = /insufficient credits|quota exhausted|usage limit exceeded|reached your .* limit/i
+        if (
+          failed &&
+          (isQuotaFailure(llmFailure) ||
+            exhaustionText.test(
+              `${(llmFailure.reason as { message?: string }).message ?? ""} ${(llmFailure.reason as { body?: string }).body ?? ""}`,
+            ))
+        ) {
+          const hint = failureHint(llmFailure)
+          ModelRoute.observeQuotaFailure(
+            input.model.ref,
+            input.model.routing?.credentialID,
+            hint.retryAfterMs === undefined ? undefined : Date.now() + hint.retryAfterMs,
+            Date.now(),
+          )
+        }
         // A success that advertised no limit headers replaces the serving credential's hold:
         // the provider's last word for that credential is now a healthy response (#870). Only
         // a successful stream counts: an interrupted one never got the provider's answer, so

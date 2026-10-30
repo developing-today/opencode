@@ -249,6 +249,17 @@ describe("ModelRouteLimits.retryHintFromMessage", () => {
     expect(ModelRouteLimits.retryHintFromMessage("try again in 2.5 minutes", at)).toBe(150_000)
   })
 
+  test("reads compact relative units (resets in 6d 13h)", () => {
+    const total = 6 * 86_400_000 + 13 * 3_600_000
+    expect(ModelRouteLimits.retryHintFromMessage("your quota resets in 6d 13h", at)).toBe(total)
+    expect(ModelRouteLimits.resetAtFromMessage("your quota resets in 6d 13h", at)).toBe(at + total)
+    expect(ModelRouteLimits.resetAtFromMessage("resets in 2d", at)).toBe(at + 2 * 86_400_000)
+    expect(ModelRouteLimits.resetAtFromMessage("resets in 3h", at)).toBe(at + 3 * 3_600_000)
+    // The letter units must not eat the head of a word: these state no wait at all.
+    expect(ModelRouteLimits.resetAtFromMessage("come back in 5 deals", at)).toBeUndefined()
+    expect(ModelRouteLimits.resetAtFromMessage("come back in 2 homes", at)).toBeUndefined()
+  })
+
   test("reads every absolute-time keyword parseQuotaReset reads (paired with model-route-tuning)", () => {
     const instant = Date.parse("2026-01-02T00:00:00Z")
     for (const message of [
