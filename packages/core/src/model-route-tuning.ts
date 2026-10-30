@@ -147,13 +147,19 @@ export const predict = (input: {
     if (!stated) continue
     // Bound before the detail is built: an out-of-Date-range stated reset would throw in
     // toISOString and void the whole review, and a merely absurd one would bench the target.
-    const reset = Math.min(stated, input.now + MAX_QUOTA_RESET_MS)
+    const ceiling = input.now + MAX_QUOTA_RESET_MS
+    const capped = stated > ceiling
+    const reset = capped ? ceiling : stated
     const prior = result.find((entry) => entry.target === target)
     if (prior) continue
     result.push({
       target,
       state: "quota-reset",
-      detail: `provider message says the quota returns ${new Date(reset).toISOString()}`,
+      // Say which it is: route_stats shows this line, so a capped prediction must not read as
+      // the provider's own stated reset.
+      detail: capped
+        ? `provider message states a reset past the ${MAX_QUOTA_RESET_MS / 86_400_000}-day ceiling; predicting ${new Date(reset).toISOString()}`
+        : `provider message says the quota returns ${new Date(reset).toISOString()}`,
       until: reset,
     })
   }

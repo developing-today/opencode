@@ -156,7 +156,8 @@ describe("ModelRouteTuning predictions", () => {
       expect(ModelRouteTuning.predict({ hourly, errors, now: at })).toContainEqual({
         target: "q/n",
         state: "quota-reset",
-        detail: `provider message says the quota returns ${new Date(ceiling).toISOString()}`,
+        // Capped predictions say so instead of repeating the capped date as the provider's.
+        detail: `provider message states a reset past the 30-day ceiling; predicting ${new Date(ceiling).toISOString()}`,
         until: ceiling,
       })
     }
