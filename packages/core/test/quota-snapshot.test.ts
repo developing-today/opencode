@@ -12,6 +12,7 @@ const totals = (overrides: Partial<ModelUsage.Totals> = {}): ModelUsage.Totals =
   cacheRead: 0,
   cacheWrite: 0,
   costUsd: 0,
+  cacheSavedUsd: 0,
   ...overrides,
 })
 

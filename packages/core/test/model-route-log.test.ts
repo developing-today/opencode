@@ -174,7 +174,9 @@ describe("usage history", () => {
           time_ended: 2_000,
           tokens_input: 1_000,
           tokens_output: 200,
+          tokens_cache_read: 400,
           cost_usd: 0.25,
+          cache_savings_usd: 0.05,
         }),
       })
       ModelRouteLog.record({
@@ -196,6 +198,9 @@ describe("usage history", () => {
       const session = (yield* ModelRouteLog.sessionUsage(db, 0, 50)).find((row) => row.sessionID === "ses_usage")
       expect(session).toMatchObject({ requests: 2, failures: 1, input: 1_500, output: 200 })
       expect(session?.costUsd).toBeCloseTo(0.35)
+      // Savings aggregate only over attempts recorded with pricing; the second attempt has none.
+      expect(session?.cacheRead).toBe(400)
+      expect(session?.cacheSavedUsd).toBeCloseTo(0.05)
 
       const sessionTargets = yield* ModelRouteLog.sessionTargetUsage(db, 0, ["ses_usage"])
       expect(sessionTargets).toEqual([

@@ -11,7 +11,7 @@ import { QuotaBurnRate } from "../../quota-burn-rate.js"
 
 export const name = "route_usage"
 
-export const description = `Read what routed work has used: totals per provider and model, per session (requests, tokens, cost, the pools and models it used), per day, per continued turn (the chunks of one response joined back together), and each plan's quota windows with the share used in its last window.
+export const description = `Read what routed work has used: totals per provider and model, per session (requests, tokens, cost, the pools and models it used), per day (with cache-read tokens, cache hit ratio and USD saved by cache hits), per continued turn (the chunks of one response joined back together), and each plan's quota windows with the share used in its last window.
 
 Use it for questions like "which sessions used the most", "did any pool use this provider", "how much of my Claude window is gone", or "what did this week cost". It also reports per-model burn rates: the typical percent of a quota window one session costs, derived from the listed sessions' window shares. Set \`hours\` for the window (default 168; up to a year). Set \`provider\` or \`model\` to narrow the totals, \`route\` to one pool, or \`session\` to one session. Every target lists each pool it belongs to: used, offered but never chosen, or configured but never reached. The history is kept indefinitely, so a longer window is always available.`
 
@@ -193,6 +193,14 @@ export const collect = (input: Input, source: Source = NO_SOURCE, options: Optio
 
 const money = (value: number) => `$${value.toFixed(2)}`
 
+/** Cache payoff for one totals row: tokens read from cache, their share of all prompt tokens, and the USD
+ * they saved. Savings are summed only over attempts recorded with pricing, so older history contributes
+ * $0.00 rather than an estimate priced from a later catalog. */
+const cache = (totals: ModelUsage.Totals) => {
+  const ratio = ModelUsage.cacheHitRatio(totals)
+  return `cache read ${totals.cacheRead} tokens, hit ratio ${ratio === null ? "n/a" : `${Math.round(ratio * 1000) / 10}%`}, saved ${money(totals.cacheSavedUsd)}`
+}
+
 const describe = (report: Effect.Success<ReturnType<typeof collect>>) => {
   const lines: string[] = []
   if (report.noDatabase) lines.push("Routing history is unavailable: no database is attached.")
@@ -206,7 +214,7 @@ const describe = (report: Effect.Success<ReturnType<typeof collect>>) => {
       (pool) => `${pool.routeID} ${pool.state} (offered ${pool.offered}, chosen ${pool.chosen})`,
     )
     lines.push(
-      `${target.target}: ${target.requests} requests (${target.failures} failed), ${ModelUsage.metered(target)} metered tokens, ${money(target.costUsd)}, ${target.sessions} sessions; pools: ${pools.join("; ") || "none"}`,
+      `${target.target}: ${target.requests} requests (${target.failures} failed), ${ModelUsage.metered(target)} metered tokens, ${money(target.costUsd)}, ${cache(target)}, ${target.sessions} sessions; pools: ${pools.join("; ") || "none"}`,
     )
   }
   for (const session of report.sessions) {
@@ -214,16 +222,18 @@ const describe = (report: Effect.Success<ReturnType<typeof collect>>) => {
       .filter((item) => item.percent !== null)
       .map((item) => `${item.percent}% of ${item.plan} ${item.window}`)
     lines.push(
-      `session ${session.sessionID} last ${new Date(session.last).toISOString().slice(0, 16)}: ${session.requests} requests, ${ModelUsage.metered(session)} metered tokens, ${money(session.costUsd)}; pools ${session.pools.join(", ") || "none"}; models ${session.targets.map((item) => `${item.target} x${item.requests}`).join(", ") || "none"}${shares.length > 0 ? `; used ${shares.join(", ")}` : ""}`,
+      `session ${session.sessionID} last ${new Date(session.last).toISOString().slice(0, 16)}: ${session.requests} requests, ${ModelUsage.metered(session)} metered tokens, ${money(session.costUsd)}, ${cache(session)}; pools ${session.pools.join(", ") || "none"}; models ${session.targets.map((item) => `${item.target} x${item.requests}`).join(", ") || "none"}${shares.length > 0 ? `; used ${shares.join(", ")}` : ""}`,
     )
   }
   for (const day of report.days.slice(-14)) {
-    lines.push(`${day.day}: ${day.requests} requests, ${day.metered} metered tokens, ${money(day.costUsd)}`)
+    lines.push(
+      `${day.day}: ${day.requests} requests, ${day.metered} metered tokens, ${money(day.costUsd)}, cache read ${day.cacheRead} tokens, saved ${money(day.cacheSavedUsd)}`,
+    )
   }
   // Continued responses: the tokens and cost of every chunk of the turn, not one line per chunk.
   for (const turn of report.turns.slice(0, 10)) {
     lines.push(
-      `turn ${turn.rootID}${turn.sessionID === null ? "" : ` (session ${turn.sessionID})`}: ${turn.chunks} chunks, ${turn.requests} requests, ${ModelUsage.metered(turn)} metered tokens, ${money(turn.costUsd)}, ${(turn.durationMs / 1_000).toFixed(1)}s${turn.failures > 0 ? `, ${turn.failures} failed` : ""}`,
+      `turn ${turn.rootID}${turn.sessionID === null ? "" : ` (session ${turn.sessionID})`}: ${turn.chunks} chunks, ${turn.requests} requests, ${ModelUsage.metered(turn)} metered tokens, ${money(turn.costUsd)}, ${cache(turn)}, ${(turn.durationMs / 1_000).toFixed(1)}s${turn.failures > 0 ? `, ${turn.failures} failed` : ""}`,
     )
   }
   for (const burn of report.burnRates) {

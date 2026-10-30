@@ -487,6 +487,7 @@ export const make = Effect.gen(function* () {
               tokens_cache_read: tokens?.cache.read,
               tokens_cache_write: tokens?.cache.write,
               cost_usd: tokens ? SessionUsage.calculateCost(input.model.cost, tokens) : undefined,
+              cache_savings_usd: tokens ? SessionUsage.calculateCacheSavings(input.model.cost, tokens) : undefined,
               continuation_index: input.continuation?.index,
             },
             continuationOfMessageID: input.continuation?.of,

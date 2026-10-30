@@ -18,6 +18,9 @@ export interface Totals {
   readonly cacheRead: number
   readonly cacheWrite: number
   readonly costUsd: number
+  /** USD saved by cache hits, summed only over attempts recorded with pricing (see route_attempt.cache_savings_usd);
+   * attempts recorded before that column existed contribute 0, never an estimate. */
+  readonly cacheSavedUsd: number
 }
 
 export const zero: Totals = {
@@ -29,6 +32,7 @@ export const zero: Totals = {
   cacheRead: 0,
   cacheWrite: 0,
   costUsd: 0,
+  cacheSavedUsd: 0,
 }
 
 export const sum = (rows: readonly Totals[]): Totals =>
@@ -42,11 +46,20 @@ export const sum = (rows: readonly Totals[]): Totals =>
       cacheRead: total.cacheRead + row.cacheRead,
       cacheWrite: total.cacheWrite + row.cacheWrite,
       costUsd: total.costUsd + row.costUsd,
+      cacheSavedUsd: total.cacheSavedUsd + row.cacheSavedUsd,
     }),
     zero,
   )
 
 export const metered = (totals: Totals) => totals.input + totals.output + totals.reasoning
+
+/** Share of prompt tokens served from cache: cache reads over all prompt tokens (non-cached input +
+ * cache reads + cache writes, the same prompt total `SessionUsage.calculateCost` tiers on). Null when
+ * there were no prompt tokens at all, so a zero-cache window with traffic reads 0, not null. */
+export const cacheHitRatio = (totals: Totals): number | null => {
+  const prompt = totals.input + totals.cacheRead + totals.cacheWrite
+  return prompt <= 0 ? null : Math.round((totals.cacheRead / prompt) * 1000) / 1000
+}
 
 /** The amount of a quota unit that these totals used, or null when the unit cannot be read from requests. */
 export const usedOf = (unit: string, totals: Totals): number | null => {
@@ -165,6 +178,7 @@ export const targetReports = (
       cacheRead: row?.cacheRead ?? 0,
       cacheWrite: row?.cacheWrite ?? 0,
       costUsd: row?.costUsd ?? 0,
+      cacheSavedUsd: row?.cacheSavedUsd ?? 0,
       sessions: row?.sessions ?? 0,
       pools: poolStates(target, offers, configured),
     }
@@ -234,8 +248,19 @@ export interface DayReport {
   readonly requests: number
   readonly metered: number
   readonly costUsd: number
+  readonly cacheRead: number
+  readonly cacheSavedUsd: number
   readonly providers: Readonly<
-    Record<string, { readonly requests: number; readonly metered: number; readonly costUsd: number }>
+    Record<
+      string,
+      {
+        readonly requests: number
+        readonly metered: number
+        readonly costUsd: number
+        readonly cacheRead: number
+        readonly cacheSavedUsd: number
+      }
+    >
   >
 }
 
@@ -257,6 +282,7 @@ export interface TurnAttemptRow {
   readonly cacheRead: number | null
   readonly cacheWrite: number | null
   readonly costUsd: number | null
+  readonly cacheSavedUsd?: number | null
 }
 
 export interface TurnRow extends Totals {
@@ -308,6 +334,7 @@ export const turns = (rows: readonly TurnAttemptRow[]): TurnRow[] => {
           cacheRead: attempt.cacheRead ?? 0,
           cacheWrite: attempt.cacheWrite ?? 0,
           costUsd: attempt.costUsd ?? 0,
+          cacheSavedUsd: attempt.cacheSavedUsd ?? 0,
         })),
       )
       const first = Math.min(...attempts.map((attempt) => attempt.timeStarted))
@@ -331,13 +358,19 @@ export const dayReports = (rows: readonly DayRow[]): DayReport[] => {
   const days = new Map<string, DayRow[]>()
   for (const row of rows) days.set(row.day, [...(days.get(row.day) ?? []), row])
   return [...days].map(([day, dayRows]) => {
-    const providers = new Map<string, { requests: number; metered: number; costUsd: number }>()
+    const providers = new Map<
+      string,
+      { requests: number; metered: number; costUsd: number; cacheRead: number; cacheSavedUsd: number }
+    >()
     for (const row of dayRows) {
-      const current = providers.get(row.providerID) ?? { requests: 0, metered: 0, costUsd: 0 }
+      const current =
+        providers.get(row.providerID) ?? { requests: 0, metered: 0, costUsd: 0, cacheRead: 0, cacheSavedUsd: 0 }
       providers.set(row.providerID, {
         requests: current.requests + row.requests,
         metered: current.metered + metered(row),
         costUsd: current.costUsd + row.costUsd,
+        cacheRead: current.cacheRead + row.cacheRead,
+        cacheSavedUsd: current.cacheSavedUsd + row.cacheSavedUsd,
       })
     }
     const total = sum(dayRows)
@@ -346,6 +379,8 @@ export const dayReports = (rows: readonly DayRow[]): DayReport[] => {
       requests: total.requests,
       metered: metered(total),
       costUsd: total.costUsd,
+      cacheRead: total.cacheRead,
+      cacheSavedUsd: total.cacheSavedUsd,
       providers: Object.fromEntries(providers),
     }
   })

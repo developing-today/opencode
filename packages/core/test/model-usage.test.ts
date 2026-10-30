@@ -11,6 +11,7 @@ const totals = (overrides: Partial<ModelUsage.Totals> = {}): ModelUsage.Totals =
   cacheRead: 0,
   cacheWrite: 0,
   costUsd: 0.01,
+  cacheSavedUsd: 0,
   ...overrides,
 })
 
@@ -43,6 +44,29 @@ describe("ModelUsage", () => {
     expect(ModelUsage.usedOf("messages", row)).toBe(1)
     expect(ModelUsage.usedOf("usd", row)).toBe(0.01)
     expect(ModelUsage.usedOf("percent", row)).toBeNull()
+  })
+
+  test("cache hit ratio is cache reads over all prompt tokens, null only when there were no prompt tokens", () => {
+    expect(ModelUsage.cacheHitRatio(totals({ input: 100, cacheRead: 100, cacheWrite: 0 }))).toBe(0.5)
+    expect(ModelUsage.cacheHitRatio(totals({ input: 60, cacheRead: 30, cacheWrite: 10 }))).toBe(0.3)
+    // Zero-cache case: traffic with no cache reads is a real 0, not unknown.
+    expect(ModelUsage.cacheHitRatio(totals({ input: 100, cacheRead: 0, cacheWrite: 0 }))).toBe(0)
+    expect(ModelUsage.cacheHitRatio(totals({ input: 0, cacheRead: 0, cacheWrite: 0 }))).toBeNull()
+  })
+
+  test("sum and day reports aggregate cache savings alongside cost", () => {
+    const total = ModelUsage.sum([
+      totals({ cacheRead: 10, cacheSavedUsd: 0.25 }),
+      totals({ cacheRead: 5, cacheSavedUsd: 0.5 }),
+    ])
+    expect(total.cacheRead).toBe(15)
+    expect(total.cacheSavedUsd).toBeCloseTo(0.75)
+    const days = ModelUsage.dayReports([
+      { day: "2026-10-13", providerID: "openai", modelID: "a", ...totals({ cacheRead: 40, cacheSavedUsd: 0.4 }) },
+      { day: "2026-10-13", providerID: "openai", modelID: "b", ...totals({ cacheRead: 10, cacheSavedUsd: 0.1 }) },
+    ])
+    expect(days[0]).toMatchObject({ cacheRead: 50, cacheSavedUsd: 0.5 })
+    expect(days[0]?.providers["openai"]).toMatchObject({ cacheRead: 50, cacheSavedUsd: 0.5 })
   })
 
   test("percent needs a positive limit", () => {
@@ -226,14 +250,14 @@ describe("ModelUsage", () => {
     expect(day?.requests).toBe(18)
     expect(Object.keys(day?.providers ?? {})).toEqual(["__proto__", "constructor", "toString", "anthropic"])
     // Each default totals() row meters 150 (100 input + 50 output).
-    expect(day?.providers["__proto__"]).toEqual({ requests: 8, metered: 300, costUsd: 1.5 })
-    expect(day?.providers["constructor"]).toEqual({ requests: 5, metered: 150, costUsd: 2 })
-    expect(day?.providers["toString"]).toEqual({ requests: 3, metered: 150, costUsd: 3 })
-    expect(day?.providers["anthropic"]).toEqual({ requests: 2, metered: 150, costUsd: 4 })
+    expect(day?.providers["__proto__"]).toEqual({ requests: 8, metered: 300, costUsd: 1.5, cacheRead: 0, cacheSavedUsd: 0 })
+    expect(day?.providers["constructor"]).toEqual({ requests: 5, metered: 150, costUsd: 2, cacheRead: 0, cacheSavedUsd: 0 })
+    expect(day?.providers["toString"]).toEqual({ requests: 3, metered: 150, costUsd: 3, cacheRead: 0, cacheSavedUsd: 0 })
+    expect(day?.providers["anthropic"]).toEqual({ requests: 2, metered: 150, costUsd: 4, cacheRead: 0, cacheSavedUsd: 0 })
     const serialised = JSON.parse(JSON.stringify(day?.providers))
     expect(Object.keys(serialised)).toEqual(["__proto__", "constructor", "toString", "anthropic"])
-    expect(serialised["__proto__"]).toEqual({ requests: 8, metered: 300, costUsd: 1.5 })
-    expect(serialised["constructor"]).toEqual({ requests: 5, metered: 150, costUsd: 2 })
+    expect(serialised["__proto__"]).toEqual({ requests: 8, metered: 300, costUsd: 1.5, cacheRead: 0, cacheSavedUsd: 0 })
+    expect(serialised["constructor"]).toEqual({ requests: 5, metered: 150, costUsd: 2, cacheRead: 0, cacheSavedUsd: 0 })
   })
 
   test("turns stitch a response split by output token limit continuations into one cost", () => {

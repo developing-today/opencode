@@ -162,6 +162,65 @@ test("calculates step cost using the matching context tier", () => {
   ).toBeCloseTo(0.0002926)
 })
 
+test("calculates cache savings as cache reads at the input price minus the cache-read price", () => {
+  const costs = [
+    {
+      input: Money.USDPerMillionTokens.make(3),
+      output: Money.USDPerMillionTokens.make(15),
+      cache: {
+        read: Money.USDPerMillionTokens.make(0.3),
+        write: Money.USDPerMillionTokens.make(3.75),
+      },
+    },
+  ]
+  // 1M cache-read tokens: (3 - 0.3) USD saved.
+  expect(
+    SessionUsage.calculateCacheSavings(costs, {
+      input: 0,
+      output: 0,
+      reasoning: 0,
+      cache: { read: 1_000_000, write: 0 },
+    }),
+  ).toBeCloseTo(2.7)
+  // Zero-cache case: no cache reads, no savings, whatever the prices.
+  expect(
+    SessionUsage.calculateCacheSavings(costs, {
+      input: 1_000_000,
+      output: 0,
+      reasoning: 0,
+      cache: { read: 0, write: 0 },
+    }),
+  ).toBe(Money.USD.zero)
+})
+
+test("cache savings use the same context tier as step cost", () => {
+  expect(
+    SessionUsage.calculateCacheSavings(
+      [
+        {
+          input: Money.USDPerMillionTokens.make(1),
+          output: Money.USDPerMillionTokens.make(2),
+          cache: {
+            read: Money.USDPerMillionTokens.make(0.1),
+            write: Money.USDPerMillionTokens.make(0.5),
+          },
+        },
+        {
+          tier: { type: "context", size: 100 },
+          input: Money.USDPerMillionTokens.make(3),
+          output: Money.USDPerMillionTokens.make(4),
+          cache: {
+            read: Money.USDPerMillionTokens.make(0.2),
+            write: Money.USDPerMillionTokens.make(0.6),
+          },
+        },
+      ],
+      // Context is 101, so the tier applies: 20 cache reads x (3 - 0.2) / 1M.
+      { input: 80, output: 10, reasoning: 2, cache: { read: 20, write: 1 } },
+    ),
+  ).toBeCloseTo(0.000056)
+})
+
 test("ignores malformed model cost fields", () => {
   const costs = [
     {
