@@ -32,6 +32,25 @@ export class NotFoundError extends Schema.TaggedError<NotFoundError>()("Shell.No
 const EXITED_LIMIT = 25
 export const RETENTION = Duration.days(7)
 export const DIRECTORY = "shell"
+export const DEFAULT_OUTPUT_LIMIT = 65536
+
+/**
+ * Paging inputs at the service boundary. Callers reach the service directly (in-process, plugins), so a cursor or
+ * limit may arrive unvalidated even though the HTTP schema restricts both to NonNegativeInt: non-finite or negative
+ * values mean "absent" and take the defaults, anything else is floored to an integer. The limit has no upper clamp —
+ * valid callers page with limits above the default (session shell reads 1 MiB, result() reads the configured
+ * max_bytes) and must stay byte-identical — but 0 clamps up to a 1-byte page so paging always advances, matching the
+ * pageLimit convention in messaging.ts (#949). The returned cursor is therefore always a NonNegativeInt.
+ */
+function outputCursor(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return 0
+  return Math.floor(value)
+}
+
+function outputLimit(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return DEFAULT_OUTPUT_LIMIT
+  return Math.max(Math.floor(value), 1)
+}
 
 type Info = Shell.Info
 type CreateInput = Shell.CreateInput & {
@@ -197,10 +216,10 @@ const layer = () =>
 
       const output = Effect.fnUntraced(function* (id: Shell.ID, input?: Shell.OutputInput) {
         const command = yield* require(id)
-        const cursor = input?.cursor ?? 0
-        const limit = input?.limit ?? 65536
+        const cursor = outputCursor(input?.cursor)
+        const limit = outputLimit(input?.limit)
         if (cursor >= command.size) return { output: "", cursor: command.size, size: command.size, truncated: false }
-        const start = Math.max(0, cursor)
+        const start = cursor
         const length = Math.min(limit, command.size - start)
         const buffer = Buffer.alloc(length)
         const bytesRead = yield* Effect.promise(
