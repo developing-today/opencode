@@ -2627,7 +2627,7 @@ async function json(response: Response): Promise<unknown> {
   const declared = Number(response.headers.get("content-length"))
   if (Number.isFinite(declared) && declared > maxJsonBodyBytes) {
     try {
-      await response.body?.cancel()
+      void response.body?.cancel()?.catch(() => {})
     } catch {}
     throw new ClientError("ResponseTooLarge")
   }
@@ -2653,7 +2653,7 @@ async function json(response: Response): Promise<unknown> {
         }
       } finally {
         try {
-          await reader.cancel()
+          void reader.cancel().catch(() => {})
         } catch {}
         reader.releaseLock()
       }
