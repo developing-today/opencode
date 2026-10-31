@@ -415,6 +415,56 @@ test("syncing a nested subagent by ID also loads its ancestors (#631)", async ()
   }
 })
 
+test("retries the ancestor walk on the next sync after a parent read failed", async () => {
+  const failures = { root: 1 }
+  const rootGets: string[] = []
+  const info = (id: string, parentID?: string): SessionInfo => ({ ...session(0), id, parentID })
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      if (url.pathname === "/api/session/ses_grandchild")
+        return Response.json({ data: info("ses_grandchild", "ses_child") })
+      if (url.pathname === "/api/session/ses_child") return Response.json({ data: info("ses_child", "ses_root") })
+      if (url.pathname === "/api/session/ses_root") {
+        rootGets.push("get")
+        if (failures.root > 0) {
+          failures.root--
+          return new Response(null, { status: 500 })
+        }
+        return Response.json({ data: info("ses_root") })
+      }
+      // No children anywhere: the family is just the ancestor chain.
+      return Response.json({ data: [], cursor: {} })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    await setup.data.session.sync("ses_grandchild", { children: true })
+    expect(setup.data.session.get("ses_root")).toBeUndefined()
+    // The root resolves by parent link but its info is still missing, so the
+    // family groups tentatively without it.
+    expect(setup.data.session.root("ses_grandchild")).toBe("ses_root")
+    expect(setup.data.session.family("ses_grandchild").toSorted()).toEqual(["ses_child", "ses_grandchild"])
+
+    await setup.data.session.sync("ses_grandchild", { children: true })
+    expect(rootGets).toHaveLength(2)
+    expect(setup.data.session.get("ses_root")?.id).toBe("ses_root")
+    expect(setup.data.session.root("ses_grandchild")).toBe("ses_root")
+    expect(setup.data.session.family("ses_grandchild").toSorted()).toEqual([
+      "ses_child",
+      "ses_grandchild",
+      "ses_root",
+    ])
+  } finally {
+    setup.dispose()
+  }
+})
+
 test("lists a branch again on the next sync after its listing failed", async () => {
   const failures = { left: 1 }
   const info = (id: string, parentID?: string): SessionInfo => ({ ...session(0), id, parentID })
