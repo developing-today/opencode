@@ -1795,8 +1795,18 @@ export function createData(config: CreateDataInput) {
           // mid-walk (a live event refresh, another sync) and is newer than the snapshot the
           // walk holds, so publish only the ancestors the store still lacks (#1038) -- the
           // same fill-only rule publishSessions applies to a stale generation.
+          // The target itself has the same exposure on a family sync (#1051): it runs under
+          // the family key, so a plain sync of the target runs concurrently under its own
+          // key, and one that publishes during the ancestor walk holds a newer snapshot
+          // than this sync's first read. Guard the target the way children are guarded --
+          // a plain sync does not need the guard, since its own key is the one `unread`
+          // checks and its read is by construction the covering one.
           publishSessions(
-            [info, ...ancestors.filter((ancestor) => !store.session.info[ancestor.id]), ...children.filter(unread)],
+            [
+              ...(options?.children ? [info].filter(unread) : [info]),
+              ...ancestors.filter((ancestor) => !store.session.info[ancestor.id]),
+              ...children.filter(unread),
+            ],
             generation,
           )
           // A walk that skipped a failed branch is not kept, so the next sync lists the tree again.
