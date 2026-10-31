@@ -465,6 +465,67 @@ test("retries the ancestor walk on the next sync after a parent read failed", as
   }
 })
 
+test("family sync does not overwrite an ancestor updated during the walk (#1038)", async () => {
+  const walk = Promise.withResolvers<void>()
+  const listeners = new Set<Parameters<CreateDataInput["event"]["listen"]>[0]>()
+  let parentReads = 0
+  const info = (id: string, parentID?: string, title?: string): SessionInfo => ({ ...session(0), id, parentID, title })
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      if (url.pathname === "/api/session/ses_child") return Response.json({ data: info("ses_child", "ses_parent") })
+      if (url.pathname === "/api/session/ses_grandparent") return Response.json({ data: info("ses_grandparent") })
+      if (url.pathname === "/api/session/ses_parent") {
+        parentReads++
+        // The read the walk makes is held open; a read the rename refresh makes
+        // returns the same snapshot and the event applies the new title after.
+        if (parentReads === 1) await walk.promise
+        return Response.json({ data: info("ses_parent", "ses_grandparent", "Walk snapshot title") })
+      }
+      return Response.json({ data: [], cursor: {} })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({
+      api: () => api,
+      directory: "/project",
+      event: {
+        on: () => () => {},
+        listen(handler) {
+          listeners.add(handler)
+          return () => listeners.delete(handler)
+        },
+      },
+    }),
+    dispose,
+  }))
+
+  try {
+    const initial = setup.data.session.sync("ses_child", { children: true })
+    await wait(() => parentReads === 1)
+    const event: OpenCodeEvent = {
+      id: "evt_renamed",
+      created: 1,
+      type: "session.renamed",
+      durable: { aggregateID: "ses_parent", seq: 1, version: 1 },
+      data: { sessionID: "ses_parent", title: "Generated title" },
+    }
+    listeners.forEach((listener) => listener({ name: event.type, details: event }))
+    // The rename refresh loads ses_parent and applies the live title while the
+    // family walk is still holding its older snapshot of that ancestor.
+    await wait(() => setup.data.session.get("ses_parent")?.title === "Generated title")
+    walk.resolve()
+    await initial
+
+    expect(setup.data.session.get("ses_parent")?.title).toBe("Generated title")
+    expect(setup.data.session.get("ses_grandparent")?.id).toBe("ses_grandparent")
+  } finally {
+    walk.resolve()
+    setup.dispose()
+  }
+})
+
 test("lists a branch again on the next sync after its listing failed", async () => {
   const failures = { left: 1 }
   const info = (id: string, parentID?: string): SessionInfo => ({ ...session(0), id, parentID })
