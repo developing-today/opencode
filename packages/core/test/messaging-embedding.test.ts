@@ -327,6 +327,18 @@ function fakeOpenAI() {
   return { server, requests, url: `http://127.0.0.1:${server.port}/v1/` }
 }
 
+function fakeEndpoint(respond: () => Response) {
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(request) {
+      await request.text()
+      return respond()
+    },
+  })
+  return { server, url: `http://127.0.0.1:${server.port}/v1/` }
+}
+
 const service = Effect.fn("test.service")(function* () {
   const dir = (yield* tmpdirScoped()).path
   const context = yield* Layer.build(
@@ -417,6 +429,88 @@ describe("MessagingEmbedding.Service", () => {
       expect(fake.requests.map((request) => request.body.input[0])).toEqual(["q: hello", "hello"])
       expect(fake.requests[0]?.body.dimensions).toBe(3)
       expect(fake.requests[0]?.authorization).toBeNull()
+    }),
+  )
+
+  it.live("surfaces a small remote error body in the failure", () =>
+    Effect.gen(function* () {
+      const fake = yield* Effect.acquireRelease(
+        Effect.sync(() => fakeEndpoint(() => new Response("remote exploded: bad key", { status: 400 }))),
+        (fixture) => Effect.promise(() => fixture.server.stop(true)),
+      )
+      const embedding = yield* service()
+      yield* embedding.configure({ tier: "off", remote: { url: fake.url, model: "m" } })
+      const error = yield* Effect.flip(embedding.embed(["hello"], "query"))
+      expect(error).toBeInstanceOf(MessagingEmbedding.UnavailableError)
+      expect(error.message).toContain("HTTP 400")
+      expect(error.message).toContain("remote exploded: bad key")
+    }),
+  )
+
+  it.live("degrades an oversized declared error body to the status-only error", () =>
+    Effect.gen(function* () {
+      const oversized = "e".repeat(MessagingEmbedding.embeddingErrorMaxResponseBytes + 4096)
+      const fake = yield* Effect.acquireRelease(
+        Effect.sync(() => fakeEndpoint(() => new Response(oversized, { status: 400 }))),
+        (fixture) => Effect.promise(() => fixture.server.stop(true)),
+      )
+      const embedding = yield* service()
+      yield* embedding.configure({ tier: "off", remote: { url: fake.url, model: "m" } })
+      const error = yield* Effect.flip(embedding.embed(["hello"], "query"))
+      expect(error).toBeInstanceOf(MessagingEmbedding.UnavailableError)
+      expect(error.message).toContain("HTTP 400")
+      // The whole body must not be buffered just to show 500 chars: no run of body text survives.
+      expect(error.message).not.toContain("e".repeat(500))
+    }),
+  )
+
+  it.live("degrades an oversized streamed error body to the status-only error", () =>
+    Effect.gen(function* () {
+      const total = MessagingEmbedding.embeddingErrorMaxResponseBytes + 16384
+      const fake = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          fakeEndpoint(() => {
+            let sent = 0
+            const stream = new ReadableStream<Uint8Array>({
+              pull(controller) {
+                if (sent >= total) {
+                  controller.close()
+                  return
+                }
+                const chunk = new Uint8Array(1024).fill(101)
+                sent += chunk.byteLength
+                controller.enqueue(chunk)
+              },
+            })
+            return new Response(stream, { status: 400, headers: { "content-type": "text/plain" } })
+          }),
+        ),
+        (fixture) => Effect.promise(() => fixture.server.stop(true)),
+      )
+      const embedding = yield* service()
+      yield* embedding.configure({ tier: "off", remote: { url: fake.url, model: "m" } })
+      const error = yield* Effect.flip(embedding.embed(["hello"], "query"))
+      expect(error).toBeInstanceOf(MessagingEmbedding.UnavailableError)
+      expect(error.message).toContain("HTTP 400")
+      expect(error.message).not.toContain("e".repeat(500))
+    }),
+  )
+
+  it.live("fails cleanly on an oversized success body", () =>
+    Effect.gen(function* () {
+      // A syntactically valid embeddings payload larger than the success cap (~18 MiB of JSON floats).
+      const huge = `{"data":[{"index":0,"embedding":[${"0,".repeat(9_000_000)}0]}]}`
+      const fake = yield* Effect.acquireRelease(
+        Effect.sync(
+          () => fakeEndpoint(() => new Response(huge, { headers: { "content-type": "application/json" } })),
+        ),
+        (fixture) => Effect.promise(() => fixture.server.stop(true)),
+      )
+      const embedding = yield* service()
+      yield* embedding.configure({ tier: "off", remote: { url: fake.url, model: "m" } })
+      const error = yield* Effect.flip(embedding.embed(["hello"], "query"))
+      expect(error).toBeInstanceOf(MessagingEmbedding.UnavailableError)
+      expect(error.message).toContain(`embeddings response exceeded ${MessagingEmbedding.embeddingMaxResponseBytes} bytes`)
     }),
   )
 })

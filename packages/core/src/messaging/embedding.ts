@@ -7,7 +7,7 @@ import net from "node:net"
 import os from "node:os"
 import path from "node:path"
 import { Context, Deferred, Duration, Effect, Fiber, Latch, Layer, Schedule, Schema, Semaphore, Stream } from "effect"
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
+import { HttpClient, HttpClientRequest } from "effect/http"
 import { ChildProcess } from "effect/process"
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner"
 import { ConfigMessaging } from "@opencode/schema/config/messaging"
@@ -16,6 +16,7 @@ import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { httpClient } from "@opencode/util/effect/app-node-platform"
 import { Global } from "@opencode/util/global"
+import { collectBoundedResponseBody } from "../tool/http-body.js"
 import { which } from "../util/which.js"
 
 export class UnavailableError extends Schema.TaggedError<UnavailableError>()("Messaging.EmbeddingUnavailableError", {
@@ -143,6 +144,14 @@ const BATCH = 32
 const MAX_CHARS = 8000
 /** Upper bound for one embeddings request; a full batch of long documents on a slow CPU stays well under it. */
 const REQUEST_TIMEOUT = "60 seconds"
+/** Cap on a non-200 embeddings error body (#1079): only the first 500 chars are ever shown, so the 64 KiB OAuth-error precedent (#1029) is generous headroom. */
+export const embeddingErrorMaxResponseBytes = 64 * 1024
+/**
+ * Cap on a 200 embeddings response body (#1079): one request batches BATCH inputs and each vector has at
+ * most 4096 dimensions (the largest local tier), so 32 x 4096 JSON floats at ~24 bytes each is ~3.2 MiB;
+ * 16 MiB gives ~5x headroom and matches the house 16 MiB body caps.
+ */
+export const embeddingMaxResponseBytes = 16 * 1024 * 1024
 
 // Hardware facts the tier gate depends on, kept separate from detection so the gate is testable.
 export interface Hardware {
@@ -675,12 +684,34 @@ const layer = (options: Options) =>
           const base = HttpClientRequest.post(`${target.url}/embeddings`).pipe(HttpClientRequest.bodyJsonUnsafe(body))
           const response = yield* http.execute(target.key ? HttpClientRequest.bearerToken(base, target.key) : base)
           if (response.status !== 200) {
-            const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""))
+            // Bounded read (#1079): an over-cap error body degrades to the status-only error below
+            // (empty text) instead of buffering whole; small bodies still surface their first 500 chars.
+            const text = yield* Effect.scoped(
+              collectBoundedResponseBody(
+                response,
+                embeddingErrorMaxResponseBytes,
+                () => new Error(`embeddings error response exceeded ${embeddingErrorMaxResponseBytes} bytes`),
+              ),
+            ).pipe(
+              Effect.map((body) => body.toString("utf8")),
+              Effect.orElseSucceed(() => ""),
+            )
             return yield* Effect.fail(
               new Error(`HTTP ${response.status} from ${target.url}/embeddings: ${text.slice(0, 500)}`),
             )
           }
-          const decoded = yield* HttpClientResponse.schemaBodyJson(EmbeddingResponse)(response)
+          // Bounded read (#1079): collect the body under the cap first (declared-length pre-check plus
+          // in-flight bound), then decode the bounded bytes instead of schemaBodyJson on the raw response.
+          const raw = yield* Effect.scoped(
+            collectBoundedResponseBody(
+              response,
+              embeddingMaxResponseBytes,
+              () => new Error(`embeddings response exceeded ${embeddingMaxResponseBytes} bytes`),
+            ),
+          )
+          const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(EmbeddingResponse))(
+            raw.toString("utf8"),
+          )
           if (decoded.data.length !== input.length)
             return yield* Effect.fail(new Error(`expected ${input.length} embeddings, got ${decoded.data.length}`))
           return decoded.data
