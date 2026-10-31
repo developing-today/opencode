@@ -579,6 +579,79 @@ test("family sync does not overwrite its target updated during the walk (#1051)"
   }
 })
 
+test("family sync retries its target when the covering plain sync fails (#1053)", async () => {
+  const walk = Promise.withResolvers<void>()
+  const cover = Promise.withResolvers<void>()
+  let parentReads = 0
+  let childGets = 0
+  const info = (id: string, parentID: string | undefined, directory: string): SessionInfo => ({
+    ...session(0),
+    id,
+    parentID,
+    location: { directory },
+  })
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      if (url.pathname === "/api/session/ses_child") {
+        childGets++
+        // The first read publishes the pre-walk snapshot; the family sync's read
+        // holds the newer one; the covering plain sync's read is held, then fails.
+        if (childGets === 1) return Response.json({ data: info("ses_child", "ses_parent", "/old") })
+        if (childGets === 2) return Response.json({ data: info("ses_child", "ses_parent", "/mid") })
+        if (childGets === 3) {
+          await cover.promise
+          return new Response(null, { status: 500 })
+        }
+        return Response.json({ data: info("ses_child", "ses_parent", "/mid") })
+      }
+      if (url.pathname === "/api/session/ses_parent") {
+        parentReads++
+        await walk.promise
+        return Response.json({ data: info("ses_parent", undefined, "/project") })
+      }
+      return Response.json({ data: [], cursor: {} })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    await setup.data.session.sync("ses_child")
+    expect(setup.data.session.get("ses_child")?.location.directory).toBe("/old")
+    setup.data.session.invalidate("ses_child")
+
+    const family = setup.data.session.sync("ses_child", { children: true })
+    await wait(() => parentReads === 1)
+    // A concurrent plain sync (a different sync key than the family sync) starts
+    // its covering read while the walk is held, and is still in flight when the
+    // family sync publishes, so the family sync drops its /mid snapshot.
+    const covering = setup.data.session.sync("ses_child")
+    await wait(() => childGets === 3)
+    walk.resolve()
+    await family
+    expect(setup.data.session.get("ses_child")?.location.directory).toBe("/old")
+
+    // The covering read fails and publishes nothing.
+    cover.resolve()
+    await expect(covering).rejects.toThrow()
+
+    // The family key was not kept, so the next family sync re-reads the target
+    // instead of no-oping on the completed family key, and the target recovers
+    // to the snapshot the failed covering read never replaced.
+    await setup.data.session.sync("ses_child", { children: true })
+    expect(childGets).toBeGreaterThan(3)
+    expect(setup.data.session.get("ses_child")?.location.directory).toBe("/mid")
+  } finally {
+    walk.resolve()
+    cover.resolve()
+    setup.dispose()
+  }
+})
+
 test("lists a branch again on the next sync after its listing failed", async () => {
   const failures = { left: 1 }
   const info = (id: string, parentID?: string): SessionInfo => ({ ...session(0), id, parentID })

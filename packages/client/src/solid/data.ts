@@ -570,8 +570,12 @@ export function createData(config: CreateDataInput) {
   // its children as soon as it resolves, and every walk shares one listing limit. `seen` holds the sessions
   // already listed, so every session is listed once and a parent cycle still ends the walk. Below the direct
   // children the walk is best effort: a branch whose listing fails is left to live events rather than failing
-  // the sync and closing the view. The walk resolves to whether every listing succeeded.
-  async function syncDescendants(parents: SessionInfo[], seen: Set<string>): Promise<boolean> {
+  // the sync and closing the view. The walk resolves to whether every listing succeeded, and whether any
+  // listed snapshot was dropped only for a covering read still in flight (#1053).
+  async function syncDescendants(
+    parents: SessionInfo[],
+    seen: Set<string>,
+  ): Promise<{ complete: boolean; droppedPending: boolean }> {
     const branches = await Promise.all(
       parents
         .filter((parent) => {
@@ -584,13 +588,18 @@ export function createData(config: CreateDataInput) {
           const listed = await descendantListing(() =>
             listChildren({ parentID: parent.id, order: "desc", limit: CHILD_PAGE }),
           ).catch(() => undefined)
-          if (!listed) return false
+          if (!listed) return { complete: false, droppedPending: false }
           const children = listed.filter((child) => !seen.has(child.id))
+          const droppedPending = children.some(pendingCover)
           publishSessions(children.filter(unread), generation)
-          return syncDescendants(children, seen)
+          const nested = await syncDescendants(children, seen)
+          return { complete: nested.complete, droppedPending: droppedPending || nested.droppedPending }
         }),
     )
-    return branches.every(Boolean)
+    return {
+      complete: branches.every((branch) => branch.complete),
+      droppedPending: branches.some((branch) => branch.droppedPending),
+    }
   }
 
   // A listing fills in a session this client holds no info for, even while that session's own read is in flight: if
@@ -600,6 +609,14 @@ export function createData(config: CreateDataInput) {
   // replace it.
   function unread(session: SessionInfo) {
     return !store.session.info[session.id] || !sync.current(`session:${session.id}`)
+  }
+
+  // A snapshot `unread` drops only because a covering read is still in flight is not
+  // safely covered (#1053): that read may fail and publish nothing, leaving the older
+  // snapshot in the store with nobody set to replace it. A covering read that has
+  // already settled has published, so a snapshot it displaced is not at risk.
+  function pendingCover(session: SessionInfo) {
+    return !unread(session) && sync.pending(`session:${session.id}`)
   }
 
   // `generation` is the sync generation when the snapshot was requested. One requested before the latest full
@@ -1801,6 +1818,10 @@ export function createData(config: CreateDataInput) {
           // than this sync's first read. Guard the target the way children are guarded --
           // a plain sync does not need the guard, since its own key is the one `unread`
           // checks and its read is by construction the covering one.
+          // The target and the direct children have the same exposure as the listed
+          // descendants in syncDescendants: a snapshot dropped only because a covering
+          // read is still in flight may never be replaced if that read fails (#1053).
+          const droppedPending = options?.children ? [info, ...children].some(pendingCover) : false
           publishSessions(
             [
               ...(options?.children ? [info].filter(unread) : [info]),
@@ -1810,9 +1831,15 @@ export function createData(config: CreateDataInput) {
             generation,
           )
           // A walk that skipped a failed branch is not kept, so the next sync lists the tree again.
-          const descendantsComplete =
-            !options?.children || (await syncDescendants(children, new Set([sessionID])))
-          if (options?.children && (!ancestorsComplete || !descendantsComplete))
+          // The same applies to a walk that dropped a snapshot for a covering read still
+          // in flight: it is not kept, so the next sync re-reads the dropped session.
+          const descendants = options?.children
+            ? await syncDescendants(children, new Set([sessionID]))
+            : { complete: true, droppedPending: false }
+          if (
+            options?.children &&
+            (!ancestorsComplete || !descendants.complete || descendants.droppedPending || droppedPending)
+          )
             sync.invalidate(`session.family:${sessionID}`)
         })
       },
