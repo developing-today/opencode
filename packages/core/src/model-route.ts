@@ -385,9 +385,11 @@ export const failed = (
     // target's next bench (#1034).
     for (const failure of recentFailures) {
       const prior = health.get(failure.target) ?? credentialHealth.get(failure.target)
-      if (prior && prior.cooldownUntil > now) {
-        prior.cooldownUntil = 0
-        prior.samples = []
+      if (prior) {
+        if (prior.cooldownUntil > now) {
+          prior.cooldownUntil = 0
+          prior.samples = []
+        }
         prior.consecutiveFailures = 0
       }
     }
