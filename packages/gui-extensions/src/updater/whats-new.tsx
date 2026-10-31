@@ -18,7 +18,7 @@ const CHANGELOG_URL = "https://opencode.ai/changelog.json"
  */
 export const changelogMaxResponseBytes = 1024 * 1024
 
-const readBoundedChangelogText = async (response: Response): Promise<string> => {
+export const readBoundedChangelogText = async (response: Response): Promise<string> => {
   const tooLarge = () => new Error(`Changelog response exceeded ${changelogMaxResponseBytes} bytes`)
   const contentLength = response.headers.get("content-length")
   const parsedSize = contentLength ? Number.parseInt(contentLength, 10) : undefined
