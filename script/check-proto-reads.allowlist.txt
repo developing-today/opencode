@@ -8,8 +8,6 @@
 # internal-only keys, vendored code, or tracked by an open issue.
 packages/core/src/aisdk-native.ts :: const hostTable = (providerID: string) => (Object.hasOwn(HOSTS, providerID) ? HOSTS[providerID] : undefined) :: guarded: Object.hasOwn ternary at the same site (#774)
 packages/core/src/aisdk-native.ts :: return Object.hasOwn(PACKAGES, npm) ? PACKAGES[npm] : undefined :: guarded: Object.hasOwn ternary at the same site (#774)
-packages/core/src/aisdk.ts :: LLMEvent.toolInputDelta({ id: event.id, name: state.toolNames[event.id] ?? "unknown", text: event.delta }), :: internal: state map keyed by provider event ids and written by own code before any read; ids are provider-assigned, not user text
-packages/core/src/aisdk.ts :: name: state.toolNames[event.id] ?? "unknown", :: internal: state map keyed by provider event ids and written by own code before any read; ids are provider-assigned, not user text
 packages/core/src/codemode/catalog.ts :: const namespaces = [...Map.groupBy(flattened.tools, (tool) => tool.path.split(".", 1)[0] ?? tool.path)] :: safe: numeric [0] index into the array returned by String.split at the same site, not a dictionary read (#1086)
 packages/core/src/database/drizzle/internal/drizzle-utils.ts :: node[pathChunk] = (node[pathChunk] ?? {}) as Record<string, unknown> :: vendored: drizzle internal; path chunks come from the schema and the read seeds a fresh node object
 packages/core/src/database/v1-migration.bun.ts :: .map((name) => `\`${name}\` is now \`${RENAMED_TOOLS[name]}\``) :: safe: names derived from Object.keys(RENAMED_TOOLS), own keys only (#833)
