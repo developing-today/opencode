@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test"
 import { createHash } from "node:crypto"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
+import { createServer } from "node:http"
 import path from "node:path"
 import { Context, Effect, Exit, Layer, Schema } from "effect"
 import { FetchHttpClient } from "effect/http"
@@ -96,6 +97,23 @@ describe("MessagingEmbedding.resolve", () => {
     }),
   )
 
+  it.effect("does not carry configured integrity metadata to a different override url", () =>
+    Effect.sync(() => {
+      const config = { url: "https://example.com/a/model.gguf", sha256: "abc123", size: 123_456 }
+      const different = MessagingEmbedding.resolve(config, {
+        OPENCODE_EMBEDDING: "https://example.com/b/other.gguf",
+      }).local
+      expect(different?.url).toBe("https://example.com/b/other.gguf")
+      expect(different?.sha256).toBeUndefined()
+      expect(different?.size).toBeUndefined()
+      const same = MessagingEmbedding.resolve(config, {
+        OPENCODE_EMBEDDING: "https://example.com/a/model.gguf",
+      }).local
+      expect(same?.sha256).toBe("abc123")
+      expect(same?.size).toBe(123_456)
+    }),
+  )
+
   it.effect("applies environment overrides", () =>
     Effect.sync(() => {
       expect(MessagingEmbedding.resolve("default", { OPENCODE_DISABLE_EMBEDDING: "1" }).local).toBeUndefined()
@@ -138,6 +156,32 @@ function rangeServer(body: Uint8Array, options: { ranges: boolean }) {
   })
   return { server, seen, url: `http://127.0.0.1:${server.port}/model.gguf` }
 }
+
+// Serves a tiny body under a declared content-length of `total`: download() must reject the
+// declared length from the headers alone, so no multi-GiB body ever crosses the wire.
+function declaredServer(total: number) {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-length": String(total) })
+    response.end(new Uint8Array(10))
+  })
+  return new Promise<{ server: typeof server; url: string }>((resolvePromise) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address()
+      const port = typeof address === "object" && address ? address.port : 0
+      resolvePromise({ server, url: `http://127.0.0.1:${port}/model.gguf` })
+    })
+  })
+}
+
+const declared = (total: number) =>
+  Effect.acquireRelease(
+    Effect.promise(() => declaredServer(total)),
+    (fixture) =>
+      Effect.sync(() => {
+        fixture.server.closeAllConnections()
+        fixture.server.close()
+      }),
+  )
 
 const served = (body: Uint8Array, options: { ranges: boolean }) =>
   Effect.acquireRelease(
@@ -287,6 +331,43 @@ describe("MessagingEmbedding.download", () => {
       // before the whole 500,000-byte body was consumed.
       expect(Math.max(0, ...updates)).toBeLessThanOrEqual(payload.byteLength)
       expect(Math.max(0, ...updates)).toBeLessThan(oversized.byteLength)
+      expect(yield* Effect.promise(() => Bun.file(`${dest}.part`).exists())).toBe(false)
+      expect(yield* Effect.promise(() => Bun.file(dest).exists())).toBe(false)
+    }),
+  )
+
+  it.live("checks the expected size even when the digest matches", () =>
+    Effect.gen(function* () {
+      const dir = (yield* tmpdirScoped()).path
+      const fixture = yield* served(payload, { ranges: false })
+      const dest = path.join(dir, "model.gguf")
+      const exit = yield* Effect.exit(
+        MessagingEmbedding.download({
+          url: fixture.url,
+          dest,
+          sha256: sha(payload),
+          size: payload.byteLength + 1,
+        }),
+      )
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(String(exit)).toContain("size mismatch")
+      expect(yield* Effect.promise(() => Bun.file(dest).exists())).toBe(false)
+    }),
+  )
+
+  it.live("fails fast at the production default cap on a declared length (no sha256, no size, no limit seam)", () =>
+    Effect.gen(function* () {
+      // The cap is a named constant sized above the largest built-in tier.
+      expect(MessagingEmbedding.MAX_UNKNOWN_SIZE_DOWNLOAD_BYTES).toBe(17_179_869_184)
+      expect(MessagingEmbedding.MAX_UNKNOWN_SIZE_DOWNLOAD_BYTES).toBeGreaterThan(
+        Math.max(...MessagingEmbedding.tiers.map((tier) => tier.size)),
+      )
+      const dir = (yield* tmpdirScoped()).path
+      const fixture = yield* declared(MessagingEmbedding.MAX_UNKNOWN_SIZE_DOWNLOAD_BYTES + 1)
+      const dest = path.join(dir, "model.gguf")
+      const exit = yield* Effect.exit(MessagingEmbedding.download({ url: fixture.url, dest }))
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(String(exit)).toContain("larger than expected")
       expect(yield* Effect.promise(() => Bun.file(`${dest}.part`).exists())).toBe(false)
       expect(yield* Effect.promise(() => Bun.file(dest).exists())).toBe(false)
     }),

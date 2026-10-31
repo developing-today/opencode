@@ -237,6 +237,9 @@ export function resolve(
     if (!file) return { remote, autostart, error: `Invalid embedding model URL: ${custom}` }
     const stem = file.replace(/\.gguf$/i, "")
     const qwen = file.toLowerCase().includes("qwen3-embedding")
+    // sha256/size pin the configured source only: an environment override that selects a different
+    // url or path must not inherit the configured model's integrity metadata.
+    const pinned = !override || (source.url === config.url && source.path === config.path) ? config : {}
     return {
       remote,
       autostart,
@@ -248,8 +251,8 @@ export function resolve(
         file,
         url: source.path ? undefined : source.url,
         path: source.path,
-        sha256: config.sha256,
-        size: config.size,
+        sha256: pinned.sha256,
+        size: pinned.size,
         pooling: config.pooling ?? (qwen ? "last" : "mean"),
         query: config.query ?? (qwen ? QWEN_QUERY : undefined),
         context: qwen ? 8192 : 512,
@@ -408,10 +411,11 @@ export const download = Effect.fn("MessagingEmbedding.download")(function* (inpu
 
 const finish = Effect.fnUntraced(function* (input: DownloadInput, part: string, hash: Hash, received: number) {
   const digest = input.sha256 ? hash.digest("hex") : undefined
+  // Digest and size are independent requirements: a matching digest does not excuse a wrong size.
   const failure =
     digest !== undefined && digest !== input.sha256
       ? `sha256 mismatch for ${input.url}: expected ${input.sha256}, got ${digest}`
-      : digest === undefined && input.size !== undefined && received !== input.size
+      : input.size !== undefined && received !== input.size
         ? `size mismatch for ${input.url}: expected ${input.size} bytes, got ${received}`
         : undefined
   if (failure) {
@@ -659,7 +663,19 @@ const layer = (options: Options) =>
         if (local.path) return local.path
         const dest = path.join(global.cache, "models", local.file)
         const present = yield* Effect.promise(() => exists(dest))
-        if (present) return dest
+        if (present) {
+          // A cached file is trusted only when it still matches the model's integrity metadata;
+          // a mismatch (or an unreadable file) is deleted and downloaded fresh, never served as-is.
+          const valid = yield* Effect.promise(async () => {
+            if (local.size !== undefined && (await stat(dest)).size !== local.size) return false
+            if (!local.sha256) return true
+            const hash = createHash("sha256")
+            await hashFile(dest, hash, new AbortController().signal)
+            return hash.digest("hex") === local.sha256
+          }).pipe(Effect.orElseSucceed(() => false))
+          if (valid) return dest
+          yield* Effect.promise(() => rm(dest, { force: true }))
+        }
         if (!local.url) return yield* Effect.fail(new Error(`No download URL for ${local.name}`))
         state.phase = "downloading"
         yield* download({
@@ -862,9 +878,18 @@ const layer = (options: Options) =>
       const select: Interface["select"] = Effect.fn("MessagingEmbedding.select")(function* (choice) {
         if (!choice.tier && !choice.url && !choice.path) return
         const current = typeof state.input === "string" ? { tier: state.input } : (state.input ?? {})
+        const currentUrl = "url" in current ? current.url : undefined
+        const currentPath = "path" in current ? current.path : undefined
+        // sha256/size pin one specific source file: replacing the source clears them, while
+        // re-selecting the identical url/path keeps them.
+        const replaces =
+          choice.tier !== undefined ||
+          ((choice.url !== undefined || choice.path !== undefined) &&
+            (choice.url !== currentUrl || choice.path !== currentPath))
         yield* configure(
           new ConfigMessaging.Embedding({
             ...current,
+            ...(replaces ? { sha256: undefined, size: undefined } : {}),
             ...(choice.tier ? { tier: choice.tier, url: undefined, path: undefined } : {}),
             ...(choice.url || choice.path ? { url: choice.url, path: choice.path } : {}),
           }),
