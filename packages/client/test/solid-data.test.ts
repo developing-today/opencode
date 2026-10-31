@@ -526,6 +526,59 @@ test("family sync does not overwrite an ancestor updated during the walk (#1038)
   }
 })
 
+test("family sync does not overwrite its target updated during the walk (#1051)", async () => {
+  const walk = Promise.withResolvers<void>()
+  let parentReads = 0
+  let childGets = 0
+  const info = (id: string, parentID: string | undefined, directory: string): SessionInfo => ({
+    ...session(0),
+    id,
+    parentID,
+    location: { directory },
+  })
+  const api = OpenCode.make({
+    baseUrl: "http://opencode.local",
+    fetch: async (input, init) => {
+      const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
+      if (url.pathname === "/api/session/ses_child") {
+        childGets++
+        // The family sync's first read sees the old location; every later read
+        // (the concurrent plain sync) sees the moved one.
+        return Response.json({ data: info("ses_child", "ses_parent", childGets === 1 ? "/old" : "/new") })
+      }
+      if (url.pathname === "/api/session/ses_parent") {
+        parentReads++
+        await walk.promise
+        return Response.json({ data: info("ses_parent", undefined, "/project") })
+      }
+      return Response.json({ data: [], cursor: {} })
+    },
+  })
+  const setup = createRoot((dispose) => ({
+    data: createData({ api: () => api, directory: "/project", event: { on: () => () => {}, listen: () => () => {} } }),
+    dispose,
+  }))
+
+  try {
+    const family = setup.data.session.sync("ses_child", { children: true })
+    await wait(() => parentReads === 1)
+    // A concurrent plain sync (a different sync key than the family sync)
+    // re-reads the moved target and publishes it while the walk is held.
+    await setup.data.session.sync("ses_child")
+    expect(setup.data.session.get("ses_child")?.location.directory).toBe("/new")
+    walk.resolve()
+    await family
+
+    // The family sync's older first-read snapshot must not revert the target,
+    // and the ancestor the walk read is still published.
+    expect(setup.data.session.get("ses_child")?.location.directory).toBe("/new")
+    expect(setup.data.session.get("ses_parent")?.id).toBe("ses_parent")
+  } finally {
+    walk.resolve()
+    setup.dispose()
+  }
+})
+
 test("lists a branch again on the next sync after its listing failed", async () => {
   const failures = { left: 1 }
   const info = (id: string, parentID?: string): SessionInfo => ({ ...session(0), id, parentID })
