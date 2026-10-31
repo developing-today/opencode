@@ -176,7 +176,13 @@ function poll(device: typeof Device.Type, app: App.Info): Effect.Effect<Token, u
         if (response.ok) return yield* decode(response, Token)
         const error = yield* readOAuthText(response).pipe(
           Effect.map((body) => Option.getOrUndefined(decodeDeviceError(body))),
-          Effect.orElseSucceed(() => undefined),
+          // An over-cap error body must surface the size-limit error itself,
+          // not be swallowed into the generic exchange failure below.
+          Effect.catch((cause) =>
+            cause instanceof Error && cause.message.includes("OAuth response exceeded")
+              ? Effect.fail(cause)
+              : Effect.succeed(undefined),
+          ),
         )
         if (error?.error === "authorization_pending") {
           return yield* Effect.sleep(interval + pollingSafetyMargin).pipe(Effect.andThen(loop(interval)))
