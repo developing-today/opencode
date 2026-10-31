@@ -58,10 +58,26 @@ describe("catalog identity fetch", () => {
     const fetcher = spyOn(globalThis, "fetch")
     const { loadCatalogIdentity } = await import(`./catalog-identity.ts?fetch=${Date.now()}-${Math.random()}`)
     try {
+      let readStarted!: () => void
+      const bodyReadStarted = new Promise<void>((resolve) => {
+        readStarted = resolve
+      })
       const controller = new AbortController()
       timeout.mockReturnValue(controller.signal)
-      fetcher.mockResolvedValue(new Response(new ReadableStream({ start() {} })))
+      fetcher.mockResolvedValue(
+        new Response(
+          new ReadableStream(
+            {
+              pull() {
+                readStarted()
+              },
+            },
+            { highWaterMark: 0 },
+          ),
+        ),
+      )
       const stalled = loadCatalogIdentity()
+      await bodyReadStarted
       controller.abort()
       expect((await stalled).stale).toBe(true)
 

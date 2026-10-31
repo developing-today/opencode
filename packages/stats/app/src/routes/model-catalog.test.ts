@@ -55,10 +55,30 @@ describe("model catalog fetch", () => {
     const fetcher = spyOn(globalThis, "fetch")
     const { loadModelCatalog } = await import(`./model-catalog.ts?fetch=${Date.now()}-${Math.random()}`)
     try {
+      let readStarted!: () => void
+      const bodyReadStarted = new Promise<void>((resolve) => {
+        readStarted = resolve
+      })
       const controller = new AbortController()
       timeout.mockReturnValue(controller.signal)
-      fetcher.mockImplementation(Object.assign(async () => new Response(new ReadableStream({ start() {} })), { preconnect: fetch.preconnect }))
+      fetcher.mockImplementation(
+        Object.assign(
+          async () =>
+            new Response(
+              new ReadableStream(
+                {
+                  pull() {
+                    readStarted()
+                  },
+                },
+                { highWaterMark: 0 },
+              ),
+            ),
+          { preconnect: fetch.preconnect },
+        ),
+      )
       const stalled = loadModelCatalog()
+      await bodyReadStarted
       controller.abort()
       expect((await stalled).models).toHaveLength(0)
 
