@@ -381,11 +381,14 @@ export const failed = (
   if (hint?.network && networkSuspect(now)) {
     // Undo the cooldowns from the earlier correlated transport errors too: those requests likely
     // shared the same local outage, so treating each provider as independently unhealthy is wrong.
+    // The escalation count is undone with the cooldown: a forgiven failure must not double the
+    // target's next bench (#1034).
     for (const failure of recentFailures) {
       const prior = health.get(failure.target) ?? credentialHealth.get(failure.target)
       if (prior && prior.cooldownUntil > now) {
         prior.cooldownUntil = 0
         prior.samples = []
+        prior.consecutiveFailures = 0
       }
     }
     logHealth(target, "network-suspect", "transport failures across unrelated providers; target cooldowns cleared")
