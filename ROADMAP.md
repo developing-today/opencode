@@ -12,7 +12,7 @@ Sources: open issues, [`TODO.md`](TODO.md), the fork notice in [`README.md`](REA
 | ----------------------------------------------------------- | --------------------------------------------------------------- |
 | [Nested subsessions](#nested-subsessions-and-their-asks)    | Shipped across the TUI, the app and ACP. One follow-up left     |
 | [mcpx integration](#mcpx-integration)                       | Where the flake gets mcpx                                       |
-| [Serve handover and restarts](#serve-handover-and-restarts) | Prove the handover under real systemd                           |
+| [Serve handover and restarts](#serve-handover-and-restarts) | Restarts that do not interrupt sessions                         |
 | [Routing, cost and plans](#routing-cost-and-plans)          | Feature requests for failover, cost display and cache use       |
 | [Plugin API](#plugin-api)                                   | Gaps found while building v2 plugins                            |
 | [CI and test health](#ci-and-test-health)                   | A main branch whose checks are green                            |
