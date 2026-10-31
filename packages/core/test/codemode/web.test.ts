@@ -11,6 +11,10 @@ type WebResponse = {
 }
 
 const webFetch = CodeModeWeb.extension.globals.fetch as (input: string) => Promise<WebResponse>
+const webFetchWithInit = CodeModeWeb.extension.globals.fetch as (
+  input: string,
+  init: { method: string },
+) => Promise<WebResponse>
 
 const serve = (headers: Record<string, string>) => {
   const server = Bun.serve({ port: 0, fetch: () => new Response("hello", { headers }) })
@@ -50,6 +54,89 @@ describe("CodeModeWeb fetch response headers (#805)", () => {
       expect(response.headers.has("constructor")).toBe(true)
     } finally {
       server.stop()
+    }
+  })
+})
+
+describe("CodeModeWeb fetch response size cap (#923)", () => {
+  test("rejects a body over the cap and serves a normal body unchanged", async () => {
+    const big = Bun.serve({
+      port: 0,
+      fetch: () => new Response("x".repeat(CodeModeWeb.MAX_RESPONSE_BYTES + 1)),
+    })
+    try {
+      await expect(webFetch(`http://127.0.0.1:${big.port}/`)).rejects.toThrow("Response too large")
+    } finally {
+      big.stop(true)
+    }
+
+    const streamed = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(CodeModeWeb.MAX_RESPONSE_BYTES + 1))
+              controller.close()
+            },
+          }),
+        ),
+    })
+    try {
+      await expect(webFetch(`http://127.0.0.1:${streamed.port}/`)).rejects.toThrow("Response too large")
+    } finally {
+      streamed.stop(true)
+    }
+
+    const server = serve({ "content-type": "text/plain" })
+    try {
+      const response = await webFetch(server.url)
+      expect(response.status).toBe(200)
+    } finally {
+      server.stop()
+    }
+  })
+
+  test("a declared over-cap rejection cancels the response body", async () => {
+    // Regression (Codex review on #926): rejecting on the declared size without cancelling
+    // left the oversized download running in the background until completion/timeout.
+    let cancelled = false
+    const original = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(1024))
+          },
+          cancel() {
+            cancelled = true
+          },
+        }),
+        { headers: { "content-length": String(CodeModeWeb.MAX_RESPONSE_BYTES + 1) } },
+      )) as unknown as typeof fetch
+    try {
+      await expect(webFetch("http://example.test/large")).rejects.toThrow("Response too large")
+      expect(cancelled).toBe(true)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  test("a HEAD response is not rejected by the declared-size check", async () => {
+    // HEAD carries the GET representation's content-length but no body, so the declared-size
+    // pre-check must not reject a HEAD for a resource larger than the cap.
+    const server = Bun.serve({
+      port: 0,
+      fetch: (request) =>
+        request.method === "HEAD"
+          ? new Response(null, { headers: { "content-length": String(CodeModeWeb.MAX_RESPONSE_BYTES + 1) } })
+          : new Response("x".repeat(CodeModeWeb.MAX_RESPONSE_BYTES + 1)),
+    })
+    try {
+      const response = await webFetchWithInit(`http://127.0.0.1:${server.port}/`, { method: "HEAD" })
+      expect(response.status).toBe(200)
+    } finally {
+      server.stop(true)
     }
   })
 })
