@@ -1791,7 +1791,14 @@ export function createData(config: CreateDataInput) {
               parentID = parent.parentID
             }
           }
-          publishSessions([info, ...ancestors, ...children.filter(unread)], generation)
+          // An ancestor the walk read may already be in the store by publish time: it arrived
+          // mid-walk (a live event refresh, another sync) and is newer than the snapshot the
+          // walk holds, so publish only the ancestors the store still lacks (#1038) -- the
+          // same fill-only rule publishSessions applies to a stale generation.
+          publishSessions(
+            [info, ...ancestors.filter((ancestor) => !store.session.info[ancestor.id]), ...children.filter(unread)],
+            generation,
+          )
           // A walk that skipped a failed branch is not kept, so the next sync lists the tree again.
           const descendantsComplete =
             !options?.children || (await syncDescendants(children, new Set([sessionID])))
