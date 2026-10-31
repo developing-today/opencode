@@ -1766,6 +1766,7 @@ export function createData(config: CreateDataInput) {
           // best effort: a parent that cannot be read leaves the walk at the furthest-known
           // ancestor, exactly what resolveRoot already tolerates.
           const ancestors: SessionInfo[] = []
+          let ancestorsComplete = true
           if (options?.children) {
             const seen = new Set([sessionID])
             let parentID = info.parentID
@@ -1779,14 +1780,22 @@ export function createData(config: CreateDataInput) {
               const parent = await api()
                 .session.get({ sessionID: parentID })
                 .catch(() => undefined)
-              if (!parent || parent.id !== parentID) break
+              if (!parent || parent.id !== parentID) {
+                // A parent that cannot be read truncates the walk: the family
+                // is not kept, so the next sync retries the missing ancestor
+                // instead of grouping under the wrong root.
+                ancestorsComplete = false
+                break
+              }
               ancestors.push(parent)
               parentID = parent.parentID
             }
           }
           publishSessions([info, ...ancestors, ...children.filter(unread)], generation)
           // A walk that skipped a failed branch is not kept, so the next sync lists the tree again.
-          if (options?.children && !(await syncDescendants(children, new Set([sessionID]))))
+          const descendantsComplete =
+            !options?.children || (await syncDescendants(children, new Set([sessionID])))
+          if (options?.children && (!ancestorsComplete || !descendantsComplete))
             sync.invalidate(`session.family:${sessionID}`)
         })
       },
