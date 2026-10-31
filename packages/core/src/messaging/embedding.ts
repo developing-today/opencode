@@ -248,6 +248,8 @@ export function resolve(
         file,
         url: source.path ? undefined : source.url,
         path: source.path,
+        sha256: config.sha256,
+        size: config.size,
         pooling: config.pooling ?? (qwen ? "last" : "mean"),
         query: config.query ?? (qwen ? QWEN_QUERY : undefined),
         context: qwen ? 8192 : 512,
@@ -292,11 +294,21 @@ function expandEnv(value: string, env: Readonly<Record<string, string | undefine
   return env[match[1] ?? ""]
 }
 
+/**
+ * Hard ceiling for a download whose expected size is unknown (the custom-URL embedding shape carries
+ * neither sha256 nor size): 16 GiB, above the largest built-in tier (top, 15,141,156,384 bytes) with
+ * headroom, so a legitimate custom GGUF still fits while an endless or oversized stream cannot fill
+ * the disk. A configured size replaces this cap as the effective bound.
+ */
+export const MAX_UNKNOWN_SIZE_DOWNLOAD_BYTES = 17_179_869_184
+
 export interface DownloadInput {
   readonly url: string
   readonly dest: string
   readonly sha256?: string
   readonly size?: number
+  /** Test seam: overrides the unknown-size cap for this call. Production callers leave it unset. */
+  readonly limit?: number
   readonly onProgress?: (received: number, total: number | undefined) => void
 }
 
@@ -307,6 +319,9 @@ export interface DownloadInput {
 export const download = Effect.fn("MessagingEmbedding.download")(function* (input: DownloadInput) {
   const http = yield* HttpClient.HttpClient
   const part = `${input.dest}.part`
+  // The effective bound: the known size when there is one, else the unknown-size cap. Every check
+  // below uses it, so no call shape reaches the stream unbounded.
+  const bound = input.size ?? input.limit ?? MAX_UNKNOWN_SIZE_DOWNLOAD_BYTES
   yield* Effect.tryPromise({ try: () => mkdir(path.dirname(input.dest), { recursive: true }), catch: toError })
   const existing = yield* Effect.promise(() =>
     stat(part).then(
@@ -314,13 +329,11 @@ export const download = Effect.fn("MessagingEmbedding.download")(function* (inpu
       () => 0,
     ),
   )
-  // A part already larger than the known size can never verify; drop it instead of resuming from it.
-  if (input.size !== undefined && existing > input.size) {
+  // A part already larger than the bound can never verify; drop it instead of resuming from it.
+  if (existing > bound) {
     yield* Effect.promise(() => rm(part, { force: true }))
     return yield* Effect.fail(
-      new Error(
-        `download from ${input.url} is larger than expected: part already holds ${existing} of ${input.size} bytes`,
-      ),
+      new Error(`download from ${input.url} is larger than expected: part already holds ${existing} of ${bound} bytes`),
     )
   }
   const resumed = createHash("sha256")
@@ -347,11 +360,13 @@ export const download = Effect.fn("MessagingEmbedding.download")(function* (inpu
   const total =
     totalFromRange(response.headers["content-range"]) ??
     (Number.isFinite(length) && length > 0 ? start + length : input.size)
-  // Fail fast on a declared length above the known size, before a single body byte is read.
-  if (input.size !== undefined && total !== undefined && total > input.size) {
+  // Fail fast on a declared length above the bound, before a single body byte is read.
+  if (total !== undefined && total > bound) {
     yield* Effect.promise(() => rm(part, { force: true }))
     return yield* Effect.fail(
-      new Error(`download from ${input.url} is larger than expected: declared ${total} bytes, expected ${input.size}`),
+      new Error(
+        `download from ${input.url} is larger than expected: declared ${total} bytes, expected at most ${bound}`,
+      ),
     )
   }
   const progress = { received: start }
@@ -359,17 +374,17 @@ export const download = Effect.fn("MessagingEmbedding.download")(function* (inpu
 
   // Bound the stream itself: chunked or undeclared-length bodies carry no header to pre-check, so
   // each chunk is measured before it is written and the download aborts the moment it passes the
-  // known size. The oversized part is deleted, never left behind as a resumable download.
+  // bound. The oversized part is deleted, never left behind as a resumable download.
   let oversized = false
   const streamed = yield* Effect.exit(
     Effect.acquireUseRelease(
       Effect.tryPromise({ try: () => open(part, append ? "a" : "w"), catch: toError }),
       (handle) =>
         Stream.runForEach(response.stream, (chunk) => {
-          if (input.size !== undefined && progress.received + chunk.byteLength > input.size) {
+          if (progress.received + chunk.byteLength > bound) {
             oversized = true
             return Effect.fail(
-              new Error(`download from ${input.url} is larger than expected: received more than ${input.size} bytes`),
+              new Error(`download from ${input.url} is larger than expected: received more than ${bound} bytes`),
             )
           }
           return Effect.tryPromise({ try: () => handle.write(chunk), catch: toError }).pipe(
