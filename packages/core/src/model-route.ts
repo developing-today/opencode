@@ -277,10 +277,19 @@ const logHealth = (
     | "quota-readmitted",
   reason: string,
   until?: number,
+  credentialID?: string,
 ) =>
   ModelRouteLog.record({
     kind: "health",
-    row: { time: Date.now(), provider_id: target.providerID, model_id: target.id, kind, reason, until },
+    row: {
+      time: Date.now(),
+      provider_id: target.providerID,
+      model_id: target.id,
+      kind,
+      reason,
+      until,
+      ...(credentialID ? { credential_id: credentialID } : {}),
+    },
   })
 
 const recover = (
@@ -294,7 +303,7 @@ const recover = (
   state.samples = []
   // Credential expirations are tagged so restart replay ends that credential's restored
   // cooldown, never the target's (#870).
-  logHealth(target, "cooldown-end", credentialID ? `expired credential:${credentialID}` : "expired")
+  logHealth(target, "cooldown-end", credentialID ? `expired credential:${credentialID}` : "expired", undefined, credentialID)
 }
 
 // A provider-wide fault looks different from a model-specific one. When several models of the same
@@ -375,6 +384,7 @@ const bench = (
       credentialID ? ` credential:${credentialID}` : ""
     }`,
     state.cooldownUntil,
+    credentialID,
   )
 }
 
@@ -529,8 +539,14 @@ export const observeCredentialQuota = (
   const full = QuotaSnapshot.isKnownFull(snapshot, now)
   credentialQuota.set(credentialID, { snapshot, target, gated: full })
   if (full && !previous?.gated)
-    logHealth(target, "quota-gated", `credential:${credentialID} quota-known-full`, snapshot.resetAt ?? undefined)
-  if (!full && previous?.gated) logHealth(target, "quota-readmitted", `credential:${credentialID}`)
+    logHealth(
+      target,
+      "quota-gated",
+      `credential:${credentialID} quota-known-full`,
+      snapshot.resetAt ?? undefined,
+      credentialID,
+    )
+  if (!full && previous?.gated) logHealth(target, "quota-readmitted", `credential:${credentialID}`, undefined, credentialID)
 }
 
 const providerQuota = new Map<string, { snapshot: QuotaSnapshot.Snapshot; target: Model.Ref; gated: boolean }>()
@@ -643,7 +659,7 @@ export const credentialQuotaBlocked = (
   }
   if (state.gated) {
     state.gated = false
-    logHealth(state.target, "quota-readmitted", `credential:${credentialID}`)
+    logHealth(state.target, "quota-readmitted", `credential:${credentialID}`, undefined, credentialID)
   }
   return undefined
 }
@@ -914,6 +930,7 @@ export const observeRateLimit = (
       "rate-limit-window",
       credentialID ? `provider-reported credential:${credentialID}` : "provider-reported",
       until,
+      credentialID,
     )
 }
 
@@ -931,6 +948,7 @@ export const clearRateLimit = (target: Model.Ref, credentialID?: string, now = D
       "rate-limit-window",
       credentialID ? `provider-released credential:${credentialID}` : "provider-released",
       0,
+      credentialID,
     )
 }
 
