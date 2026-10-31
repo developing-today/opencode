@@ -48,12 +48,30 @@ const ScheduleMatch = Schema.Struct({
   routes: Schema.Array(Schema.String).pipe(optional),
 })
 
-const ScheduleWindow = Schema.Struct({
+export interface ScheduleWindow {
+  readonly daysOfWeek?: readonly number[]
+  readonly daysOfMonth?: readonly number[]
+  readonly start?: string
+  readonly end?: string
+  readonly timezone?: string
+  readonly dates?: readonly string[]
+  readonly excludeDates?: readonly string[]
+  readonly excludeWindows?: readonly string[]
+  readonly excludedWindows?: readonly ScheduleWindow[]
+  readonly from?: number
+  readonly until?: number
+}
+
+const ScheduleWindow: Schema.Codec<ScheduleWindow, ScheduleWindow, never, never> = Schema.Struct({
   daysOfWeek: Schema.Array(Schema.Finite).pipe(optional),
   daysOfMonth: Schema.Array(Schema.Finite).pipe(optional),
   start: Schema.String.pipe(optional),
   end: Schema.String.pipe(optional),
   timezone: Schema.String.pipe(optional),
+  dates: Schema.Array(Schema.String).pipe(optional),
+  excludeDates: Schema.Array(Schema.String).pipe(optional),
+  excludeWindows: Schema.Array(Schema.String).pipe(optional),
+  excludedWindows: Schema.Array(Schema.suspend(() => ScheduleWindow)).pipe(optional),
   from: Schema.Finite.pipe(optional),
   until: Schema.Finite.pipe(optional),
 })
@@ -69,7 +87,6 @@ const WeightRule = Schema.Struct({
 })
 
 export type WeightRule = typeof WeightRule.Type
-export type ScheduleWindow = typeof ScheduleWindow.Type
 
 /** An eligibility gate on a child position, resolved at config load from a named window in
  * experimental.model_route_windows. The child is a candidate only while the window is active, or
