@@ -5,6 +5,7 @@ import { App } from "../../app.js"
 import { Credential } from "../../credential.js"
 import { Integration } from "../../integration.js"
 import { Provider } from "../../provider.js"
+import { readBoundedResponseText } from "../../tool/http-body.js"
 import { deviceLifetimeSeconds, expiresInSeconds } from "./expires.js"
 
 const clientID = "b1a00492-073a-47ea-816f-4c329264a828"
@@ -15,6 +16,20 @@ const pollingSafetyMargin = 3000
 const browserMethodID = Integration.MethodID.make("browser")
 const deviceMethodID = Integration.MethodID.make("device")
 const providerID = Provider.ID.make("xai")
+
+/**
+ * Size cap for OAuth token/device/discovery response bodies. These are
+ * small JSON structs (a few KB in practice); 64 KiB is generous headroom
+ * while keeping a misbehaving or malicious issuer/enterprise host from
+ * buffering an unbounded body into memory during auth/startup (#1026).
+ */
+export const oauthMaxResponseBytes = 64 * 1024
+
+const readOAuthText = (response: Response) =>
+  Effect.tryPromise({
+    try: () => readBoundedResponseText(response, oauthMaxResponseBytes, () => new Error(`OAuth response exceeded ${oauthMaxResponseBytes} bytes`)),
+    catch: (cause) => cause,
+  })
 
 const Token = Schema.Struct({
   access_token: Schema.String,
@@ -159,7 +174,7 @@ function poll(device: typeof Device.Type, app: App.Info): Effect.Effect<Token, u
           }).toString(),
         })
         if (response.ok) return yield* decode(response, Token)
-        const error = yield* Effect.promise(() => response.text()).pipe(
+        const error = yield* readOAuthText(response).pipe(
           Effect.map((body) => Option.getOrUndefined(decodeDeviceError(body))),
           Effect.orElseSucceed(() => undefined),
         )
@@ -189,7 +204,7 @@ function request<S extends Schema.Decoder<unknown>>(url: string, init: RequestIn
   return send(url, init).pipe(
     Effect.flatMap((response) => {
       if (response.ok) return decode(response, schema)
-      return Effect.promise(() => response.text()).pipe(
+      return readOAuthText(response).pipe(
         Effect.flatMap((detail) =>
           Effect.fail(new Error(`xAI request failed (${response.status})${detail ? `: ${detail}` : ""}`)),
         ),
@@ -206,7 +221,10 @@ function send(url: string, init: RequestInit) {
 }
 
 function decode<S extends Schema.Decoder<unknown>>(response: Response, schema: S) {
-  return Effect.promise(() => response.json()).pipe(Effect.map(Schema.decodeUnknownSync(schema)))
+  return readOAuthText(response).pipe(
+    Effect.map((text) => JSON.parse(text)),
+    Effect.map(Schema.decodeUnknownSync(schema)),
+  )
 }
 
 function credential(
