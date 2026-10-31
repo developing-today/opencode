@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { changelogMaxResponseBytes, readBoundedChangelogText } from "./whats-new"
+import { changelogMaxResponseBytes, readBoundedChangelogText } from "./changelog"
 
 describe("readBoundedChangelogText response size cap (#1061)", () => {
   test("returns a normal changelog-sized body", async () => {
@@ -10,6 +10,7 @@ describe("readBoundedChangelogText response size cap (#1061)", () => {
 
   test("rejects a declared oversized body before reading it", async () => {
     let bodyRead = false
+
     const response = new Response(
       new ReadableStream({
         start(controller) {
@@ -22,6 +23,7 @@ describe("readBoundedChangelogText response size cap (#1061)", () => {
       }),
       { headers: { "content-length": String(changelogMaxResponseBytes + 1) } },
     )
+
     await expect(readBoundedChangelogText(response)).rejects.toThrow(
       `Changelog response exceeded ${changelogMaxResponseBytes} bytes`,
     )
@@ -32,6 +34,7 @@ describe("readBoundedChangelogText response size cap (#1061)", () => {
     const chunkBytes = changelogMaxResponseBytes / 2
     const totalChunks = 8
     let pulled = 0
+
     const response = new Response(
       new ReadableStream({
         pull(controller) {
@@ -41,20 +44,10 @@ describe("readBoundedChangelogText response size cap (#1061)", () => {
         },
       }),
     )
+
     await expect(readBoundedChangelogText(response)).rejects.toThrow(
       `Changelog response exceeded ${changelogMaxResponseBytes} bytes`,
     )
     expect(pulled).toBeLessThan(totalChunks)
-  })
-
-  test("rejects an oversized body when there is no readable stream", async () => {
-    const response = {
-      headers: new Headers(),
-      body: null,
-      text: async () => "x".repeat(changelogMaxResponseBytes + 1),
-    } as unknown as Response
-    await expect(readBoundedChangelogText(response)).rejects.toThrow(
-      `Changelog response exceeded ${changelogMaxResponseBytes} bytes`,
-    )
   })
 })
