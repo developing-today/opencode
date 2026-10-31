@@ -50,4 +50,17 @@ describe("readBoundedChangelogText response size cap (#1061)", () => {
     )
     expect(pulled).toBeLessThan(totalChunks)
   })
+
+  test("rejects an oversized body when the response has no readable stream", async () => {
+    // "é" is 2 bytes in UTF-8 but 1 UTF-16 code unit, so its length stays under the cap
+    // while its byte length exceeds it — this also pins the byte-count (not text.length) check.
+    const big = "é".repeat(changelogMaxResponseBytes / 2 + 1)
+    const response = Object.assign(new Response(null), { text: async () => big })
+
+    expect(response.body).toBeNull()
+    expect(big.length).toBeLessThan(changelogMaxResponseBytes)
+    await expect(readBoundedChangelogText(response)).rejects.toThrow(
+      `Changelog response exceeded ${changelogMaxResponseBytes} bytes`,
+    )
+  })
 })
