@@ -667,11 +667,11 @@ const layer = (options: Options) =>
           // A cached file is trusted only when it still matches the model's integrity metadata;
           // a mismatch (or an unreadable file) is deleted and downloaded fresh, never served as-is.
           const valid = yield* Effect.tryPromise({
-            try: async () => {
+            try: async (signal) => {
               if (local.size !== undefined && (await stat(dest)).size !== local.size) return false
               if (!local.sha256) return true
               const hash = createHash("sha256")
-              await hashFile(dest, hash, new AbortController().signal)
+              await hashFile(dest, hash, signal)
               return hash.digest("hex") === local.sha256
             },
             catch: toError,
