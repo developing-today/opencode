@@ -310,3 +310,67 @@ describe("ModelRoute proactive provider quota gate (#984)", () => {
     expect(activeCapped[0]?.until).toBe(10_000 + 30 * 86_400_000)
   })
 })
+
+describe("ModelRoute health credential column (#1055)", () => {
+  const healthRows = (events: ModelRouteLog.Event[]) =>
+    events.flatMap((event) => (event.kind === "health" ? [event.row] : []))
+
+  test("credential-scoped rows carry the credential column", () => {
+    const events: ModelRouteLog.Event[] = []
+    ModelRouteLog.setSink((event) => events.push(event))
+
+    ModelRoute.failed(target, policy, 10_000, { quota: true }, "cred-lab")
+    ModelRoute.observeCredentialQuota(target, "cred-lab", snap({ observedAt: 10_000, resetAt: 100_000 }), 10_000)
+    const spent = { at: 10_000, remaining: { requests: "0" }, reset: { requests: "45s" } }
+    ModelRoute.observeRateLimit(target, spent, 10_000, "cred-lab")
+    ModelRoute.clearRateLimit(target, "cred-lab", 10_000)
+
+    const rows = healthRows(events)
+    // bench cooldown-start, quota-gated, rate-limit-window, rate-limit release.
+    expect(rows).toHaveLength(4)
+    for (const row of rows) expect(row.credential_id).toBe("cred-lab")
+    expect(rows.map((row) => row.kind).sort()).toEqual(
+      ["cooldown-start", "quota-gated", "rate-limit-window", "rate-limit-window"].sort(),
+    )
+  })
+
+  test("credential gate expiry and re-admission carry the credential column", () => {
+    const events: ModelRouteLog.Event[] = []
+    ModelRouteLog.setSink((event) => events.push(event))
+
+    ModelRoute.observeCredentialQuota(target, "cred-lab", snap({ observedAt: 10_000, resetAt: 100_000 }), 10_000)
+    // A fresher good read re-admits before the reset.
+    ModelRoute.observeCredentialQuota(
+      target,
+      "cred-lab",
+      snap({ percent: 40, remaining: 60, observedAt: 20_000 }),
+      20_000,
+    )
+
+    const rows = healthRows(events)
+    expect(rows.map((row) => row.kind)).toEqual(["quota-gated", "quota-readmitted"])
+    for (const row of rows) expect(row.credential_id).toBe("cred-lab")
+  })
+
+  test("target-scoped and provider-quota rows leave the credential column empty", () => {
+    const events: ModelRouteLog.Event[] = []
+    ModelRouteLog.setSink((event) => events.push(event))
+    const plain = ModelRoute.ref({ providerID: "no-cred-pass", model: "claude-sonnet-5" })
+
+    ModelRoute.failed(target, policy, 10_000, { quota: true })
+    ModelRoute.observeProviderQuota(plain, snap({ observedAt: 10_000, resetAt: 100_000 }), 10_000)
+    // Passing the reset re-admits the provider.
+    ModelRoute.observeProviderQuota(
+      plain,
+      snap({ percent: 40, remaining: 60, observedAt: 20_000, resetAt: 100_000 }),
+      20_000,
+    )
+
+    const rows = healthRows(events)
+    expect(rows.map((row) => row.kind)).toEqual(["cooldown-start", "quota-gated", "quota-readmitted"])
+    for (const row of rows) expect(row.credential_id).toBeUndefined()
+    // The provider-quota rows name the provider in the reason: a distinct dimension that
+    // must never be read back as a credential.
+    expect(rows[1]?.reason).toContain("provider:no-cred-pass")
+  })
+})

@@ -361,10 +361,12 @@ export const restoreCooldownsFrom = (db: Database.Interface["db"]) =>
     const latest = new Map<string, CooldownRow>()
     const windows = new Map<string, CooldownRow & { snapshot?: Snapshot }>()
     for (const row of rows) {
-      // A credential-scoped health row names its credential in the reason ("... credential:<id>",
-      // written by bench/observeRateLimit in model-route.ts): it restores onto that credential
-      // only, never onto the whole target (#870).
-      const credentialID = /credential:(\S+)/.exec(row.reason ?? "")?.[1]
+      // A credential-scoped health row carries its credential in `credential_id`: it restores
+      // onto that credential only, never onto the whole target (#870). Rows written before the
+      // column existed name it in the reason ("... credential:<id>"), so those still fall back
+      // to the reason regex. A `provider:<id>` reason is a different dimension (provider quota)
+      // and never a credential.
+      const credentialID = row.credential_id ?? /credential:(\S+)/.exec(row.reason ?? "")?.[1]
       const id = credentialID ? `${row.provider_id}/${row.model_id}#${credentialID}` : `${row.provider_id}/${row.model_id}`
       const entry = {
         providerID: row.provider_id,

@@ -102,6 +102,7 @@ export const RouteHealthTable = sqliteTable(
     kind: text().notNull(),
     reason: text(),
     until: integer(),
+    credential_id: text(),
   },
   (table) => [index("route_health_target_time_idx").on(table.provider_id, table.model_id, table.time)],
 )
