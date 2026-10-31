@@ -3,7 +3,9 @@ import { spawnSync } from "node:child_process"
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { binaryPath, parseRegistration, startScript } from "./bootstrap"
+import { Effect } from "effect"
+import { HttpClientRequest, HttpClientResponse } from "effect/http"
+import { binaryPath, collectArchive, parseRegistration, startScript } from "./bootstrap"
 import { RemoteCli } from "./remote-cli"
 
 test("ignores stopped services and registrations that do not match the healthy endpoint", () => {
@@ -75,6 +77,37 @@ test.skipIf(process.platform === "win32")(
     expect(parseRegistration(runStartScript(""))).toEqual(registration)
   },
 )
+
+function archiveResponse(body: ReadableStream<Uint8Array> | string, headers?: Record<string, string>) {
+  return HttpClientResponse.fromWeb(
+    HttpClientRequest.get("https://example.test/archive.tgz"),
+    new Response(body, { headers }),
+  )
+}
+
+function streamOf(...chunks: Array<Uint8Array>) {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk)
+      controller.close()
+    },
+  })
+}
+
+test("collectArchive returns a body under the cap", async () => {
+  const archive = await Effect.runPromise(collectArchive(archiveResponse(streamOf(new Uint8Array([97, 98, 99]))), 10))
+  expect(Array.from(archive)).toEqual([97, 98, 99])
+})
+
+test("collectArchive rejects a declared content-length above the cap before reading the body", async () => {
+  const response = archiveResponse(streamOf(new Uint8Array([97])), { "content-length": "11" })
+  await expect(Effect.runPromise(collectArchive(response, 10))).rejects.toThrow("archive exceeds 10 bytes")
+})
+
+test("collectArchive bounds a streamed body in flight when no content-length is declared", async () => {
+  const response = archiveResponse(streamOf(new Uint8Array(8), new Uint8Array(8)))
+  await expect(Effect.runPromise(collectArchive(response, 10))).rejects.toThrow("archive exceeds 10 bytes")
+})
 
 test("rejects unsafe versions and platforms in remote installation paths", () => {
   expect(() => binaryPath('2.0.0"; whoami')).toThrow()
